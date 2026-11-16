@@ -27,7 +27,7 @@ const input = (fields: Partial<CodexLaunchInput> = {}): CodexLaunchInput => ({
   permissionMode: "default",
   rules: null,
   tools: noRunTools,
-  served: { gh: true, docs: false, desktop: false },
+  served: { gh: true, desktop: false },
   githubAccount: null,
   systemPrompt: "You are an agent.",
   prompt: "Do it.",
@@ -107,7 +107,7 @@ describe("a Codex run's launch", () => {
         { name: "notes", preApproved: true },
         { name: "asks", preApproved: false },
       ]
-      const { spec, codex } = yield* launch({ served: { gh: false, docs: false, desktop: false, plugins } })
+      const { spec, codex } = yield* launch({ served: { gh: false, desktop: false, plugins } })
       assert.deepStrictEqual(Object.keys(spec.mcpServers ?? {}).toSorted(), ["asks", "huntaway", "notes"])
       assert.deepStrictEqual(codex.approved_mcp_servers, ["notes"])
     }),

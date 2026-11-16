@@ -13,7 +13,6 @@ import { CheckpointRpcs } from "./checkpoints.ts"
 // 6.10: computer use.
 import { DesktopRpcs } from "./desktop.ts"
 import { SpacesRpcs } from "./spaces.ts"
-import { DocRpcs } from "./docs.ts"
 import { GitRpcs } from "./git.ts"
 import { HostRpcGroup } from "./host.ts"
 import { HubHostRpcs } from "./hub.ts"
@@ -76,7 +75,6 @@ export const HostRpcs = HostRpcGroup.merge(
   // 6.5
   AutomationRpcs,
   // 6.3
-  DocRpcs,
   // 6.7
   AssistantRpcs,
   // 6.6

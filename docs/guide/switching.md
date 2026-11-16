@@ -209,11 +209,14 @@ projects and tasks made there. The switch **replaces** that board with the old o
 
    which refuses while either server has its database open or runs of either board are live (`--force` records them
    as interrupted), then sets the new folder's board aside in `~/.local/share/huntaway-effect/replaced-<time>/`
-   (`board.db`, `import.json`, the identity files, `ssh/`, `attachments/`, `skill-sources/`, `runs/`) and imports the
-   old board in its place. If the import fails, the board is put back as it was.
+   (`board.db`, `import.json`, the identity files, `ssh/`, `attachments/`, `skill-sources/`, `runs/`, and `plugins/`,
+   the plugins' data, which is the replaced board's: the docs plugin's copy of its documents) and imports the old board
+   in its place. If the import fails, the board is put back as it was.
 
 4. **Start the new server** (its desktop app, or `huntaway serve`). It is now the old host: the old board's tasks,
-   projects, profiles, identity and **board token**. The tasks of the replaced board are not on it; their branches,
+   projects, profiles, identity and **board token**. On this first start the docs plugin copies the imported documents
+   (with their comments, images and hosted-docs sign-ins) into its own database. The tasks of the replaced board are
+   not on it; their branches,
    pull requests and worktrees (`~/.local/share/huntaway-effect/projects/…`, registered in their repositories) stay
    as they were.
 

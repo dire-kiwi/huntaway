@@ -1,14 +1,14 @@
 import { Effect, Schema } from "effect"
-import { DocId, ProfileId, Timestamp } from "@huntaway/contracts"
-import { CommentRow, DocRow, ImageData, ImageRef, PageRow, VersionRow } from "../../../docs/DocRepo.ts"
-import { ConnectionRow, PublishedRow } from "../../../docs/DocsSiteRepo.ts"
+import { DocId, ProfileId, RunId, TaskId, Timestamp } from "@huntaway/contracts"
 import { keyOf } from "../family.ts"
 import type { Family, TableCheck } from "../family.ts"
 import { orDefault, orNull, readOld, writeUnlessRehearsal } from "./common.ts"
 
 // Docs and hosted docs (docs/plan/11-migration.md, Table by table: as is): a profile's documents, their versions,
 // pages, labels, images and comments, and what this host knows of docs sites. A rehearsal does not write the profiles'
-// sign-ins to a docs site (`docs_site_connections`): they are credentials for something outside the folder.
+// sign-ins to a docs site (`docs_site_connections`): they are credentials for something outside the folder. The board
+// no longer reads these tables itself (HE-42): the docs plugin copies them into its own database on its first run on the
+// host (plugins/start.ts, `IMPORTABLE`), so an import before the switch's first start carries the documents over.
 
 export const OldDoc = Schema.Struct({
   id: Schema.String,
@@ -91,28 +91,97 @@ export const OldDocsSitePublished = Schema.Struct({
 })
 
 const byId = keyOf("id")
-const { latest_version: _latest, page_count: _pages, labels: _labels, ...docFields } = DocRow.fields
-const { version: _version, page: _page, ...commentFields } = CommentRow.fields
 
-const docRows: TableCheck = { row: Schema.Struct(docFields), key: byId }
-const versions: TableCheck = { row: Schema.Struct({ doc_id: DocId, ...VersionRow.fields }), key: byId }
-const pages: TableCheck = { row: Schema.Struct({ version_id: Schema.String, ...PageRow.fields }), key: keyOf("version_id", "path") }
+const docRows: TableCheck = {
+  row: Schema.Struct({
+    id: DocId,
+    profile_id: ProfileId,
+    slug: Schema.String,
+    title: Schema.String,
+    folder: Schema.String,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+  }),
+  key: byId,
+}
+const versions: TableCheck = {
+  row: Schema.Struct({
+    id: Schema.String,
+    doc_id: DocId,
+    number: Schema.Int,
+    message: Schema.NullOr(Schema.String),
+    task_id: Schema.NullOr(TaskId),
+    run_id: Schema.NullOr(RunId),
+    created_at: Timestamp,
+  }),
+  key: byId,
+}
+const pages: TableCheck = {
+  row: Schema.Struct({
+    version_id: Schema.String,
+    path: Schema.String,
+    title: Schema.String,
+    format: Schema.Literals(["md", "mdx"]),
+    source: Schema.String,
+    position: Schema.Int,
+  }),
+  key: keyOf("version_id", "path"),
+}
 const labels: TableCheck = { row: Schema.Struct({ doc_id: DocId, label: Schema.String }), key: keyOf("doc_id", "label") }
 const images: TableCheck = {
-  row: Schema.Struct({ profile_id: ProfileId, sha256: Schema.String, ...ImageData.fields, width: Schema.Int, height: Schema.Int, created_at: Timestamp }),
+  row: Schema.Struct({ profile_id: ProfileId, sha256: Schema.String, data: Schema.Uint8Array, width: Schema.Int, height: Schema.Int, created_at: Timestamp }),
   key: keyOf("profile_id", "sha256"),
 }
-const versionImages: TableCheck = { row: Schema.Struct({ version_id: Schema.String, ...ImageRef.fields }), key: keyOf("version_id", "name") }
+const versionImages: TableCheck = {
+  row: Schema.Struct({ version_id: Schema.String, name: Schema.String, sha256: Schema.String }),
+  key: keyOf("version_id", "name"),
+}
 const comments: TableCheck = {
-  row: Schema.Struct({ ...commentFields, version_id: Schema.String, page_path: Schema.String }),
+  row: Schema.Struct({
+    id: Schema.Int,
+    version_id: Schema.String,
+    page_path: Schema.String,
+    quote: Schema.String,
+    prefix: Schema.String,
+    suffix: Schema.String,
+    comment: Schema.String,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+    sent_at: Schema.NullOr(Timestamp),
+  }),
   key: byId,
 }
 const siteClients: TableCheck = {
   row: Schema.Struct({ site_url: Schema.String, client_id: Schema.String, created_at: Timestamp }),
   key: keyOf("site_url"),
 }
-const siteConnections: TableCheck = { row: ConnectionRow, key: keyOf("profile_id") }
-const sitePublished: TableCheck = { row: Schema.Struct({ doc_id: DocId, ...PublishedRow.fields }), key: keyOf("doc_id", "site_url") }
+const siteConnections: TableCheck = {
+  row: Schema.Struct({
+    profile_id: ProfileId,
+    site_url: Schema.String,
+    kind: Schema.Literals(["oauth", "token"]),
+    access_token: Schema.String,
+    refresh_token: Schema.NullOr(Schema.String),
+    expires_at: Schema.NullOr(Schema.Finite),
+    login: Schema.NullOr(Schema.String),
+    connected_at: Timestamp,
+  }),
+  key: keyOf("profile_id"),
+}
+const sitePublished: TableCheck = {
+  row: Schema.Struct({
+    doc_id: DocId,
+    site_url: Schema.String,
+    remote_slug: Schema.String,
+    remote_version: Schema.Int,
+    local_version: Schema.Int,
+    url: Schema.String,
+    version_url: Schema.String,
+    login: Schema.NullOr(Schema.String),
+    published_at: Timestamp,
+  }),
+  key: keyOf("doc_id", "site_url"),
+}
 
 export const docs: Family = {
   name: "docs",

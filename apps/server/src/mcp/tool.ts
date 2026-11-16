@@ -12,8 +12,8 @@ import type { Run } from "../runs/Run.ts"
 // them. Tool names, argument names and descriptions are copied from the old server exactly: prompts, approval rules
 // and agents' habits depend on them.
 
-/** The board's own MCP servers: its own tools, GitHub through `gh`, the profile's documents, the host's desktop, its Spaces. */
-export const BuiltInServer = Schema.Literals(["huntaway", "gh", "docs", "desktop", "spaces"])
+/** The board's own MCP servers: its own tools, GitHub through `gh`, the host's desktop, its Spaces. */
+export const BuiltInServer = Schema.Literals(["huntaway", "gh", "desktop", "spaces"])
 export type BuiltInServer = typeof BuiltInServer.Type
 
 /**

@@ -70,7 +70,7 @@ export class Auth extends RpcMiddleware.Service<Auth, { provides: Session }>()("
 - **What each scope covers.** `read`: lists, gets, subscriptions, thread pages. `operate`: create and change tasks,
   send messages, answer prompts and questions, stop runs, start reviews, attachments. `git`: the Changes tab's writes,
   worktree setup and teardown, rewind. `terminal`: terminals and the desktop viewer. `settings`: profiles, projects,
-  agent configs, automations, workflows, agent tools, approval rules, docs. `admin`: linking hosts, restart
+  agent configs, automations, workflows, agent tools, approval rules. `admin`: linking hosts, restart
   and update, config archives, telemetry, the service, the folder browser.
 - **How a session is proved.** The client's `Auth` middleware puts `authorization: Bearer <token>` on every RPC
   request (in the request, not the URL). A relayed socket instead carries, in the headers of its upgrade request,
@@ -106,7 +106,7 @@ column are that table's.
 | `git`          | `status`, `diff`, `show`, `taskDiff`, `stage`, `unstage`, `discard`, `apply`, `commit`, `stash`, `reset`, `setupWorktree`, `teardownWorktree`                     | read; git            | 157–159, 166–175 |
 | `checkpoints`  | `turns`, `turnDiff`, `rewind`, `cancelRewind`                                                                                                                    | read; git            | 176–178    |
 | `terminal`     | `status`, `open` (gives a ticket), `kill`, `keepalive`                                                                                                           | terminal             | 181–183    |
-| `docs`         | `list`, `get`, `update`, `delete`, `renameFolder`, `labels`, `image`, `version`, `publish`, `comments`, `addComment`, `updateComment`, `deleteComment`, `sendComments`, `hostedStatus`, `hostedDisconnect`, `hostedDeviceStart`, `hostedDeviceCancel`, `hostedToken` | read; settings | 97–109 |
+| ~~`docs`~~      | Gone in HE-42 (the docs plugin's pages use `plugins.call` instead, 15-plugins.md). Was: `list`, `get`, `update`, `delete`, `renameFolder`, `labels`, `image`, `version`, `publish`, `comments`, `addComment`, `updateComment`, `deleteComment`, `sendComments`, `hostedStatus`, `hostedDisconnect`, `hostedDeviceStart`, `hostedDeviceCancel`, `hostedToken` | read; settings | 97–109 |
 | `pens`         | `list`, `create`, `update`, `delete`, `rootThread`, `thread`                                                                                                     | read; operate        | 93–96      |
 | `automations`  | `list`, `get`, `create`, `update`, `delete`, `run`, `runs`                                                                                                       | read; settings       | 92, 116–119 |
 | `workflows`    | `list`, `get`, `create`, `update`, `delete`, `run`, `runsOfTask`, `stopRun`                                                                                      | read; settings; operate | 120–124 |

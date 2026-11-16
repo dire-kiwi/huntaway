@@ -34,7 +34,7 @@ rehearse=0 force=() yes=0 undo= to_given=0
 # What `import-legacy --replace` sets aside, and so what an import wrote in its place (REPLACED_FILES in
 # apps/server/src/cli/importLegacy/run.ts).
 replaced_files=(board.db board.db-wal board.db-shm import.json import-report.json host_id auth_token hub_token ssh
-  attachments skill-sources runs)
+  attachments skill-sources runs plugins)
 
 usage() { sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 while [[ $# -gt 0 ]]; do

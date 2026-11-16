@@ -3,17 +3,7 @@ import type { PermissionMode, Task } from "@huntaway/contracts"
 import { forMode } from "@huntaway/shared"
 import type { Rules } from "@huntaway/shared"
 import type { LaunchSpec } from "../AgentDriver.ts"
-import {
-  DESKTOP_SERVER,
-  desktopDisallowed,
-  DOCS_SERVER,
-  GH_SERVER,
-  GH_WRITES,
-  SPACES_SERVER,
-  spacesDisallowed,
-  toolPrefix,
-  usesServer,
-} from "../claude/access.ts"
+import { DESKTOP_SERVER, desktopDisallowed, GH_SERVER, GH_WRITES, SPACES_SERVER, spacesDisallowed, toolPrefix, usesServer } from "../claude/access.ts"
 import type { RunTools } from "../claude/access.ts"
 import { boardServers, mcpRun, pluginServers, TASK_ENV, userInput } from "../claude/launch.ts"
 import type { BoardManifest, ServedServers } from "../claude/launch.ts"
@@ -120,7 +110,6 @@ export const codexLaunch = (input: CodexLaunchInput): Effect.Effect<CodexLaunch,
     const [approvalPolicy, approvalsReviewer, sandbox] = decided.policy
     const servers: ServedServers = {
       gh: usesServer(tools, GH_SERVER, input.served.gh),
-      docs: usesServer(tools, DOCS_SERVER, input.served.docs),
       desktop: usesServer(tools, DESKTOP_SERVER, input.served.desktop),
       spaces: usesServer(tools, SPACES_SERVER, input.served.spaces === true),
       plugins: pluginServers(tools, input.served),
@@ -167,11 +156,9 @@ export const codexLaunch = (input: CodexLaunchInput): Effect.Effect<CodexLaunch,
         writable_roots: writable,
         filesystem,
         skills_dir: tools.skills_dir === null ? null : `${tools.skills_dir}/.claude/skills`,
-        // The project's servers it allows, and the docs server, whose tools only touch the profile's documents.
+        // The project's servers it allows, and the plugins' whose tools only touch their own data (the docs plugin's).
         approved_mcp_servers: [
           ...Object.keys(tools.mcp_servers).filter((n) => tools.allowed.includes(toolPrefix(n))),
-          ...(servers.docs ? [DOCS_SERVER] : []),
-          // HE-34: the plugins' servers whose tools only touch their own data.
           ...(servers.plugins ?? []).filter((p) => p.preApproved).map((p) => p.name),
         ],
         disabled_mcp_tools: disabled,

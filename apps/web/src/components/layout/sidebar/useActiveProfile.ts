@@ -46,8 +46,6 @@ export function useActiveProfile({
           : []
   const active = activeProfile(names, savedProfile, (current) => {
     if (route.name === "profile" || route.name === "assistant") return route.profile
-    // A docs route names its profile by name, or by id as agents' links do (the old docs.ts `docsProfileName`).
-    if (route.name === "docs") return profiles.find((p) => p.id === route.profile)?.name ?? route.profile
     const listed = openProjects.some((p) => profileOf(p) === current || isPinned(p))
     if (route.name === "group") {
       // A profile lists a group for its projects in it, and for its group tasks in it (which can

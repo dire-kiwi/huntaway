@@ -67,7 +67,7 @@ export interface CodexRequestHandler<K extends CodexRequestKind> {
 export interface BoardServersProvider {
   /** The board server's handshake, for the `initialize` line of a run's input (a review thread's lists the reviewers' tools). */
   readonly manifest: (review: boolean) => Effect.Effect<BoardManifest>
-  /** Which of the board's HTTP servers (gh, docs, desktop) this server serves. */
+  /** Which of the board's HTTP servers (gh, desktop, spaces, the plugins') this server serves. */
   readonly served: Effect.Effect<ServedServers>
 }
 
@@ -78,7 +78,7 @@ export const noBoardServers: BoardServersProvider = {
       initializeResult: { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "huntaway", version: "0" } },
       toolsListResult: { tools: [] },
     }),
-  served: Effect.succeed({ gh: false, docs: false, desktop: false }),
+  served: Effect.succeed({ gh: false, desktop: false }),
 }
 
 export interface AgentRequestsShape {

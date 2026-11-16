@@ -578,6 +578,9 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 
 ### Step 1 as done for `docs/` (6.3, HE-7)
 
+**Replaced in HE-42**: published documents are the docs plugin's now ([15-plugins.md](15-plugins.md#the-docs-plugin-he-42)); what follows is what the web app had until then, and is gone. Left: `task/thread/DocLink.tsx`
+and `PublishedDoc`, over `task/thread/docLinks.ts`, which open a document's link as the plugin's page.
+
 - **What came over.** The old `components/docs/` whole (`DocsPage.tsx`, `DocComments.tsx`, `HostedDocs.tsx`,
   `docFrame.ts`, `docsPage/*`), and the old `src/docs.ts` as `components/docs/docs.ts`; the sidebar's Docs entry
   (`layout/sidebar/DocsEntry.tsx`, the old `ProfileEntries.tsx`'s half, as the assistant's is 6.7's); a thread's
@@ -683,8 +686,8 @@ and the override went with the last one.
   skills menu's minute, `DocLink`'s titles, the repository list, the last disk measurement, the attachments' object
   URLs, the memory editors), and the last listed suppression (`type Any = any`: the thread's rows read their metadata
   and tool inputs through `thread/fields.ts`'s guards, and board approvals' inputs through the contract's schemas).
-- **Lint.** The components' override has the React rules only. `components/docs/docFrame.ts` keeps `global-timers`
-  off: its comment script runs as source inside a document's sandboxed frame, where there is no Effect.
+- **Lint.** The components' override has the React rules only. (`components/docs/docFrame.ts` kept `global-timers`
+  off until HE-42 removed it with the rest of the Docs page.)
 - **Decided where this page was silent** (each folder's commit says more):
   - Polls are a query's `refresh` while the page is visible (git status 4 s while nothing is being changed, previews
     2 s, `desktop.frame` 700 ms, `desktop.ops` 3 s, telemetry and desktop status 15 s, a host's usage 5 minutes). The

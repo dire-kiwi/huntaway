@@ -66,7 +66,7 @@ export const importOld = <E, R>(fill: (old: LegacyBoard) => Effect.Effect<void, 
   })
 
 /** `Db` over the new board's `board.db`, for the repositories that read it. */
-const boardAt = (dataDir: string) => Layer.provideMerge(Db.layerOver, Layer.orDie(SqliteClient.layer({ filename: `${dataDir}/board.db` })))
+export const boardAt = (dataDir: string) => Layer.provideMerge(Db.layerOver, Layer.orDie(SqliteClient.layer({ filename: `${dataDir}/board.db` })))
 
 /** `layer` (the repositories a test reads with) over the new board. */
 export const onBoard = <ROut, E, RIn>(dataDir: string, layer: Layer.Layer<ROut, E, RIn>) => Layer.provide(layer, boardAt(dataDir))

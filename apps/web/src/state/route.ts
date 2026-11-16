@@ -1,17 +1,10 @@
 import { useAtomValue } from "@effect/atom-react"
 import { Atom } from "effect/reactivity"
-import { hasPanel, href, type Panel, panelUrl, parse, parsePanel, parseModal, type Route, sameDoc, withoutModal } from "../router"
+import { hasPanel, href, type Panel, panelUrl, parse, parsePanel, parseModal, type Route, withoutModal } from "../router"
 import { registry } from "./registry"
 
 // The page's route as an atom over the History API (docs/plan/09-frontend.md, The web app's own state), with the
 // router's parse and href (../router.ts). The 14 routes and their query parameters are the old router's.
-
-/** What a history entry keeps: where the user was before it (a document's page shows a link back). */
-interface HistoryState {
-  readonly from?: string | undefined
-}
-
-const isHistoryState = (s: unknown): s is HistoryState => typeof s === "object" && s !== null
 
 interface Location {
   readonly pathname: string
@@ -34,26 +27,14 @@ const searchAtom: Atom.Atom<string> = Atom.make((get) => get(locationAtom).searc
 
 const current = (): string => window.location.pathname + window.location.search
 
-/**
- * Where the user was before the current history entry, if they got here by navigating in the board and it was a
- * different page (moving between a document's own pages keeps where they were before it).
- */
-export function cameFrom(): string | null {
-  const state: unknown = window.history.state
-  const from = isHistoryState(state) ? state.from : undefined
-  return typeof from === "string" && from !== current() ? from : null
-}
-
 /** Goes to `to` (a route or a URL), in a new history entry or, with `replace`, in place of this one. */
 export function navigate(to: Route | string, options: boolean | { readonly replace?: boolean } = false): void {
   const replace = typeof options === "boolean" ? options : options.replace === true
   const url = typeof to === "string" ? to : href(to)
   const was = current()
   if (url === was) return
-  const state: unknown = window.history.state
-  const previous = isHistoryState(state) ? state : null
-  if (replace) window.history.replaceState(previous, "", url)
-  else window.history.pushState({ from: sameDoc(was, url) ? previous?.from : was } satisfies HistoryState, "", url)
+  if (replace) window.history.replaceState(window.history.state, "", url)
+  else window.history.pushState(null, "", url)
   registry.refresh(locationAtom)
 }
 

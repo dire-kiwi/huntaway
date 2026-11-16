@@ -29,7 +29,7 @@ review        Reviews · Summaries · ReviewStats · Fanout
 merge         Merges · MergeGate · MergedWatcher
 workflows     WorkflowStore · WorkflowEngine
 automations   Automations · Scheduler · Webhooks · Routines
-docs          TaskDocuments · Docs · DocImages · HostedDocs
+docs          TaskDocuments (published documents: the docs plugin, 15-plugins.md)
 assistant     Assistant · Memory · Tracked · Brief
 mcp           BoardTools · ToolCalls · Wait · GhTools · DocsTools · DesktopTools · McpEndpoint
 plugins       InstalledPlugins · Plugins (HE-34, 15-plugins.md)
@@ -871,8 +871,8 @@ answered 202 before the action runs), `Routines`, `Automations`. Cron and time-z
 ### Documents and docs — [inventory 02](inventory/02-agent-support.md) (2.7–2.8)
 
 `TaskDocuments` (a plan, artifact or diagram a task's agent writes, a version per turn, answers sent back),
-`Docs` (published documents: versions, folders, labels, comments), `DocImages` (AVIF conversion with `sharp`),
-`HostedDocs` (publishing to a docs site).
+published documents, which are the docs plugin's since HE-42 ([15-plugins.md](15-plugins.md#the-docs-plugin-he-42)).
+They were `Docs`, `DocImages` and `HostedDocs` until then.
 
 As built in 6.2 (HE-7), `docs/TaskDocuments.ts` (+ `TaskDocumentRepo.ts`, the `documents` table of the initial schema):
 
@@ -903,7 +903,7 @@ As built in 6.2 (HE-7), `docs/TaskDocuments.ts` (+ `TaskDocumentRepo.ts`, the `d
   5 MiB notice; `tasks.document`; the daily document; removal and the sweep), the Codex edit's case in
   `runs/codex/output.test.ts`, a tool result's in `runs/claude/output.test.ts`, the demo's in `lifecycle/Demo.test.ts`.
 
-As built in 6.3 (HE-7), published documents:
+As built in 6.3 (HE-7), published documents. **Replaced in HE-42**: published documents are the docs plugin's now ([15-plugins.md](15-plugins.md#the-docs-plugin-he-42)); what follows is what the board had built in until then, and is gone.
 
 - **Services** (`docs/`): `DocRepo` (docs, versions, pages, labels, images, comments) and `DocsSiteRepo` (the docs
   site's clients, connections and publish records; tokens read as `Redacted`); `DocsRender`, the hosted app's renderer

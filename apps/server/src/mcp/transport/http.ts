@@ -17,7 +17,7 @@ import { ToolCalls } from "../ToolCalls.ts"
 // The board's MCP servers over HTTP, MCP's streamable HTTP transport (docs/plan/inventory/03-mcp.md 2.2;
 // docs/plan/05-protocol.md, Plain HTTP): `/api/mcp/<run id>/<server>` on the host's internal URL, each run with a
 // secret of its own as its bearer token (`Identity.runSecret`), so a run can only act as itself and never holds the
-// board token. Every run reaches gh's, docs', desktop's and spaces' servers here; the board's own only compactions and Codex
+// board token. Every run reaches gh's, desktop's, spaces' and the plugins' servers here; the board's own only compactions and Codex
 // sessions that took no dynamic tools (Claude runs that take input call it on their output, `control.ts`).
 //
 // A call is answered as a server-sent event stream that starts with an event that has an id and no data (MCP's priming
@@ -34,9 +34,8 @@ export const RETRY_MS = 5000
 /** A progress notification (or a comment) on a call's stream this often. */
 export const KEEPALIVE = "20 seconds"
 
-/** The largest request a server takes; the docs server's is larger, for `publish_document`'s images. */
+/** The largest request a server takes, unless it's a plugin's that says its own (the docs plugin's, for images). */
 const BODY_LIMIT = ByteSize.mebibytes(32)
-const DOCS_BODY_LIMIT = ByteSize.mebibytes(64)
 
 const json = (status: number, body: unknown, headers?: Readonly<Record<string, string>>) =>
   HttpServerResponse.jsonUnsafe(body, headers === undefined ? { status } : { status, headers })
@@ -152,7 +151,7 @@ export const McpHttpRoute = HttpRouter.use(
       const settings = yield* dirs.mcpRun(run)
       if (settings === null) return json(404, { error: "unknown run" })
       // Its board tools are answered on its own output; and only a run launched with the desktop server has it, or with
-      // the spaces server (the run's secret is its gh and docs servers' too).
+      // the spaces server (the run's secret is its gh and plugins' servers' too).
       if (
         (settings.in_process && server.value === BOARD_SERVER) ||
         (!settings.desktop && server.value === "desktop") ||
@@ -168,7 +167,7 @@ export const McpHttpRoute = HttpRouter.use(
       if (request.method !== "POST") return notAllowed
 
       const own = yield* servers.maxRequestBytes(server.value)
-      const limit = server.value === "docs" ? DOCS_BODY_LIMIT : own === null ? BODY_LIMIT : ByteSize.bytes(own)
+      const limit = own === null ? BODY_LIMIT : ByteSize.bytes(own)
       const text = yield* Effect.option(Effect.provideService(request.text, HttpIncomingMessage.MaxBodySize, limit))
       const body = Option.flatMap(text, (t) => Schema.decodeOption(JsonValue)(t))
       if (Option.isNone(body)) return json(400, rpcError(null, PARSE_ERROR, "Parse error"))

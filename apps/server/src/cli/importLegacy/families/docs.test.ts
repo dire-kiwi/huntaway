@@ -1,13 +1,10 @@
 import { NodeServices } from "@effect/platform-node"
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, Layer, Result, Schema } from "effect"
+import { Effect, Result, Schema } from "effect"
+import { SqlClient } from "effect/sql"
 import { vi } from "vite-plus/test"
-import { ProfileId } from "@huntaway/contracts"
-import type { DocId } from "@huntaway/contracts"
 import type { LegacyBoard } from "@huntaway/testing"
-import { AT, importOld, onBoard } from "../../../../tests/importLegacy/importOld.ts"
-import { DocRepo } from "../../../docs/DocRepo.ts"
-import { DocsSiteRepo } from "../../../docs/DocsSiteRepo.ts"
+import { AT, boardAt, importOld } from "../../../../tests/importLegacy/importOld.ts"
 import { OldDoc, OldDocComment, OldDocImage, OldDocsSiteConnection } from "./docs.ts"
 
 vi.mock("./index.ts", () => import("../../../../tests/importLegacy/families.ts"))
@@ -86,25 +83,27 @@ const fill = (old: LegacyBoard) =>
     })
   })
 
+const first = <A>(rows: ReadonlyArray<A>) => rows[0] ?? null
+
+/** What the board's tables hold after the import (the docs plugin copies them from there, HE-42). */
 const readBack = (dataDir: string) =>
   Effect.gen(function* () {
-    const docs = yield* DocRepo
-    const site = yield* DocsSiteRepo
-    const p1 = ProfileId.make("p1")
-    const doc = yield* docs.get(p1, "plan")
-    const id: DocId = doc?.id ?? (yield* Effect.die("no document"))
+    const sql = yield* SqlClient.SqlClient
     return {
-      doc,
-      versions: yield* docs.versions(id),
-      pages: yield* docs.pagesFull("v2"),
-      images: yield* docs.images("v2"),
-      bytes: yield* docs.imageData(p1, "h1"),
-      comments: yield* docs.comments(id),
-      client: yield* site.client(SITE),
-      connection: yield* site.connection(p1),
-      published: yield* site.published(id, SITE),
+      doc: first(yield* sql`SELECT id, title, folder FROM docs WHERE profile_id = 'p1' AND slug = 'plan'`),
+      labels: (yield* sql<{ label: string }>`SELECT label FROM doc_labels WHERE doc_id = 'd1' ORDER BY label`).map((r) => r.label),
+      versions: yield* sql<{ number: number; task_id: string | null }>`SELECT number, task_id FROM doc_versions WHERE doc_id = 'd1' ORDER BY number DESC`,
+      pages: yield* sql<{ path: string; format: string }>`SELECT path, format FROM doc_pages WHERE version_id = 'v2' ORDER BY position`,
+      images: yield* sql`SELECT name, sha256 FROM doc_version_images WHERE version_id = 'v2'`,
+      image: first(
+        yield* sql<{ data: Uint8Array; width: number; height: number }>`SELECT data, width, height FROM doc_images WHERE profile_id = 'p1' AND sha256 = 'h1'`,
+      ),
+      comments: yield* sql`SELECT id, page_path, quote, prefix, suffix, comment, sent_at FROM doc_comments`,
+      client: first(yield* sql<{ client_id: string }>`SELECT client_id FROM docs_site_clients WHERE site_url = ${SITE}`)?.client_id ?? null,
+      connection: first(yield* sql`SELECT kind, expires_at, login FROM docs_site_connections WHERE profile_id = 'p1'`),
+      published: first(yield* sql`SELECT remote_version, local_version, login FROM docs_site_published WHERE doc_id = 'd1' AND site_url = ${SITE}`),
     }
-  }).pipe(Effect.provide(onBoard(dataDir, Layer.mergeAll(DocRepo.layer, DocsSiteRepo.layer))))
+  }).pipe(Effect.orDie, Effect.provide(boardAt(dataDir)))
 
 describe("docs: import", () => {
   it.effect("documents, their versions, pages, labels, images and comments, and hosted docs read back as they were", () =>
@@ -115,7 +114,8 @@ describe("docs: import", () => {
       expect(report.tables["doc_versions"]).toEqual({ old: 2, written: 2, withheld: 0 })
       expect(report.tables["docs_site_connections"]).toEqual({ old: 1, written: 1, withheld: 0 })
       const r = yield* readBack(dataDir)
-      expect(r.doc).toMatchObject({ id: "d1", title: "The plan", folder: "Proj/plans", latest_version: 2, page_count: 2, labels: ["research/ai"] })
+      expect(r.doc).toMatchObject({ id: "d1", title: "The plan", folder: "Proj/plans" })
+      expect(r.labels).toEqual(["research/ai"])
       expect(r.versions.map((v) => [v.number, v.task_id])).toEqual([
         [2, "t1"],
         [1, "t1"],
@@ -124,9 +124,9 @@ describe("docs: import", () => {
         ["index", "md"],
         ["more", "mdx"],
       ])
-      expect(r.images).toEqual([{ name: "images/c.avif", sha256: "h1", bytes: 4, width: 4, height: 3 }])
-      expect(r.bytes === null ? null : Array.from(r.bytes)).toEqual([0, 1, 2, 3])
-      expect(r.comments).toMatchObject([{ id: 42, version: 2, page: "index", quote: "Plan", prefix: "# ", suffix: "", comment: "Why?", sent_at: null }])
+      expect(r.images).toEqual([{ name: "images/c.avif", sha256: "h1" }])
+      expect(r.image === null ? null : [Array.from(r.image.data), r.image.width, r.image.height]).toEqual([[0, 1, 2, 3], 4, 3])
+      expect(r.comments).toMatchObject([{ id: 42, page_path: "index", quote: "Plan", prefix: "# ", suffix: "", comment: "Why?", sent_at: null }])
       expect(r.client).toBe("client-1")
       expect(r.connection).toMatchObject({ kind: "oauth", expires_at: 1_800_000_000_000, login: "me" })
       expect(r.published).toMatchObject({ remote_version: 3, local_version: 2, login: "me" })

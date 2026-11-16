@@ -130,8 +130,7 @@ export const McpControlRegistered = Layer.effectDiscard(
           : Effect.void,
       cancel: (run, requestId) => control.cancel(run, requestId),
     })
-    // gh's server is served (4.4), and docs' (6.3); the desktop's (6.10) while its gate says so (computer use on, a driver
-    // to run).
+    // gh's server is served (4.4); the desktop's (6.10) while its gate says so (computer use on, a driver to run).
     const servers = yield* McpServers
     yield* requests.provideServers({
       manifest: control.manifest,
@@ -139,7 +138,7 @@ export const McpControlRegistered = Layer.effectDiscard(
       // HE-37: the spaces' while theirs says so (on for the host's agents, and Docker answers).
       served: Effect.map(
         Effect.all([servers.serves("desktop"), servers.serves("spaces"), servers.defined], { concurrency: 1 }),
-        ([desktop, spaces, plugins]) => ({ gh: true, docs: true, desktop, spaces, plugins }),
+        ([desktop, spaces, plugins]) => ({ gh: true, desktop, spaces, plugins }),
       ),
     })
   }),

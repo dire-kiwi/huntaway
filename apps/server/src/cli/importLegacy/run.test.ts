@@ -162,6 +162,9 @@ describe("import-legacy", () => {
       // What the replaced board leaves in place: its worktrees, registered in their repositories by path.
       yield* fs.makeDirectory(`${tmp}/new/projects/j1/worktrees/1-x`, { recursive: true })
       yield* fs.makeDirectory(`${tmp}/new/runs/r1`, { recursive: true })
+      // HE-42: a plugin's data is the board's it was made from (the docs plugin's copy of its documents).
+      yield* fs.makeDirectory(`${tmp}/new/plugins/docs`, { recursive: true })
+      yield* fs.writeFileString(`${tmp}/new/plugins/docs/plugin.db`, "a")
       const result = yield* importLegacy({ ...options(`${tmp}/b`, `${tmp}/new`), replace: true })
       expect(result.passes).toBe(true)
       expect(result.checkOnly).toBe(false)
@@ -170,6 +173,7 @@ describe("import-legacy", () => {
       expect(profiles.map((p) => p.name)).toEqual(["Board B"])
       expect(yield* fs.exists(`${tmp}/new/projects/j1/worktrees/1-x`)).toBe(true)
       expect(yield* fs.exists(`${tmp}/new/runs/r1`)).toBe(false)
+      expect(yield* fs.exists(`${tmp}/new/plugins`)).toBe(false)
       // The replaced board, whole, in replaced-<time>/.
       const aside = result.replaced
       expect(aside).not.toBeNull()
@@ -178,6 +182,7 @@ describe("import-legacy", () => {
       expect((yield* fs.readFileString(`${aside}/host_id`)).trim()).toBe("host-a")
       expect(yield* fs.readFileString(`${aside}/import.json`)).toContain('"old_host_id":"host-a"')
       expect(yield* fs.exists(`${aside}/runs/r1`)).toBe(true)
+      expect(yield* fs.readFileString(`${aside}/plugins/docs/plugin.db`)).toBe("a")
       const before = yield* onBoard<{ readonly name: string }>(aside, `SELECT name FROM profiles`)
       expect(before.map((p) => p.name)).toEqual(["Board A"])
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
