@@ -45,3 +45,19 @@ test("the panel starts on the host with profiles, and says so of one without", a
     await ui.run(["wait has no profiles", "gone home-skill"])
   })
 })
+
+// HE-41 review: the shown host came from the connected hosts on every render, so when it dropped the panel moved to the
+// board's own host and remounted, closing an open editor and losing what was typed in it.
+test("a host that goes offline stays shown, with its open editor", async () => {
+  await withBrowser(board, {}, async (ui) => {
+    const { page } = ui
+    await ui.run(["goto /settings/tools", "wait home-skill", "click New skill"])
+    const editor = page.locator("textarea")
+    await editor.fill("---\nname: half-typed\n---\n")
+    home.kill()
+    await ui.run(["wait homeserver is offline"])
+    assert.equal(await editor.inputValue(), "---\nname: half-typed\n---\n")
+    assert.equal(await page.locator("#settings-tab-panel select option:checked").innerText(), "homeserver (offline)")
+    await ui.run(["gone has no profiles"])
+  })
+})

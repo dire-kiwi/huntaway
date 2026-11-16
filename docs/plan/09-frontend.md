@@ -424,7 +424,9 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 - **Changed.** Every host has sources, subfolders, `/plan` and `/new`, so the API checks are gone; the host picker waited
   for M7 (the page's own host), and came back in HE-41: with more than one host that runs agents, a picker says whose
   tools these are, starting on this board's host if it has profiles, else on the first that has (a board whose own
-  host has none showed tools no agent got, with no profile to switch them on; `tests/ui/globalAgentToolsHost.test.mjs`);
+  host has none showed tools no agent got, with no profile to switch them on). The host is settled once the board
+  has loaded and kept while it's offline, so the panel doesn't remount (losing an open editor) or move to another host
+  when a link drops; the picker lists it as offline (`tests/ui/globalAgentToolsHost.test.mjs`);
   the menu's state is adjusted during render and its list keyed by task and config
   instead of a ref the lint refuses.
 - **Checks.** `tests/ui/skillSources.test.mjs` (the old one, and a global skill and server added, switched, refused and

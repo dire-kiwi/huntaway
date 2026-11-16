@@ -125,6 +125,7 @@ export function AccessPicker({ own, value, onChange }: { own: string; value: Rea
 /** Hosts that can take agent work. */
 export function HostSelect({ value, onChange }: { value: string; onChange: (id: string) => void }) {
   const hosts = useBoard(useShallow((s) => s.hosts.filter((h) => canRunAgents(h))))
+  const picked = useBoard((s) => s.hosts.find((h) => h.id === value))
   return (
     <select
       value={value}
@@ -137,6 +138,7 @@ export function HostSelect({ value, onChange }: { value: string; onChange: (id: 
           {h.local ? " (this host)" : ""}
         </option>
       ))}
+      {value && picked && !hosts.some((h) => h.id === value) && <option value={value}>{`${picked.name} (offline)`}</option>}
     </select>
   )
 }
