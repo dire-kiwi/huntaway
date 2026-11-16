@@ -123,6 +123,8 @@ export const SILENCE = "60 seconds"
 /** How long `link.hello` may take, and a dial-in host to answer a request for a socket. */
 const HELLO_TIMEOUT = "10 seconds"
 const STREAM_TIMEOUT = "30 seconds"
+/** An attach-back that lasted this long resets its back-off. */
+const ATTACH_LASTED = Duration.minutes(1)
 /** A link's own session lasts this long; a connection that outlives it is dialled again. */
 const LINK_SESSION = Duration.days(7)
 
@@ -387,14 +389,25 @@ export class LinkConnections extends Context.Service<
           yield* connectedView(link.id, hello, "dialled")
           yield* Effect.logInfo(`connected to host ${link.name}`)
           // Both ways: the host may ask this one for sockets, on this connection (it registers this host as `reverse`).
+          // Held for as long as the connection lasts: attached again, backing off, whenever it ends or is refused (the
+          // host forgot the link, or still held a registration that has since gone).
           if (link.mesh && meshes(hello)) {
             const answers = yield* FiberSet.make()
             const there = (path: string) => dial(wsUrl(url, path), { headers: { authorization: `Bearer ${token}` } })
-            yield* client("link.attach", mine).pipe(
+            const attachBack = client("link.attach", mine).pipe(
               Stream.runForEach((request) => FiberSet.run(answers, answer(link.id, request, there))),
               Effect.catchCause((cause) => Effect.logDebug(`host ${link.name} doesn't reach this host back`, cause)),
-              Effect.forkScoped,
             )
+            yield* Effect.gen(function* () {
+              let backoff = Duration.seconds(1)
+              for (;;) {
+                const started = yield* Clock.currentTimeMillis
+                yield* attachBack
+                const lasted = (yield* Clock.currentTimeMillis) - started
+                backoff = lasted >= Duration.toMillis(ATTACH_LASTED) ? Duration.seconds(1) : Duration.min(Duration.times(backoff, 2), Duration.seconds(30))
+                yield* Effect.sleep(backoff)
+              }
+            }).pipe(Effect.forkScoped)
           }
           yield* Deferred.await(disconnected)
           yield* Effect.logInfo(`lost host ${link.name}`)
@@ -469,7 +482,11 @@ export class LinkConnections extends Context.Service<
         if (session.kind !== "link" || (session.via_link !== null && !reverse)) return "a host dials in with the hub token"
         if (hello.host_id === identity.hostId) return "a host can't link to itself"
         const id = LinkId.make(hello.host_id)
-        if ((yield* Ref.get(lives)).has(id)) return `host ${hello.host_id} is already connected to this hub`
+        // One that attaches back holds this host's token, so it takes the place of a registration of its id that came
+        // with less (a dial-in), or one of its own the host has since lost (a half-open socket after a network drop).
+        const existing = (yield* Ref.get(lives)).get(id)
+        if (existing !== undefined && !(reverse && (existing.via === "reverse" || existing.via === "dial-in")))
+          return `host ${hello.host_id} is already connected to this hub`
         const row = yield* repo.get(id)
         if (!reverse && row?.mode === "reverse")
           return `${row.name} links ${identity.hostName} itself, so a host that dials in under its id (${id}) with the hub token isn't taken for it`
@@ -517,10 +534,17 @@ export class LinkConnections extends Context.Service<
               null,
             )
             const live: Registered = { id, hello, client, via, open, drop: (reason) => Deferred.succeed(dropped, reason).pipe(Effect.asVoid) }
-            const registered = yield* Ref.modify(lives, (all): [boolean, ReadonlyMap<LinkId, Registered>] =>
-              all.has(id) ? [false, all] : [true, new Map(all).set(id, live)],
+            const replaces = (other: Registered) => via === "reverse" && (other.via === "reverse" || other.via === "dial-in")
+            const before = yield* Ref.modify(
+              lives,
+              (all): [{ readonly ok: boolean; readonly old: Registered | undefined }, ReadonlyMap<LinkId, Registered>] => {
+                const other = all.get(id)
+                if (other !== undefined && !replaces(other)) return [{ ok: false, old: undefined }, all]
+                return [{ ok: true, old: other }, new Map(all).set(id, live)]
+              },
             )
-            if (!registered) return yield* new LinkRefused({ reason: `host ${hello.host_id} is already connected to this hub` })
+            if (!before.ok) return yield* new LinkRefused({ reason: `host ${hello.host_id} is already connected to this hub` })
+            if (before.old !== undefined) yield* before.old.drop(`${hello.name} attached back again`)
             yield* Effect.addFinalizer(() => unregister(live))
             if (over !== undefined) {
               yield* Ref.update(attachedOn, (all) => new Map(all).set(over, live))

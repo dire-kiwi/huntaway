@@ -230,6 +230,10 @@ describe("the mesh, whole servers", () => {
         yield* hostsWhen(b2, (hs) => entry(hs, aId)?.connected !== true, "A no longer attaches back")
         yield* a("hub.hosts.update", { id: LinkId.make(bId), mesh: true })
         yield* hostsWhen(b2, (hs) => entry(hs, aId)?.connected === true, "A attaches back to B, whose profile's assistant runs on A")
+
+        // B forgets A's link back: A, still linking B, attaches back again and B shows it once more.
+        yield* b2("hub.hosts.remove", { id: LinkId.make(aId) })
+        yield* hostsWhen(b2, (hs) => entry(hs, aId)?.connected === true && entry(hs, aId)?.mode === "reverse", "A comes back to B after B forgot it")
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     90_000,
   )
