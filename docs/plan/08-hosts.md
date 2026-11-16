@@ -282,7 +282,11 @@ show as one board on every one of them.
   call board tools up its control connection, under `uplink`). `as` on `hub.hosts.openRelay` only ever narrows the
   asker's own session. A host that dialled in (`--hub`) asks its hub for a ticket on the
   connection it attached on (`link.ticket { path, session }`), which the hub gives while its `inbound` link to that host
-  has the switch on; the host opens the hub's `/api/relay/<ticket>`, piped to the hub's own `path` with the session
+  has the switch on. That link starts with the switch **off** when a host dials in under an id the hub hasn't seen
+  (`LinkRepo.upsert`): the hub token, which every host given it holds, is all that names it, so the user lets each one
+  reach the hub back once, in Settings → Hosts (decided with the user on review of HE-46; a link this host makes starts
+  on). With it on, the hub token is what that host's board user then holds on the hub's board, and a host claiming
+  that id while it is away does too; the host opens the hub's `/api/relay/<ticket>`, piped to the hub's own `path` with the session
   sealed by the hub, and registers the hub as a `hub` link (a `links` row with its URL and no token) while its connection
   lasts. Only `outbound` and `ssh` links are dialled (`dials`); a `reverse` or `hub` link waits for the other end and
   shows `offline` until it is heard from. Each of these is a `Live` like the others, so the relay, settings sync and discovery use them alike. The switch

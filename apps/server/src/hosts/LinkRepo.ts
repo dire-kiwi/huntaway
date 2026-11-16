@@ -29,7 +29,10 @@ export const LinkRow = Schema.Struct({
   ssh: JsonColumn(Schema.NullOr(SshTarget), null),
   /** Its agents may use this board's tools, up the link. */
   uplink: Bit,
-  /** It may reach this board back, and the hosts this one reaches (HE-46): `outbound`, `ssh` and `inbound` links. */
+  /**
+   * It may reach this board back, and the hosts this one reaches (HE-46): `outbound`, `ssh` and `inbound` links. On for a
+   * link this host makes; off for a host that dials in under an id not seen before, until the user turns it on.
+   */
   mesh: Bit,
   /** When the hub last heard from it, written when its connection ends. */
   last_seen: Schema.NullOr(Timestamp),
@@ -89,9 +92,11 @@ export class LinkRepo extends Context.Service<LinkRepo, LinkRepoShape>()("huntaw
         upsert: (link) =>
           Effect.gen(function* () {
             const ssh = link.ssh === null ? null : yield* encodeSsh(link.ssh)
+            // A host that dials in for the first time is known only by the id it gives with the hub token, which every
+            // such host holds: it reaches this board back (Mesh) only once the user lets it (HE-46).
             yield* link.mode === "inbound" || link.mode === "hub"
-              ? sql`INSERT INTO links (id, name, mode, url, token, ssh, uplink, created_at)
-                    VALUES (${link.id}, ${link.name}, ${link.mode}, ${link.url}, NULL, NULL, 0, ${link.now})
+              ? sql`INSERT INTO links (id, name, mode, url, token, ssh, uplink, mesh, created_at)
+                    VALUES (${link.id}, ${link.name}, ${link.mode}, ${link.url}, NULL, NULL, 0, ${link.mode === "inbound" ? 0 : 1}, ${link.now})
                     ON CONFLICT (id) DO UPDATE SET name = excluded.name`
               : link.mode === "reverse"
                 ? sql`INSERT INTO links (id, name, mode, url, token, ssh, uplink, created_at)

@@ -315,7 +315,10 @@ function MeshToggle({ host }: { host: Host }) {
               sync (skills and MCP servers too) reaches the hosts beyond it. Off, only this host reaches {host.name}.
             </span>
             {host.mode === "inbound" && (
-              <span className="block">{host.name} dials in with the hub token, so any host given that token could claim to be it while it is away.</span>
+              <span className="block">
+                {host.name} dials in with the hub token, which any host given it holds, so a host that dials in for the first time starts with this off, and any
+                host given that token could claim to be {host.name} while it is away.
+              </span>
             )}
           </>
         }

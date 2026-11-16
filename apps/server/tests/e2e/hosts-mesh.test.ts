@@ -132,7 +132,7 @@ describe("the mesh, whole servers", () => {
   )
 
   it.live(
-    "a host that dials in to a hub reaches the hub back, while the hub's link to it has its Mesh switch on",
+    "a host that dials in to a hub reaches the hub back once the hub turns its Mesh switch on, and not after it's off",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
@@ -144,8 +144,13 @@ describe("the mesh, whole servers", () => {
         const hubId = (yield* hub("host.info", undefined)).host_id
         const hostId = (yield* host("host.info", undefined)).host_id
 
+        // A host the hub hasn't seen before: known only by the id it gives with the hub token, it starts with Mesh off.
         const onHub = yield* hostsWhen(hub, (hs) => entry(hs, hostId)?.connected === true, "the hub shows the host")
-        assert.deepStrictEqual([entry(onHub, hostId)?.mode, entry(onHub, hostId)?.mesh], ["inbound", true])
+        assert.deepStrictEqual([entry(onHub, hostId)?.mode, entry(onHub, hostId)?.mesh], ["inbound", false])
+        const refused = yield* Effect.flip(host("hub.hosts.openRelay", { host_id: hubId }))
+        assert.strictEqual(refused._tag, "NotFound")
+        // On: the hub drops the host, which dials in again and reaches the hub back.
+        yield* hub("hub.hosts.update", { id: LinkId.make(hostId), mesh: true })
         const onHost = yield* hostsWhen(host, (hs) => entry(hs, hubId)?.connected === true, "the host shows the hub")
         assert.strictEqual(entry(onHost, hubId)?.mode, "hub")
 
