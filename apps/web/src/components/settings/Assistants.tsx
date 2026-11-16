@@ -6,6 +6,7 @@ import { useBoard } from "../../state/board"
 import { profileNames } from "../boardHelpers"
 import { unavailableNote, useAssistantHome } from "../task/assistant"
 import { GoogleCard } from "../task/GoogleCard"
+import { PanelHeading } from "./parts"
 
 export function AssistantsPanel() {
   const profiles = useBoard((s) => s.profiles)
@@ -13,9 +14,8 @@ export function AssistantsPanel() {
   if (!names.length) return null
   return (
     <section>
-      <h2 className="mb-3 text-[13px] font-semibold">Assistant</h2>
-      <p className="mb-3 text-[12.5px] text-muted">What each profile's assistant reaches beyond the board: its Google account (Gmail, Calendar and Drive).</p>
-      <div className="space-y-3">
+      <PanelHeading title="Assistant" description="What each profile's assistant reaches beyond the board: its Google account (Gmail, Calendar and Drive)." />
+      <div className="mt-5 space-y-3">
         {names.map((name) => (
           <AssistantCard key={name} profile={name} />
         ))}

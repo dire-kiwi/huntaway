@@ -5,7 +5,7 @@ import { useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
 import { DEFAULT_REVIEWER, InheritPicker, ReviewerList, reviewerLabel, SummarizerList, useReviewerExtras } from "../../task/Reviewers"
 import { Field, Help, Input, ToggleField } from "../../ui"
-import { Group } from "./parts"
+import { Group } from "../parts"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
 // Every host has every setting here, so the old API gates and the single summarizer are gone (docs/plan/09-frontend.md).

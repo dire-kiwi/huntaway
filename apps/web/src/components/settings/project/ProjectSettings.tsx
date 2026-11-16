@@ -13,9 +13,10 @@ import { ProjectAgentTools } from "../AgentTools"
 import { ProjectAutomations } from "../Automations"
 import { GuideLink } from "../Guide"
 import { ProjectWorkflows } from "../Workflows"
-import { Button, ConfirmModal, Help, MenuButton } from "../../ui"
+import { Button, ConfirmModal, MenuButton } from "../../ui"
 import { toJson } from "../../ui/json"
 import { AgentsTab } from "./AgentsTab"
+import { PanelHeading } from "../parts"
 import { GeneralTab } from "./GeneralTab"
 import { PromptsTab } from "./PromptsTab"
 import { PullRequestsTab } from "./PullRequestsTab"
@@ -260,17 +261,8 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
             ))}
           </nav>
           <div id="project-tab-panel" role="tabpanel" aria-labelledby={`project-tab-${current.id}`} className="min-w-0 flex-1 space-y-6">
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5">
-                <h2 className="text-[15px] font-semibold">{current.label}</h2>
-                {current.help && (
-                  <Help key={current.id} label={current.label}>
-                    {current.help}
-                  </Help>
-                )}
-              </div>
-              <p className="text-[12.5px] text-faint">{current.description}</p>
-            </div>
+            {/* Keyed, so help that's kept open closes with its tab. */}
+            <PanelHeading key={current.id} title={current.label} description={current.description} help={current.help} />
 
             {current.id === "general" && (
               <GeneralTab

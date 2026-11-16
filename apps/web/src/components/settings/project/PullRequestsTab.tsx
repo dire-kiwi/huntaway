@@ -2,7 +2,7 @@ import { WatchPullRequests } from "@huntaway/contracts"
 import { Schema } from "effect"
 import { useBoard } from "../../../state/board"
 import { Field, Input, ToggleField } from "../../ui"
-import { Group, selectClass } from "./parts"
+import { Group, selectClass } from "../parts"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
 // Every host has every setting here, so the old API gates are gone, and subprojects' pull requests with subprojects

@@ -166,7 +166,9 @@ test("Settings says why notifications can't work on a page that isn't secure", a
     const { page } = ui
     // As on a plain-HTTP LAN address.
     await page.addInitScript(() => Object.defineProperty(window, "isSecureContext", { value: false }))
-    await ui.run(["goto /settings/notifications", "click role=radio[name='Both']", "wait Notifications can't work here", "wait The sound plays once"])
+    await ui.run(["goto /settings/notifications", "click role=radio[name='Both']", "wait Notifications can't work here"])
+    // What the sound needs is behind the ? beside the setting (HE-39).
+    await ui.run(["click Help: Notify with", "wait role=tooltip >> text=The sound plays once", "press Escape", "gone role=tooltip"])
     assert.equal(await page.getByRole("button", { name: "Enable" }).count(), 0)
   })
 })

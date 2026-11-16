@@ -2,7 +2,7 @@ import { Archive, Trash2 } from "lucide-react"
 import type { HostProject as Project } from "@huntaway/client"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 import { Button, Field, Input, Toggle } from "../../ui"
-import { Group } from "./parts"
+import { Group } from "../parts"
 
 /** The General tab: the project's name, key, folder and group, and archiving or deleting it. */
 export function GeneralTab({

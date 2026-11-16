@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect } from "react"
 import { DEFAULT_TINT, previewTint } from "../../../theme"
-import { Button } from "../../ui"
+import { Button, Help } from "../../ui"
 
 /**
  * A profile's tint (see theme.ts): `value` is `#rrggbb` or null for the stock theme. The board shows the colour picked
@@ -15,7 +15,10 @@ export function TintField({ value, onChange, picked }: { value: string | null; o
   useLayoutEffect(() => () => previewTint(undefined), [])
   return (
     <div className="space-y-1.5">
-      <span className="block text-xs font-medium text-muted">Theme tint</span>
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-medium text-muted">Theme tint</span>
+        <Help label="Theme tint">The board takes on this colour&apos;s hue while this profile is the one in the sidebar, in every browser.</Help>
+      </div>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-[12.5px] text-fg">
           <input
@@ -31,7 +34,6 @@ export function TintField({ value, onChange, picked }: { value: string | null; o
           Reset to stock theme
         </Button>
       </div>
-      <span className="block text-xs text-faint">The board takes on this colour's hue while this profile is the one in the sidebar, in every browser.</span>
     </div>
   )
 }

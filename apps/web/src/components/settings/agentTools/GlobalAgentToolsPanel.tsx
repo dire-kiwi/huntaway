@@ -12,6 +12,7 @@ import { Button, resultError, resultValue, useConfirm } from "../../ui"
 import { SkillEditor } from "./SkillsSection"
 import { McpEditor } from "./McpSection"
 import { SourceCard, SourceAdder } from "./SkillSources"
+import { PanelHeading } from "../parts"
 import { describe, rejectFailure, type Change } from "./parts"
 
 // Settings → Skills and MCP (6.4; huntaway's settings/agentTools/GlobalAgentToolsPanel.tsx). Every host here has skill
@@ -142,86 +143,93 @@ function HostAgentTools({ hostId, offline, picker }: { hostId: string; offline: 
   }
   return (
     <section>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-[13px] font-semibold">Skills and MCP servers</h2>
-        <div className="flex gap-2">
-          <Button size="sm" onClick={() => setAddingSource(true)}>
-            <GitBranch size={13} /> Add from git
-          </Button>
-          <Button size="sm" onClick={() => setEditing({ kind: "skill", item: null })}>
-            <Plus size={13} /> New skill
-          </Button>
-          <Button size="sm" onClick={() => setEditing({ kind: "server", item: null })}>
-            <Plus size={13} /> Add MCP server
-          </Button>
-        </div>
+      <PanelHeading
+        title="Skills and MCP"
+        description="Skills and MCP servers for agents, kept on the host rather than in a repository. Saved as you change them."
+        help={
+          <>
+            <span className="block">
+              Each profile switches them on or off by default for its projects, and a project can override that in its settings, or add its own.
+            </span>
+            <span className="block">
+              Skills can also come from a git repository, as with <code>npx skills</code>: add the repository, then switch on the skills you want.
+            </span>
+          </>
+        }
+      >
+        <Button size="sm" onClick={() => setAddingSource(true)}>
+          <GitBranch size={13} /> Add from git
+        </Button>
+        <Button size="sm" onClick={() => setEditing({ kind: "skill", item: null })}>
+          <Plus size={13} /> New skill
+        </Button>
+        <Button size="sm" onClick={() => setEditing({ kind: "server", item: null })}>
+          <Plus size={13} /> Add MCP server
+        </Button>
+      </PanelHeading>
+      <div className="mt-5 space-y-3">
+        {picker && <div className="w-64">{picker}</div>}
+        {offline && (
+          <div className="rounded-xl border border-dashed border-line p-3 text-[12.5px] text-muted">
+            {hostName} is offline: its skills and MCP servers can't be read or changed until it's back.
+          </div>
+        )}
+        {tools && profiles.length === 0 && (
+          <div className="rounded-xl border border-dashed border-line p-3 text-[12.5px] text-muted">
+            {hostName} has no profiles, so its skills and MCP servers reach no agent and there is nothing to switch on.
+            {picker ? " Pick the host your projects run on." : ""}
+          </div>
+        )}
+        {tools && (
+          <div className="space-y-3">
+            {tools.skills.length + tools.mcp_servers.length === 0 && tools.skill_sources.length === 0 && (
+              <div className="rounded-xl border border-dashed border-line p-4 text-[12.5px] text-faint">No global skills or MCP servers on this host yet.</div>
+            )}
+            {ownSkills.length > 0 && (
+              <div className="rounded-xl border border-line">
+                <div className="px-3 pt-2.5 text-[12px] font-medium text-muted">Skills</div>
+                <div className="divide-y divide-line/70">{ownSkills.map(row)}</div>
+              </div>
+            )}
+            {tools.skill_sources.map((src) => {
+              const skills = tools.skills.filter((s) => s.source_id === src.id)
+              return (
+                <SourceCard
+                  key={src.id}
+                  source={src}
+                  skills={skills}
+                  profiles={profiles}
+                  isOn={isOn}
+                  updating={updating === src.id}
+                  renderSkill={row}
+                  onSwitchAll={(profileId, on) =>
+                    void run(mutate("agentTools.setSwitch", hostId, { scope: "profile", scope_id: profileId, source_id: src.id, enabled: on ? true : null }))
+                  }
+                  onUpdate={() => {
+                    setUpdating(src.id)
+                    void run(mutate("agentTools.updateSource", hostId, { id: src.id })).finally(() => setUpdating(null))
+                  }}
+                  onRemove={() =>
+                    confirm.ask({
+                      title: `Remove ${src.name}`,
+                      body: `Remove "${src.name}" and its ${skills.length} skill${skills.length === 1 ? "" : "s"} from every profile and project on this host?`,
+                      action: "Remove source",
+                      danger: true,
+                      onConfirm: () => confirmed(mutate("agentTools.removeSource", hostId, { id: src.id })),
+                    })
+                  }
+                />
+              )
+            })}
+            {tools.mcp_servers.length > 0 && (
+              <div className="rounded-xl border border-line">
+                <div className="px-3 pt-2.5 text-[12px] font-medium text-muted">MCP servers</div>
+                <div className="divide-y divide-line/70">{tools.mcp_servers.map(row)}</div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
-      <p className="mb-3 text-[12.5px] text-muted">
-        Skills and MCP servers for agents, kept on the host rather than in a repository. Each profile switches them on or off by default for its projects, and a
-        project can override that in its settings, or add its own. Skills can also come from a git repository, as with npx skills: add the repository, then
-        switch on the skills you want.
-      </p>
-      {picker && <div className="mb-3 w-64">{picker}</div>}
-      {offline && (
-        <div className="mb-3 rounded-xl border border-dashed border-line p-3 text-[12.5px] text-muted">
-          {hostName} is offline: its skills and MCP servers can't be read or changed until it's back.
-        </div>
-      )}
-      {tools && profiles.length === 0 && (
-        <div className="mb-3 rounded-xl border border-dashed border-line p-3 text-[12.5px] text-muted">
-          {hostName} has no profiles, so its skills and MCP servers reach no agent and there is nothing to switch on.
-          {picker ? " Pick the host your projects run on." : ""}
-        </div>
-      )}
-      {tools && (
-        <div className="space-y-3">
-          {tools.skills.length + tools.mcp_servers.length === 0 && tools.skill_sources.length === 0 && (
-            <div className="rounded-xl border border-dashed border-line p-4 text-[12.5px] text-faint">No global skills or MCP servers on this host yet.</div>
-          )}
-          {ownSkills.length > 0 && (
-            <div className="rounded-xl border border-line">
-              <div className="px-3 pt-2.5 text-[12px] font-medium text-muted">Skills</div>
-              <div className="divide-y divide-line/70">{ownSkills.map(row)}</div>
-            </div>
-          )}
-          {tools.skill_sources.map((src) => {
-            const skills = tools.skills.filter((s) => s.source_id === src.id)
-            return (
-              <SourceCard
-                key={src.id}
-                source={src}
-                skills={skills}
-                profiles={profiles}
-                isOn={isOn}
-                updating={updating === src.id}
-                renderSkill={row}
-                onSwitchAll={(profileId, on) =>
-                  void run(mutate("agentTools.setSwitch", hostId, { scope: "profile", scope_id: profileId, source_id: src.id, enabled: on ? true : null }))
-                }
-                onUpdate={() => {
-                  setUpdating(src.id)
-                  void run(mutate("agentTools.updateSource", hostId, { id: src.id })).finally(() => setUpdating(null))
-                }}
-                onRemove={() =>
-                  confirm.ask({
-                    title: `Remove ${src.name}`,
-                    body: `Remove "${src.name}" and its ${skills.length} skill${skills.length === 1 ? "" : "s"} from every profile and project on this host?`,
-                    action: "Remove source",
-                    danger: true,
-                    onConfirm: () => confirmed(mutate("agentTools.removeSource", hostId, { id: src.id })),
-                  })
-                }
-              />
-            )
-          })}
-          {tools.mcp_servers.length > 0 && (
-            <div className="rounded-xl border border-line">
-              <div className="px-3 pt-2.5 text-[12px] font-medium text-muted">MCP servers</div>
-              <div className="divide-y divide-line/70">{tools.mcp_servers.map(row)}</div>
-            </div>
-          )}
-        </div>
-      )}
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
       {confirm.dialog}
       {addingSource && (

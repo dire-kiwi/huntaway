@@ -327,8 +327,8 @@ repository without changing it. Like a document task it has no worktree, review 
 marks it done. Scratch tasks replace the scratch chats of earlier versions: those became done scratch tasks (in no
 project, whichever project they were in) that keep working in their old folder, so their conversations carry on.
 
-**Experiments** (Settings → _Experiments_) are features still being tried, each with a switch and a line on what it
-does. They may change or go away. All are off until you switch one on, and a switch is for the whole board: it's kept
+**Experiments** (Settings → _Experiments_) are features still being tried, each with a switch and, behind the ?
+beside it, what it does. They may change or go away. All are off until you switch one on, and a switch is for the whole board: it's kept
 on the board's own host, so it holds in every browser and the desktop app, and settings sync carries it to the hosts
 that sync (see _Settings sync_ in Hosts). The experiments:
 

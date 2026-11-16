@@ -10,6 +10,7 @@ import { exitError, runExit, useAction, useMutation } from "../../state/mutation
 import { Button, Field, Input, Modal, ModalFooter, useConfirm } from "../ui"
 import { usageAlert } from "../ui/usageConfigs"
 import { CopyLoginModal, type CopyRequest } from "./hosts/CopyLoginModal"
+import { PanelHeading } from "./parts"
 
 // Copying a config's login to another host is 6.11's hosts/CopyLoginModal, given the board's hosts that run agents and
 // the hub's `hub.hosts.copyConfig` (`CopyLogin` below).
@@ -182,17 +183,24 @@ export function ClaudeConfigsPanel() {
   if (!first) return null
   return (
     <section>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-[13px] font-semibold">Agent configs</h2>
+      <PanelHeading
+        title="Agent configs"
+        description="The Claude Code and Codex logins on each host, for profiles and projects to pick from."
+        help={
+          <>
+            <span className="block">
+              A config is a Claude Code or Codex config directory on a host, with its own login, settings and history. A thread&apos;s config decides which
+              agent runs it.
+            </span>
+            <span className="block">Configs with the same name on different hosts appear together.</span>
+          </>
+        }
+      >
         <Button size="sm" onClick={() => setEditing({ host: first.id })}>
           <Plus size={13} /> Add config
         </Button>
-      </div>
-      <p className="mb-3 text-[12.5px] text-muted">
-        A Claude Code or Codex config directory on a host, with its own login, settings and history. Profiles pick which configs their agents can use, and a
-        project can pick its own; a thread's config decides which agent runs it. Configs with the same name on different hosts appear together.
-      </p>
-      <div className="space-y-3">
+      </PanelHeading>
+      <div className="mt-5 space-y-3">
         {names.map((name) => {
           const rows = configs.filter((c) => c.name === name)
           const missing = online.filter((h) => !rows.some((c) => c.host_id === h.id))
@@ -342,7 +350,7 @@ function ConfigForm({
       <Field label="Name">
         <Input autoFocus={!presetName} value={name} placeholder="work / personal" onChange={(e) => setName(e.target.value)} disabled={!!presetName} />
       </Field>
-      <Field label="Agent" hint={initial ? "Threads that have started keep the agent their conversation is with." : undefined}>
+      <Field label="Agent" help={initial ? "Threads that have started keep the agent their conversation is with." : undefined}>
         <div className="flex gap-1.5">
           {AGENTS.map((a) => (
             <button
@@ -361,7 +369,20 @@ function ConfigForm({
       </Field>
       <Field
         label="Config directory"
-        hint={`On that host. Passed as ${info.env}, so each config has its own login, settings and history. Run \`${info.env}=… ${agent}\` there once to log in, or copy a login from another host.`}
+        help={
+          <>
+            <span className="block">
+              On that host. Passed as <code>{info.env}</code>, so each config has its own login, settings and history. Run{" "}
+              <code>
+                {info.env}=… {agent}
+              </code>{" "}
+              there once to log in, or copy a login from another host.
+            </span>
+            {initial && (
+              <span className="block">Changing it moves agents to the new directory, but threads already started keep their conversation in the old one.</span>
+            )}
+          </>
+        }
       >
         <Input
           className="font-mono text-[12px]"
@@ -372,22 +393,22 @@ function ConfigForm({
           }}
         />
       </Field>
-      {initial && (
-        <div className="text-[12px] text-faint">
-          Changing the directory moves agents to it, but threads already started keep their conversation in the old one.
-        </div>
-      )}
       {agent === "claude" && (
         <Field
           label="Proxy (optional)"
-          hint="An Anthropic-compatible proxy, such as CLIProxyAPI pooling several subscriptions. Its agents, titles and terminals send their requests there (ANTHROPIC_BASE_URL) instead of using the directory's login; the directory's settings, skills and history are still used."
+          help={
+            <>
+              An Anthropic-compatible proxy, such as CLIProxyAPI pooling several subscriptions. Its agents, titles and terminals send their requests there (
+              <code>ANTHROPIC_BASE_URL</code>) instead of using the directory&apos;s login; its settings, skills and history are still used.
+            </>
+          }
         >
           <Input className="font-mono text-[12px]" value={apiUrl} placeholder="http://192.168.1.10:8317" onChange={(e) => setApiUrl(e.target.value)} />
         </Field>
       )}
       {proxied && (
         <>
-          <Field label="Proxy API key" hint="One of the proxy's client keys (ANTHROPIC_AUTH_TOKEN). It stays on the host.">
+          <Field label="Proxy API key" help="One of the proxy's client keys (ANTHROPIC_AUTH_TOKEN). It stays on the host.">
             <Input
               type="password"
               autoComplete="off"
@@ -408,7 +429,12 @@ function ConfigForm({
       {(proxied || settingsProxy) && (
         <Field
           label="Management key (optional)"
-          hint="CLIProxyAPI's management key, to show its Claude accounts' usage with Show usage (needs management.allow-remote: true in its config). It can act as any of those accounts, so it stays on the host."
+          help={
+            <>
+              CLIProxyAPI&apos;s management key, to show its Claude accounts&apos; usage with Show usage (needs <code>management.allow-remote: true</code> in
+              its config). It can act as any of those accounts, so it stays on the host.
+            </>
+          }
         >
           <Input
             type="password"

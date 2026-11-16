@@ -51,6 +51,8 @@ export function Modal({
     const onKey = (e: KeyboardEvent) => {
       // A dialog opened from this one (a confirmation, say) takes the keys while it's open.
       if (box.current && !topModal(box.current)) return
+      // An Escape that closed something in the dialog (a setting's help kept open) doesn't close the dialog too.
+      if (e.key === "Escape" && e.defaultPrevented) return
       if (e.key === "Escape") onClose()
       else if (onSubmit && isSubmitShortcut(e)) {
         // Stops the textarea newline, or a click on a focused button.

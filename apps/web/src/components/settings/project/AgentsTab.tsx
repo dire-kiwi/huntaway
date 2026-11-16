@@ -7,7 +7,7 @@ import type { ProjectForm, SetField } from "./ProjectSettings"
 import { ConfigPicker } from "../ClaudeConfigs"
 import { GithubAccountSelect } from "../hosts/profileFields"
 import { Field, Input } from "../../ui"
-import { selectClass } from "./parts"
+import { selectClass } from "../parts"
 
 const isMode = Schema.is(PermissionMode)
 

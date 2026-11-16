@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react"
 import { query, type QueryResult } from "@huntaway/client"
 import type { HostInfo } from "@huntaway/contracts"
 import { AsyncResult, Atom } from "effect/reactivity"
+import { clsx } from "clsx"
 import { Download, Loader2, RotateCw } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../state/board"
@@ -9,6 +10,7 @@ import { Button, resultError, resultValue, timeAgo } from "../ui"
 import { PHASES, RunningServer, short, stagedRelease, useServerStatus } from "./server/parts"
 import { Releases, ShellNotice } from "./server/Releases"
 import { RestartModal } from "./server/RestartModal"
+import { PanelHeading } from "./parts"
 import { useNewUiBuild } from "./uiVersion"
 
 // Settings → Server (docs/plan/09-frontend.md): what this server runs and where (`admin.status`, polled and read again on
@@ -80,7 +82,7 @@ export function UpdateButton() {
 }
 
 /** Server section on the Settings page: the host serving this UI. */
-export function ServerPanel() {
+export function ServerPanel({ small }: { small?: boolean | undefined }) {
   const host = useBoard((s) => s.localHostId)
   const { info } = useHostInfo(host)
   const { status } = useServerStatus(host, "15 seconds", { focus: true })
@@ -91,25 +93,27 @@ export function ServerPanel() {
   const staged = stagedRelease(status)
   return (
     <section>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-[13px] font-semibold">Server</h2>
-        <div className="flex gap-2">
-          {staged && (
-            <Button size="sm" variant="primary" onClick={() => setOpen("release")}>
-              <Download size={13} /> Update to v{staged}
-            </Button>
-          )}
-          {ahead > 0 && (
-            <Button size="sm" variant="primary" onClick={() => setOpen("update")}>
-              <Download size={13} /> Update to {short(deployed?.commit)}
-            </Button>
-          )}
-          <Button size="sm" onClick={() => setOpen("restart")} disabled={!status}>
-            <RotateCw size={13} /> {status?.source_dir || !release ? "Rebuild & restart" : "Restart"}
+      <PanelHeading
+        title="Server"
+        small={small}
+        description={small ? undefined : "What this board's own server runs, and its restarts and updates."}
+        help={small ? undefined : "Agents keep running through a restart. A linked host's server is on its page, from Settings → Hosts."}
+      >
+        {staged && (
+          <Button size="sm" variant="primary" onClick={() => setOpen("release")}>
+            <Download size={13} /> Update to v{staged}
           </Button>
-        </div>
-      </div>
-      <div className="space-y-1.5 rounded-xl border border-line p-4 text-[12.5px] text-muted">
+        )}
+        {ahead > 0 && (
+          <Button size="sm" variant="primary" onClick={() => setOpen("update")}>
+            <Download size={13} /> Update to {short(deployed?.commit)}
+          </Button>
+        )}
+        <Button size="sm" onClick={() => setOpen("restart")} disabled={!status}>
+          <RotateCw size={13} /> {status?.source_dir || !release ? "Rebuild & restart" : "Restart"}
+        </Button>
+      </PanelHeading>
+      <div className={clsx("space-y-1.5 rounded-xl border border-line p-4 text-[12.5px] text-muted", small ? "mt-3" : "mt-5")}>
         {status ? (
           <>
             <RunningServer status={status} info={info} />

@@ -8,6 +8,7 @@ import { Button, Modal, ModalFooter, timeAgo } from "../ui"
 import { exitError, runExit, useMutation } from "../../state/mutation"
 import { board, useBoard } from "../../state/board"
 import { profileNames } from "../boardHelpers"
+import { PanelHeading } from "./parts"
 
 /**
  * Archives `project`: it goes off the board (the sidebar, its profile's and group's boards, agents'
@@ -81,8 +82,8 @@ export function ArchivedProjectsPanel() {
   const err = state.error !== null && last ? `Unarchiving ${last.name}: ${state.error}` : null
   return (
     <section>
-      <h2 className="mb-3 text-[13px] font-semibold">Archived projects</h2>
-      <div className="rounded-xl border border-line">
+      <PanelHeading title="Archived projects" description="Projects taken off the board. Their tasks, worktrees and branches are kept." />
+      <div className="mt-5 rounded-xl border border-line">
         {!list.length ? (
           <div className="px-4 py-3 text-[12.5px] text-faint">
             No archived projects. Archive one from its menu in the sidebar (right-click it) or its settings.

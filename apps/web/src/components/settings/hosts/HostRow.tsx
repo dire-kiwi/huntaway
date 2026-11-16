@@ -10,7 +10,7 @@ import { useState } from "react"
 import { useBoard } from "../../../state/board"
 import { exitError, useAction } from "../../../state/mutation"
 import { navigate } from "../../../state/route"
-import { Button, Input, timeAgo, Toggle, useConfirm } from "../../ui"
+import { Button, Input, timeAgo, ToggleField, useConfirm } from "../../ui"
 import { compareVersions } from "../versions"
 import { hubMutate, hubRpc, useHubMutation } from "./hub"
 import { useUpdateCommit } from "./useUpdateCommit"
@@ -254,20 +254,31 @@ function UplinkToggle({ host }: { host: Host }) {
   if (host.local || !(host.uplink || host.connected)) return null
   return (
     <div className="mt-2 space-y-1">
-      <Toggle
+      <ToggleField
         checked={host.uplink}
         onChange={(on) => {
           if (!action.busy) void update({ id: LinkId.make(host.id), uplink: on })
         }}
         label="Let this host's agents use this board"
+        help={
+          <>
+            <span className="block">
+              Agents on {host.name}, in the profiles whose assistant runs there, can list, read, create and change this board&apos;s projects and tasks (and its
+              other hosts&apos;), with the access that profile has here. Off, they only see their own host&apos;s board and the hosts it links.
+            </span>
+            {host.mode === "inbound" && (
+              <span className="block">
+                {host.name} dials in to this board, which knows it only by the id it gives with the hub token: any host given that token could claim to be it. A
+                host linked over SSH or by URL can&apos;t be stood in for.
+              </span>
+            )}
+          </>
+        }
       />
-      <div className="text-[11.5px] text-faint">
-        {host.uplink
-          ? `Agents on ${host.name}, in the profiles whose assistant runs there, can list, read, create and change this board's projects and tasks (and its other hosts'), with the access that profile has here.`
-          : `Agents on ${host.name} only see their own host's board and the hosts it links.`}
-        {host.mode === "inbound" &&
-          ` ${host.name} dials in to this board, which knows it only by the id it gives with the hub token: any host given that token could claim to be it. A host linked over SSH or by URL can't be stood in for.`}
-      </div>
+      {/* What's at stake while it's on stays in sight. */}
+      {host.uplink && host.mode === "inbound" && (
+        <div className="text-[11.5px] text-amber-200/90">It dials in, so any host given the hub token could claim to be it.</div>
+      )}
       {action.error && <div className="text-xs text-red-400">{action.error}</div>}
     </div>
   )

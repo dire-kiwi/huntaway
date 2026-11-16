@@ -479,8 +479,27 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   Workflows, Automations, Status scripts. Pull requests (`/settings/pull-requests`, `PullRequestsTab.tsx`) is the half
   of the old Review tab that wasn't reviews or summaries: the pull request switch, watching and previews, then
   _Merging_ (GitHub approval, merge approval, Done when merged). Within a tab, settings that belong together are under
-  a heading (`project/parts.tsx`'s `Group`). The project's own agent configs are a select like its other inherited
+  a heading (`settings/parts.tsx`'s `Group`). The project's own agent configs are a select like its other inherited
   settings, and the prompts are named Start, Review and Merge prompt.
+- **The board's settings laid out the same way (HE-39).** `/settings`'s tabs keep their ids and labels (so
+  `Settings → <label>` in the UI and the guide still names them) and are in four groups down the side, with a line
+  between: Hosts, Profiles, Archived projects (the board); Agent configs, Skills and MCP, Plugins, Assistant (what its
+  agents run with); Notifications, Keyboard shortcuts (this browser); Server, Network access, Experiments (this
+  server). Hosts is still the tab `/settings` opens on. Each panel starts with `settings/parts.tsx`'s `PanelHeading`,
+  which the project settings use too: its label, one line on what it's for, the rest behind the ? beside the label,
+  and its buttons at the right (`small` is the Server panel's on a host's page, which is not laid out again). The
+  paragraphs the panels opened with are that line and that help. Within the panels: an experiment's description, the
+  uplink switch's (a host that dials in keeps one amber line under it while it's on), Nearby hosts' and the scratch
+  host's are behind a ?; Notifications is _Notify with_, _When a task_ and the count, then _Push to this device_ as a
+  `Group`, with what each event is in the ? beside the list rather than after each name; Network access is the URL
+  alone (the data folder and version it ended with are Settings → Server's); Skills and MCP's heading is its tab's
+  label. A profile's form (`hosts/ProfileForm.tsx`, also the first profile's on a fresh board and a host's page's) is
+  its name and tint, then _Agents_ (configs, default model, the assistant's and threads' agents, running out of
+  usage), _GitHub and Asana_ (account, clone folder, Asana), _Review and merging_ (reviewers, summarizers, the two
+  approvals) and _Access_ (other profiles' agents, the assistant's host, telemetry), each setting's text behind its ?
+  (`ToggleField` for the switches, which no longer say one thing on and another off under them). An agent config's
+  form has its hints behind ? too. Escape closes help that's kept open in a dialog, not the dialog with it (`Modal`
+  leaves an Escape that something in it has taken).
 - **HE-6's parts, after it merged.** Settings → Server is the old one over `admin.status` (polled, and on focus) with
   `host.info`'s machine and data folder: Rebuild & restart, Update to a deployed commit, the source checkout and the
   deployment and their new commits, and under `settings/server/` the release checks (`Releases`: Check now, the
@@ -697,8 +716,8 @@ and the override went with the last one.
 
 ### Experiments (HE-22)
 
-Settings → **Experiments** (`settings/Experiments.tsx`) lists the features still being tried, each with a switch, its
-name and a line on what it does. All are off at first.
+Settings → **Experiments** (`settings/Experiments.tsx`) lists the features still being tried, each with a switch and
+its name, and what it does behind the ? beside that (HE-39). All are off at first.
 
 - **One list.** `EXPERIMENTS` in `packages/contracts/src/experiments.ts` is every experiment (`id`, `name`,
   `description`), and `ExperimentId` its ids. Adding one is an entry there: the tab lists it, the host keeps its switch

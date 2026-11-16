@@ -2,14 +2,53 @@ import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
 import { eventually, failure, routeRpc, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
-// The settings panels of 6.12 that no other check covers: a refused profile delete, a shortcut's key, and the first
-// profile on a fresh board.
+// The settings panels of 6.12 that no other check covers: the tabs' groups and their help, a refused profile delete, a
+// shortcut's key, and the first profile on a fresh board.
 let server, board
 beforeAll(async () => {
   server = startServer()
   board = await seedBoard(server)
 })
 afterAll(() => server?.stop())
+
+// HE-39: the settings' tabs are in groups down the side, as a project's are, and what a section or a setting is for is
+// behind the ? beside its name. This server runs no agents, so Agent configs and Skills and MCP have no tab.
+test("the settings' tabs are in groups, with help behind a ? in the tabs and the profile's form", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    await ui.run(["goto /settings", "wait css=h2:text-is('Hosts')"])
+    const nav = page.getByRole("tablist", { name: "Settings" })
+    // The tabs in their order, with a line where a group ends.
+    const order = await nav.evaluate((el) => [...el.children].map((c) => (c.getAttribute("role") === "tab" ? c.textContent : "|")))
+    assert.deepEqual(order, [
+      "Hosts",
+      "Profiles",
+      "Archived projects",
+      "|",
+      "Plugins",
+      "Assistant",
+      "|",
+      "Notifications",
+      "Keyboard shortcuts",
+      "|",
+      "Server",
+      "Network access",
+      "Experiments",
+    ])
+    assert.equal(await page.getByRole("tooltip").count(), 0)
+    await ui.run(["click Help: Hosts", "wait role=tooltip >> text=Each host keeps its own projects", "press Escape", "gone role=tooltip"])
+    // A tab's help closes with its tab.
+    await ui.run(["click Help: Hosts", "wait role=tooltip", "click role=tab[name='Experiments']", "wait css=h2:text-is('Experiments')", "gone role=tooltip"])
+    await ui.run(["hover Help: Fold finished turns", "wait role=tooltip >> text=Worked for 2m 10s"])
+
+    // The profile's form: its settings under headings, and Escape closes the help kept open, not the dialog with it.
+    await ui.run(["goto /settings/profiles", "wait css=h2:text-is('Profiles')", "click Edit", "wait css=[role=dialog] h3:text-is('Review and merging')"])
+    for (const group of ["Agents", "GitHub and Asana", "Access"]) await ui.run([`wait css=[role=dialog] h3:text-is('${group}')`])
+    await ui.run(["click Help: Clone folder", "wait role=tooltip >> text=clones repositories", "press Escape", "gone role=tooltip"])
+    assert.equal(await page.locator("[role=dialog]").count(), 1, "the dialog stays open")
+    await ui.run(["press Escape", "gone css=[role=dialog]"])
+  })
+})
 
 // HA-40 (the old confirmErrors check): deleting a profile was fire-and-forget: a refusal (agents running, a host
 // offline) left the page as it was with no message, and a double-click sent it twice.
@@ -25,7 +64,7 @@ test("a refused profile delete shows its error in the dialog, and a double-click
       return new Promise((r) => setTimeout(() => r(undefined), 400))
     })
     const deletes = () => calls.filter((c) => c.tag === "profiles.delete").length
-    const row = page.locator("section:has(> div > h2:text-is('Profiles')) .rounded-xl:has(> div:text-is('Spare'))")
+    const row = page.locator("section:has(h2:text-is('Profiles')) .rounded-xl:has(> div:text-is('Spare'))")
     await ui.run(["goto /settings/profiles", "wait css=h2:text-is('Profiles')"])
     await row.locator("button[title='Delete']").click()
     await ui.run(["wait css=[role=dialog] >> text=Delete profile Spare", "click css=[role=dialog] button:has-text('Delete profile')"])

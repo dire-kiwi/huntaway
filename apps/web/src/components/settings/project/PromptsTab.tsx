@@ -5,7 +5,7 @@ import { clsx } from "clsx"
 import { Schema } from "effect"
 import { useState } from "react"
 import { Help, resultError, resultValue, Textarea, Toggle } from "../../ui"
-import { Group } from "./parts"
+import { Group } from "../parts"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
 /** A prompt a project can have its own of. */
