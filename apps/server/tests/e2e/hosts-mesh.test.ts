@@ -1,6 +1,6 @@
 import { NodeServices, NodeWS } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem, Layer, Option, Stream } from "effect"
+import { Effect, Exit, FileSystem, Layer, Option, Stream } from "effect"
 import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
 import { Socket } from "effect/socket"
 import { Auth, HostRpcs, HubRpcs, LinkId, PublicRpcs } from "@huntaway/contracts"
@@ -187,6 +187,9 @@ describe("the mesh, whole servers", () => {
         yield* hub("hub.hosts.update", { id: LinkId.make(hostId), mesh: false })
         yield* hostsWhen(host, (hs) => entry(hs, hubId) === undefined || entry(hs, hubId)?.connected === false, "the host no longer reaches the hub")
         yield* hostsWhen(hub, (hs) => entry(hs, hostId)?.connected === true, "the hub reaches the host again")
+        // The socket the host's client had open through it ended with it: nothing it opened while on lasts.
+        const after = yield* Effect.exit(toHub("host.info", undefined).pipe(Effect.timeout("10 seconds")))
+        assert.isTrue(Exit.isFailure(after), "a relay the host opened while its Mesh was on still answers")
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     90_000,
   )

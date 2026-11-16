@@ -290,7 +290,11 @@ show as one board on every one of them.
   sealed by the hub, and registers the hub as a `hub` link (a `links` row with its URL and no token) while its connection
   lasts. Only `outbound` and `ssh` links are dialled (`dials`); a `reverse` or `hub` link waits for the other end and
   shows `offline` until it is heard from. Each of these is a `Live` like the others, so the relay, settings sync and discovery use them alike. The switch
-  turned off redials the link (or drops the host that dialled in, which dials again and gets no tickets).
+  turned off redials the link (or drops the host that dialled in, which dials again and gets no tickets). A ticket
+  given for a session that came over a link (every `link.ticket` one, and one asked for under a session with
+  `via_link`) is held to that link's connection at the time (`Relay`'s `Guard`): it isn't taken once the connection has
+  gone or the link no longer lets it in, and a relay opened with it ends then too (`Opened.revoked`, raced with the pipe),
+  so the switch turned off cuts every socket the host opened while it was on, not only its connection (review of HE-46).
 - **Settings sync and the directory with a host that dialled in** wait for the switch too (`sharedWith`, on review of
   HE-46): while its `inbound` link has it off, the hub neither reads that host's synced entries, nor sends it its own,
   nor watches its board or its directory, so the hub token alone neither reads nor writes any host's skills, MCP servers
