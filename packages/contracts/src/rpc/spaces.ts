@@ -2,14 +2,16 @@ import { Schema } from "effect"
 import { Rpc, RpcGroup } from "effect/rpc"
 import { Invalid, NotFound, Unavailable } from "../errors.ts"
 import { Auth, RequiredScope } from "../session.ts"
-import { NewSpace, Space, SpacesStatus, SpaceView } from "../space.ts"
+import { ProfileId } from "../ids.ts"
+import { NewSignIn, NewSpace, SignedIn, SignIn, SignInChange, Space, SpacesStatus, SpaceView } from "../space.ts"
 
 const SpaceRef = { id: Schema.String }
 
 /**
  * Spaces (HE-35): Linux desktops in Docker on a host. Seeing them is `terminal` (a Space's viewer drives its desktop);
  * making, starting, stopping, deleting them and copying sign-ins in are `admin`. `Unavailable` where the host has no
- * Docker.
+ * Docker. HE-48's sign-ins are a profile's on this host, and `admin` too: the list has no passwords, and none of them
+ * answers with one.
  */
 export class SpacesRpcs extends RpcGroup.make(
   Rpc.make("spaces.status", { success: SpacesStatus }).annotate(RequiredScope, "terminal"),
@@ -29,4 +31,20 @@ export class SpacesRpcs extends RpcGroup.make(
     success: SpaceView,
     error: Schema.Union([NotFound, Unavailable]),
   }).annotate(RequiredScope, "terminal"),
+  /** HE-48: a profile's sign-ins on this host (every profile's when left out), without their passwords. */
+  Rpc.make("signIns.list", { payload: { profile_id: Schema.optional(ProfileId) }, success: Schema.Array(SignIn) }).annotate(RequiredScope, "admin"),
+  /** Save one: `Invalid` (`url`) for an address that isn't http(s), (`username`, `password`) for an empty one. */
+  Rpc.make("signIns.create", { payload: NewSignIn, success: SignIn, error: Schema.Union([Invalid, NotFound]) }).annotate(RequiredScope, "admin"),
+  Rpc.make("signIns.update", { payload: SignInChange, success: SignIn, error: Schema.Union([Invalid, NotFound]) }).annotate(RequiredScope, "admin"),
+  Rpc.make("signIns.delete", { payload: { id: Schema.String }, error: NotFound }).annotate(RequiredScope, "admin"),
+  /**
+   * Type a sign-in into a running Space's browser and submit it: the server opens the site's address in a Chromium
+   * of its own (the profile `huntaway-sign-in`, which keeps the session) and fills the form only on the sign-in's
+   * origin. `Invalid` (`page`) when the page is on another origin or has no password field.
+   */
+  Rpc.make("spaces.signIn", {
+    payload: { id: Schema.String, sign_in_id: Schema.String },
+    success: SignedIn,
+    error: Schema.Union([NotFound, Unavailable, Invalid]),
+  }).annotate(RequiredScope, "admin"),
 ).middleware(Auth) {}

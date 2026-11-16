@@ -1,9 +1,9 @@
 import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Fiber, Schema } from "effect"
+import { Effect, Fiber, Option, Redacted, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { SqlClient } from "effect/sql"
-import { CallId } from "@huntaway/contracts"
+import { CallId, ProfileId } from "@huntaway/contracts"
 import { fakeAgent, fakeDocker, fakeSpacesd, TestBoard } from "@huntaway/testing"
 import type { FakeAgent, FakeDocker, FakeSpacesd } from "@huntaway/testing"
 import { SPACES_READS } from "../agents/claude/access.ts"
@@ -12,6 +12,7 @@ import { McpServers, SPACES_INSTRUCTIONS } from "../mcp/McpServers.ts"
 import { ToolCalls } from "../mcp/ToolCalls.ts"
 import { Permissions } from "../permissions/Permissions.ts"
 import { NAME_PREFIX } from "./containers.ts"
+import { SignIns } from "./SignIns.ts"
 import { Spaces } from "./Spaces.ts"
 
 // The `spaces` server (HE-37) as a run calls it, through `ToolCalls`, on the whole board over a fake Docker CLI
@@ -40,6 +41,9 @@ const spacesCall = (agent: FakeAgent, tool: string, args: unknown, id?: string) 
     const result = yield* (yield* ToolCalls).call({ call_id: call, run: agent.run.id, server: "spaces", tool, args })
     return yield* callResult(result, "spaces")
   })
+
+/** A value as JSON, to look for text in. */
+const jsonOf = (v: unknown) => Option.getOrElse(Schema.encodeOption(Schema.fromJsonString(Schema.Unknown))(v), () => "")
 
 const Said = Schema.Struct({ content: Schema.Array(Schema.Unknown), isError: Schema.optional(Schema.Boolean) })
 const TextPart = Schema.Struct({ type: Schema.Literal("text"), text: Schema.String })
@@ -71,7 +75,18 @@ describe("the spaces server", () => {
           const tools = yield* servers.tools("spaces", false)
           assert.deepStrictEqual(
             tools.map((t) => t.name),
-            ["list_spaces", "create_space", "start_space", "stop_space", "delete_space", "space_bash", "space_list_tools", "space_call_tool", "space_view"],
+            [
+              "list_spaces",
+              "create_space",
+              "start_space",
+              "stop_space",
+              "delete_space",
+              "space_bash",
+              "space_list_tools",
+              "space_call_tool",
+              "space_view",
+              "space_sign_in",
+            ],
           )
           for (const t of tools) assert.strictEqual(t.annotations?.["readOnlyHint"], SPACES_READS.includes(t.name), t.name)
           const init = servers.initializeResult("spaces", "2025-06-18")
@@ -248,6 +263,75 @@ describe("the spaces server", () => {
           yield* (yield* Spaces).setAgentTools(false)
           const off = said(yield* spacesCall(owner, "list_spaces", {}))
           assert.isTrue(off.error && off.text.includes("turned off"), off.text)
+        }),
+      ),
+    TIMEOUT,
+  )
+
+  it.effect(
+    "space_sign_in asks the user, then types the profile's saved sign-in on its own site; the agent never gets the password",
+    () =>
+      withSpaces(({ spacesd }) =>
+        Effect.gen(function* () {
+          const agent = yield* fakeAgent()
+          const sql = yield* SqlClient.SqlClient
+          // Bypass doesn't skip the asking.
+          yield* sql`UPDATE tasks SET permission_mode = 'bypassPermissions' WHERE id = ${agent.run.task_id}`
+          const rows = yield* sql<{ readonly profile_id: string }>`SELECT profile_id FROM tasks WHERE id = ${agent.run.task_id}`
+          const profile = ProfileId.make(rows[0]?.profile_id ?? assert.fail("no task"))
+          const id = idIn(said(yield* spacesCall(agent, "create_space", { name: "Web" })).text)
+          const url = "http://site.test:8000/login"
+
+          const none = said(yield* spacesCall(agent, "space_sign_in", { space: "Web", url }))
+          assert.isTrue(none.error && none.text.includes("no sign-in saved for http://site.test:8000"), none.text)
+
+          const secret = "s3cret Pa55&"
+          const signIns = yield* SignIns
+          const saved = yield* signIns.create({ profile_id: profile, url, username: "ada@example.test", password: Redacted.make(secret), label: "Ada" })
+          assert.strictEqual(saved.origin, "http://site.test:8000")
+          assert.notInclude(jsonOf(yield* signIns.list(profile)), "s3cret")
+
+          const permissions = yield* Permissions
+          const ask = (callId: string, allow: boolean) =>
+            Effect.gen(function* () {
+              const running = yield* Effect.forkChild(spacesCall(agent, "space_sign_in", { space: "Web", url }, callId))
+              const request = yield* permissions.asking(callId)
+              yield* permissions.answer(request, { decision: allow ? "allow" : "deny" }, "user").pipe(Effect.orDie)
+              return said(yield* Fiber.join(running))
+            })
+          const refused = yield* ask("s1", false)
+          assert.isTrue(refused.error && refused.text.includes("Not signed in"), refused.text)
+          assert.isTrue(spacesd.calls.every((c) => !c.tool.startsWith("browser_")))
+
+          const done = yield* ask("s2", true)
+          assert.isFalse(done.error, done.text)
+          assert.include(done.text, `Signed in to http://site.test:8000 as a***@example.test in Web`)
+          // The form went by GET, so the address after had the password in it: it's taken out.
+          assert.include(done.text, "/done?pw=***")
+          assert.deepStrictEqual(spacesd.browser.typed, [
+            { ref: "p1:1", text: "ada@example.test" },
+            { ref: "p1:3", text: secret },
+          ])
+          assert.deepStrictEqual(spacesd.browser.clicked, ["p1:5"])
+          // On the agent's own MCP session, and in the server's own browser profile.
+          const prepare = spacesd.calls.find((c) => c.tool === "browser_prepare")
+          assert.include(jsonOf(prepare?.args ?? null), '"profile":{"mode":"isolated_named","name":"huntaway-sign-in"}')
+          const sessions = new Set(spacesd.calls.filter((c) => c.tool.startsWith("browser_")).map((c) => c.session))
+          assert.strictEqual(sessions.size, 1)
+
+          // Nothing the board kept of the calls, or asked the user, has the password.
+          const kept = yield* sql`SELECT * FROM mcp_calls`
+          const asked = yield* sql`SELECT * FROM permission_requests`
+          for (const v of [kept, asked, done.text]) {
+            const t = jsonOf(v)
+            for (const form of [secret, encodeURIComponent(secret), "s3cret"]) assert.notInclude(t, form)
+          }
+
+          // A reviewer can't.
+          const reviewer = yield* fakeAgent()
+          yield* sql`UPDATE tasks SET kind = 'review' WHERE id = ${reviewer.run.task_id}`
+          const review = said(yield* spacesCall(reviewer, "space_sign_in", { space: id, url }))
+          assert.isTrue(review.error && review.text.includes("reviewers"), review.text)
         }),
       ),
     TIMEOUT,

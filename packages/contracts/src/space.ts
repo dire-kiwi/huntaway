@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { AgentConfigId } from "./ids.ts"
+import { AgentConfigId, ProfileId } from "./ids.ts"
 import { Timestamp } from "./time.ts"
 
 // Spaces (HE-35, after Cua Spaces): Linux desktops in Docker containers on a host, each running Cua's spacesd (its
@@ -70,3 +70,60 @@ export const SpaceView = Schema.Struct({
   expires_at: Timestamp,
 })
 export interface SpaceView extends Schema.Schema.Type<typeof SpaceView> {}
+
+// HE-48: sign-ins for Spaces, after Cua's Keyvault and `request_site_login`. A profile keeps logins (a site's origin, a
+// username, a password); when the user allows it, the host's server types one into a Space's browser through the
+// Space's Cua Driver, on that origin only. The password goes to the server and never comes back: no answer has it.
+
+/** A saved sign-in, without its password. */
+export const SignIn = Schema.Struct({
+  id: Schema.String,
+  profile_id: ProfileId,
+  /** The site it's for, `scheme://host[:port]`: it is typed only into a page on exactly this origin. */
+  origin: Schema.String,
+  username: Schema.String,
+  /** What the user calls it, if anything. */
+  label: Schema.NullOr(Schema.String),
+  created_at: Timestamp,
+  updated_at: Timestamp,
+  last_used_at: Schema.NullOr(Timestamp),
+})
+export interface SignIn extends Schema.Schema.Type<typeof SignIn> {}
+
+/** A password as it goes to the server: a plain string on the wire, `Redacted` once decoded (never logged or shown). */
+export const Password = Schema.RedactedFromValue(Schema.String, { label: "password" })
+
+/** What `signIns.create` takes: the site's address (its origin is kept), the username and the password. */
+export const NewSignIn = Schema.Struct({
+  profile_id: ProfileId,
+  url: Schema.String,
+  username: Schema.String,
+  password: Password,
+  label: Schema.optional(Schema.NullOr(Schema.String)),
+})
+export interface NewSignIn extends Schema.Schema.Type<typeof NewSignIn> {}
+
+/** What `signIns.update` changes; a field left out stays. */
+export const SignInChange = Schema.Struct({
+  id: Schema.String,
+  username: Schema.optional(Schema.String),
+  password: Schema.optional(Password),
+  label: Schema.optional(Schema.NullOr(Schema.String)),
+})
+export interface SignInChange extends Schema.Schema.Type<typeof SignInChange> {}
+
+/** What signing in did: never the password. */
+export const SignedIn = Schema.Struct({
+  origin: Schema.String,
+  /** The username, masked (`a***@example.com`). */
+  username_hint: Schema.String,
+  /** A submit button was found and clicked. */
+  submitted: Schema.Boolean,
+  /** Where the tab went after (with the password taken out, if a form put it in the address). */
+  page_url: Schema.String,
+  /** The browser tab it filled, as Cua Driver names it: the caller's, or one the server opened. */
+  session: Schema.String,
+  target_id: Schema.String,
+  tab_id: Schema.String,
+})
+export interface SignedIn extends Schema.Schema.Type<typeof SignedIn> {}

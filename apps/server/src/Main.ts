@@ -121,6 +121,8 @@ import { DesktopClaims } from "./desktop/DesktopClaims.ts"
 import { DesktopOpRepo } from "./desktop/DesktopOpRepo.ts"
 import { DesktopTools } from "./desktop/DesktopTools.ts"
 import { Docker } from "./spaces/Docker.ts"
+import { SignInRepo } from "./spaces/SignInRepo.ts"
+import { SignIns } from "./spaces/SignIns.ts"
 import { Spaces } from "./spaces/Spaces.ts"
 import { SpacesTools } from "./spaces/SpacesTools.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
@@ -622,7 +624,15 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(
     // 6.10: computer use, over the MCP area it registers its server with.
     Layer.provideMerge(DesktopLive),
     // HE-35: Spaces, Linux desktops in Docker; HE-37: and the `spaces` MCP server's tools, over the MCP area.
-    Layer.provideMerge(SpacesTools.pipe(Layer.provideMerge(Spaces.layer), Layer.provideMerge(Docker.layer))),
+    // HE-48: and the profiles' sign-ins, typed into a Space's browser.
+    Layer.provideMerge(
+      SpacesTools.pipe(
+        Layer.provideMerge(SignIns.layer),
+        Layer.provideMerge(SignInRepo.layer),
+        Layer.provideMerge(Spaces.layer),
+        Layer.provideMerge(Docker.layer),
+      ),
+    ),
     // 6.8: push, watching the board's events for what devices want.
     Layer.provideMerge(PushLive),
     // HE-34: the plugins, over the MCP area they define their servers with.
