@@ -311,6 +311,25 @@ show as one board on every one of them.
   on their host. `AgentTools` emits `agent_tools_changed` after a change to a global skill, server or source, which the
   observer and the exchange (here and on the hosts watching) take as a trigger, and the client's `agentTools.get`
   reads again on.
+- **The board's settings as an eventually consistent store.** Whichever host a client is on, it sees the same settings.
+  Sync is on unless a host switches it off (`settings_sync` "false"; unset is on, so every host takes part from the
+  start). The merge was already convergent (version vectors; changes made apart go to the later, then by host id, and
+  the value that lost is kept to use instead); what changed is how much of the board it holds
+  (`hosts/settingsSync/boardFields.ts`):
+  - **Profiles themselves**: `profile/<name>/exists` (true, or null once removed). A profile one host has is made on the
+    others (a row with no configs, then its other fields; `Profiles.scratchDirs` makes its scratch folder). One removed
+    is removed elsewhere only where it has no projects and no tasks (`ProfileRepo.holds`): sync never deletes work, and
+    the value it couldn't take waits (it isn't sent back as a change) until the profile holds nothing there.
+  - **More of a profile**: `asana_enabled`, `telemetry`, `telemetry_titles`, `tint`; its configs (`configs`), its
+    assistant's and threads' config, and its reviewers' and summarizers' configs, all by config name; its switches for
+    global skills and servers (`tool_switches`, `skill:<name>` and `mcp:<name>`).
+  - **Agent configs' options by config name**: `config/<name>/show_usage`, `restart_window`, `api_url`.
+  - **Skill sources**: `skill_source/<url>|<ref>|<folder>`. A host takes one with no commit, and `AgentTools.catchUp`
+    (at the start and on every `agent_tools_changed`) clones it there and deletes the clones of sources removed.
+  - A value naming a config, skill or server this host lacks is taken in part or not at all, and taken again once it has
+    it: settings sync's "couldn't take" path, which never sends this host's value back as a change. Paths (`clone_dir`,
+    `config_dir`), logins and keys (`asana_token`, configs' keys, telemetry's password), `assistant_host`,
+    `scratch_host`, `public_url`, the host's role, its links and every browser's own preferences stay where they are.
 - Tested: `hosts/Mesh.test.ts` (the path vector), `hosts/SettingsSync.test.ts` (skills and servers), and
   `tests/e2e/hosts-mesh.test.ts` (three servers in a chain by URL, a host dialled in to a hub, each switch turned off,
   and skills and servers synced through a host that links neither end).

@@ -81,8 +81,10 @@ export function HostPage({ hostId }: { hostId: string }) {
                 <section>
                   <h2 className="mb-1 text-[13px] font-semibold">Settings sync</h2>
                   <p className="mb-3 text-[12.5px] text-muted">
-                    Keeps the agent defaults, terminal tools, and each profile&apos;s model, limits, approvals and board access the same on every host of this
-                    board that has this on (profiles are matched by name). Folders, agent configs, logins and tokens stay each host&apos;s own.
+                    On unless switched off: the board&apos;s settings are the same on every host, whichever one you use. The agent defaults, terminal tools,
+                    experiments, global skills, MCP servers and skill sources, the profiles themselves with their settings, skill switches and approvals, and
+                    agent configs&apos; options sync; profiles and configs are matched by name. A profile removed elsewhere stays on a host where it still has
+                    projects or tasks. Folders, logins, tokens and links stay each host&apos;s own.
                   </p>
                   <SettingsSyncRow host={host} />
                 </section>

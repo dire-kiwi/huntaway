@@ -154,7 +154,7 @@ export class SettingsSync extends Context.Service<SettingsSync, SettingsSyncShap
             const cur = canon(yield* f.read)
             let r = have.get(f.name)
             // A skill or server this host doesn't have, which only another's entry names, isn't one it removed.
-            if (r === undefined && f.event._tag === "tools" && cur === canon(null)) continue
+            if (r === undefined && f.absentUnknown === true && cur === canon(null)) continue
             if (r === undefined) {
               r = { name: f.name, value: null, vv: {}, changed_at: "", changed_by: me, since, lost: [], seen: cur }
               beforeSync(r, parseJson(cur), since)

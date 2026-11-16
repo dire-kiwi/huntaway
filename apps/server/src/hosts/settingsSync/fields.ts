@@ -12,6 +12,7 @@ import type { ProfileColumns } from "../../profiles/ProfileRepo.ts"
 import { HostSettings } from "../../settings/HostSettings.ts"
 import { SettingsRepo } from "../../settings/SettingsRepo.ts"
 import { makeToolFields } from "./agentTools.ts"
+import { makeBoardFields, profilePrefix } from "./boardFields.ts"
 
 // The fields settings sync keeps the same on the hosts that switch it on (inventory 05 §3.3, the synced fields): a fixed
 // list, each under a name that doesn't depend on the host. A profile has a different id on each host, so its fields go
@@ -35,6 +36,11 @@ export interface Field {
   /** Sets it here, or `Refused` for a value this host can't take. */
   readonly write: (value: unknown) => Effect.Effect<void, Refused>
   readonly event: FieldEvent
+  /**
+   * Null here with no entry means this host lacks it (a skill, a server, a profile another host has), not that it was
+   * removed here: no entry is made for it (HE-46).
+   */
+  readonly absentUnknown?: boolean
 }
 
 /**
@@ -45,7 +51,7 @@ export const SETTING = "settings_sync"
 /** When this host began to sync, which goes when sync is switched off. */
 export const SINCE = "settings_sync_since"
 
-export const profilePrefix = (name: string) => `profile/${encodeURIComponent(name)}/`
+export { profilePrefix }
 
 const refuse = (reason: string) => Effect.fail(new Refused({ reason }))
 
@@ -162,6 +168,7 @@ export const makeFields = Effect.gen(function* () {
   const configs = yield* AgentConfigs
   const events = yield* Events
   const tools = yield* makeToolFields
+  const board = yield* makeBoardFields
 
   /**
    * The fields that sync, for the profiles this host has, and its global skills and servers with those `known` (the
@@ -208,7 +215,22 @@ export const makeFields = Effect.gen(function* () {
         })
       }
       for (const f of yield* tools.fields(known)) {
-        out.push({ name: f.name, read: f.read, write: (v) => Effect.mapError(f.write(v), (reason) => new Refused({ reason })), event: { _tag: "tools" } })
+        out.push({
+          name: f.name,
+          read: f.read,
+          write: (v) => Effect.mapError(f.write(v), (reason) => new Refused({ reason })),
+          event: { _tag: "tools" },
+          absentUnknown: true,
+        })
+      }
+      for (const f of yield* board.fields(known)) {
+        out.push({
+          name: f.name,
+          read: f.read,
+          write: (v) => Effect.mapError(f.write(v), (reason) => new Refused({ reason })),
+          event: { _tag: f.event },
+          absentUnknown: f.absentUnknown,
+        })
       }
       return out
     })

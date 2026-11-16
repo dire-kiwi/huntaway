@@ -62,6 +62,8 @@ export interface ProfileRepoShape {
   readonly asanaToken: (id: ProfileId) => Effect.Effect<Redacted.Redacted | null>
   /** How many of the profile's tasks have an agent running. */
   readonly running: (id: ProfileId) => Effect.Effect<number>
+  /** How many projects and tasks the profile has here: what keeps settings sync from deleting it (HE-46). */
+  readonly holds: (id: ProfileId) => Effect.Effect<number>
   /**
    * Delete the profile and what hangs off it, by hand and in order: review threads, its other tasks, its projects,
    * the row. (The foreign keys would cascade; the order is the old `delete_profile`'s, for the steps later milestones
@@ -117,6 +119,14 @@ export class ProfileRepo extends Context.Service<ProfileRepo, ProfileRepoShape>(
           Effect.orDie,
         )
 
+      const holds = (id: ProfileId) =>
+        sql<{
+          readonly n: number
+        }>`SELECT (SELECT COUNT(*) FROM projects WHERE profile_id = ${id}) + (SELECT COUNT(*) FROM tasks WHERE profile_id = ${id}) AS n`.pipe(
+          Effect.map((rows) => rows[0]?.n ?? 0),
+          Effect.orDie,
+        )
+
       const remove = (id: ProfileId) =>
         Effect.gen(function* () {
           const projects = ids(yield* sql<{ readonly id: ProjectId }>`SELECT id FROM projects WHERE profile_id = ${id}`)
@@ -142,6 +152,7 @@ export class ProfileRepo extends Context.Service<ProfileRepo, ProfileRepoShape>(
         update,
         asanaToken,
         running,
+        holds,
         delete: remove,
         usedPaths,
       })

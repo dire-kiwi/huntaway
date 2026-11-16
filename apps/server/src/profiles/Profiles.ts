@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, Layer, Option, Redacted, Result, Schema } from "effect"
+import { Context, Effect, FileSystem, Layer, Option, Redacted, Result, Schema, Stream } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Invalid, LinkId, ProfileId } from "@huntaway/contracts"
 import type { AgentConfigId, AsanaTask, Conflict, NewProfile, Profile, ProfilePatch } from "@huntaway/contracts"
@@ -243,6 +243,33 @@ export class Profiles extends Context.Service<Profiles, ProfilesShape>()("huntaw
       })
 
       return Profiles.of({ list: repo.list, get: getProfile, create, update, delete: remove, ensure, asanaTasks })
+    }),
+  )
+
+  /**
+   * Every profile's scratch folder, made at the start and whenever the profiles change: one settings sync made (HE-46)
+   * was made in a transaction, which makes no folders.
+   */
+  static readonly scratchDirs = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const repo = yield* ProfileRepo
+      const events = yield* Events
+      const dataDir = yield* DataDir
+      const fs = yield* FileSystem.FileSystem
+      const make = Effect.flatMap(repo.list, (all) =>
+        Effect.forEach(all, (p) => fs.makeDirectory(`${dataDir.profileDir(p.id)}/scratch`, { recursive: true }).pipe(Effect.ignore), {
+          concurrency: 1,
+          discard: true,
+        }),
+      )
+      yield* Effect.gen(function* () {
+        const watch = yield* events.watch(undefined)
+        yield* make
+        yield* watch.live.pipe(
+          Stream.filter((e) => e.type === "profiles_changed"),
+          Stream.runForEach(() => make),
+        )
+      }).pipe(Effect.scoped, Effect.forever, Effect.forkScoped)
     }),
   )
 

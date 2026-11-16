@@ -2,13 +2,17 @@ import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Context, Effect, Exit, FileSystem, Layer, Option } from "effect"
 import { TestClock } from "effect/testing"
-import { HostId, PROTOCOL } from "@huntaway/contracts"
-import type { ApprovalRule, HostSettingsPatch, NewProfile, ProfileId, ProfilePatch, SyncEntry } from "@huntaway/contracts"
-import { tempDir, TestBoard } from "@huntaway/testing"
+import { HostId, ProfileId, PROTOCOL } from "@huntaway/contracts"
+import type { ApprovalRule, HostSettingsPatch, NewProfile, ProfilePatch, SyncEntry } from "@huntaway/contracts"
+import { git, tempDir, TestBoard } from "@huntaway/testing"
 import { AgentTools } from "../agents/AgentTools.ts"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "../agents/ApprovalRulesRepo.ts"
+import { Actor } from "../platform/Changes.ts"
+import { DataDir } from "../platform/DataDir.ts"
+import { AgentConfigs } from "../profiles/AgentConfigs.ts"
 import { Profiles } from "../profiles/Profiles.ts"
+import { Tasks } from "../tasks/Tasks.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
 import { SettingsRepo } from "../settings/SettingsRepo.ts"
 import { SettingsSync } from "./SettingsSync.ts"
@@ -32,6 +36,9 @@ const boardAs = (id: string) =>
     const rules = Context.get(context, ApprovalRules)
     const rulesRepo = Context.get(context, ApprovalRulesRepo)
     const tools = Context.get(context, AgentTools)
+    const tasks = Context.get(context, Tasks)
+    const configs = Context.get(context, AgentConfigs)
+    const folders = Context.get(context, DataDir)
     const peer: SyncPeer = { id, name: id, get: sync.status, merge: (entries) => Effect.ignore(sync.merge(entries)) }
     return {
       id,
@@ -59,6 +66,11 @@ const boardAs = (id: string) =>
       setRules: (profile: ProfileId, list: ReadonlyArray<ApprovalRule>, expiry: number) =>
         Effect.andThen(Effect.orDie(rules.set(profile, { rules: list, expiry_minutes: expiry })), sync.observe),
       saved: (profile: ProfileId) => rulesRepo.saved(profile),
+      configs,
+      /** Its skill sources' clones. */
+      clones: folders.file("skill-sources"),
+      /** A scratch task in `profile`: something of the profile's on this host. */
+      task: (profile: string) => Effect.orDie(tasks.create({ profile_id: ProfileId.make(profile), title: "Notes" }, Actor.user)),
       /** The host's global skills and servers, changed as the board does it and noted. */
       tools,
       noted: <A, E>(change: Effect.Effect<A, E>) =>
@@ -347,7 +359,7 @@ describe("settings sync between a hub and two hosts", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   )
 
-  it.effect("a profile's settings go by its name, and wait for a host that has no profile of that name yet", () =>
+  it.effect("a profile's settings go by its name, and a profile one host has is made on the others (HE-46)", () =>
     Effect.gen(function* () {
       const t = yield* board()
       const pa = yield* t.a.profile({ name: "work" })
@@ -355,29 +367,54 @@ describe("settings sync between a hub and two hosts", () => {
       const pb = yield* t.b.profile({ name: "work" })
       assert.notStrictEqual(pa.id, pb.id)
       yield* t.settle()
-      yield* t.a.patch(pa.id, { limit_wait: true, default_model: "opus", agent_access: ["personal"] })
+      yield* t.a.patch(pa.id, { limit_wait: true, default_model: "opus", agent_access: ["personal"], tint: "#7c7cf8" })
       yield* t.a.patch(other.id, { merge_approval: true })
       const rules: ReadonlyArray<ApprovalRule> = [{ tool: "Bash", decision: "never" }]
       yield* t.a.setRules(pa.id, rules, 5)
       yield* t.settle()
       const work = yield* Effect.orDie(t.b.profiles.get(pb.id))
-      assert.deepStrictEqual([work.limit_wait, work.default_model, work.agent_access], [true, "opus", ["personal"]])
+      assert.deepStrictEqual([work.limit_wait, work.default_model, work.agent_access, work.tint], [true, "opus", ["personal"], "#7c7cf8"])
       assert.deepStrictEqual(yield* t.b.saved(pb.id), { rules, expiry_minutes: 5 })
-      // What belongs to the host stays: its configs and folders aren't entries at all.
-      assert.isFalse((yield* t.b.sync.entries).some((e) => /claude_config|clone_dir|asana|assistant_host/.test(e.name)))
+      // What belongs to the host stays: its configs' ids and folders, its Asana login, where its assistant runs.
+      assert.isFalse((yield* t.b.sync.entries).some((e) => /claude_config_ids|clone_dir|asana_token|asana_user|assistant_host/.test(e.name)))
 
-      // b gets a "personal" later: what a's has is waiting for it. Renamed on a, it's a profile of its own from then on.
-      const made = yield* t.b.profile({ name: "personal" })
-      yield* t.b.sync.observe
-      assert.isTrue((yield* Effect.orDie(t.b.profiles.get(made.id))).merge_approval)
-      yield* t.settle()
+      // "personal", which only a had, is on every host now, with its settings.
+      for (const h of [t.hub, t.b]) {
+        const made = (yield* h.profiles.list).find((p) => p.name === "personal")
+        assert.isTrue(made?.merge_approval, h.id)
+      }
       assert.deepStrictEqual(
         (yield* t.hub.sync.entries).filter((e) => e.lost.length > 0),
         [],
       )
+      // Renamed on a: "home" everywhere, and "personal" gone where it holds nothing.
       yield* t.a.patch(other.id, { name: "home", merge_approval: false })
       yield* t.settle()
-      assert.isTrue((yield* Effect.orDie(t.b.profiles.get(made.id))).merge_approval)
+      for (const h of [t.hub, t.b]) {
+        const names = (yield* h.profiles.list).map((p) => p.name).toSorted()
+        assert.deepStrictEqual(names, ["home", "work"], h.id)
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  )
+
+  it.effect("a profile removed on one host is removed on the others, but never where it holds work (HE-46)", () =>
+    Effect.gen(function* () {
+      const t = yield* board()
+      const pa = yield* t.a.profile({ name: "side" })
+      yield* t.settle()
+      const onB = (yield* t.b.profiles.list).find((p) => p.name === "side")
+      assert.isDefined(onB)
+      // b has a task in it; the hub has nothing.
+      yield* t.b.task(onB?.id ?? "")
+      yield* Effect.orDie(t.a.profiles.delete(pa.id))
+      yield* t.a.sync.observe
+      yield* t.settle([t.hub, t.a])
+      assert.isFalse((yield* t.hub.profiles.list).some((p) => p.name === "side"))
+      assert.isTrue((yield* t.b.profiles.list).some((p) => p.name === "side"))
+      // It doesn't come back to the others from b, which keeps it until it holds nothing.
+      yield* t.b.sync.observe
+      yield* t.settle([t.hub, t.a])
+      assert.isFalse((yield* t.a.profiles.list).some((p) => p.name === "side"))
     }).pipe(Effect.provide(NodeServices.layer)),
   )
 
@@ -540,6 +577,92 @@ describe("settings sync of the hosts' global skills and MCP servers (HE-46)", ()
       // A skill removed elsewhere that this host never had stays removed, with no entry of its own made for it.
       yield* t.a.sync.merge([entry("skill/gone", null)])
       assert.strictEqual((yield* t.a.entry("skill/gone"))?.changed_by, "x")
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+/** A git repository in a temp folder with one skill, committed. */
+const skillRepo = (name: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const dir = `${yield* tempDir}/repo`
+    yield* fs.makeDirectory(dir, { recursive: true }).pipe(Effect.orDie)
+    yield* git(dir, ["init", "-q", "-b", "main"])
+    yield* fs.writeFileString(`${dir}/SKILL.md`, skill(name)).pipe(Effect.orDie)
+    yield* git(dir, ["add", "-A"])
+    yield* git(dir, ["commit", "-q", "-m", "init"])
+    return dir
+  })
+
+describe("settings sync of the rest of the board (HE-46)", () => {
+  it.effect("a skill source is cloned on every host, and its clone goes with it", () =>
+    Effect.gen(function* () {
+      const t = yield* board()
+      yield* t.settle()
+      const fs = yield* FileSystem.FileSystem
+      const repo = yield* skillRepo("lint-rules")
+      const added = yield* t.a.noted(t.a.tools.addSource({ url: repo }))
+      yield* t.settle()
+      // b takes what to clone, and clones it itself.
+      const waiting = (yield* t.b.tools.global).skill_sources
+      assert.deepStrictEqual(
+        waiting.map((x) => [x.url, x.commit]),
+        [[repo, ""]],
+      )
+      yield* t.b.tools.catchUp
+      const onB = yield* t.b.tools.global
+      assert.deepStrictEqual(
+        onB.skills.map((x) => x.name),
+        ["lint-rules"],
+      )
+      assert.notStrictEqual(onB.skill_sources[0]?.commit, "")
+      const clone = `${t.b.clones}/${onB.skill_sources[0]?.id}`
+      assert.isTrue(yield* fs.exists(clone))
+      // Its skill is the source's: no field of its own.
+      assert.isUndefined(yield* t.b.entry("skill/lint-rules"))
+
+      yield* t.a.noted(t.a.tools.removeSource(added.source.id))
+      yield* t.settle()
+      assert.deepStrictEqual((yield* t.b.tools.global).skill_sources, [])
+      yield* t.b.tools.catchUp
+      assert.isFalse(yield* fs.exists(clone))
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+
+  it.effect("a profile's configs, reviewers and skill switches go by name; a config's options by its name", () =>
+    Effect.gen(function* () {
+      const t = yield* board()
+      // Each host has a config called "main", at its own folder.
+      const mainA = yield* Effect.orDie(t.a.configs.create({ name: "main", config_dir: "/a/claude" }))
+      const mainB = yield* Effect.orDie(t.b.configs.create({ name: "main", config_dir: "/b/claude" }))
+      yield* Effect.orDie(t.hub.configs.create({ name: "other", config_dir: "/hub/claude" }))
+      const work = yield* t.a.profile({ name: "work", claude_config_ids: [mainA.id] })
+      const x = yield* t.a.noted(t.a.tools.addSkill(null, { content: skill("deploy") }))
+      yield* t.settle()
+      yield* t.a.patch(work.id, { reviewers: [{ claude_config_id: mainA.id, model: "opus", effort: null }] })
+      yield* t.a.noted(t.a.tools.setSwitch({ scope: "profile", scope_id: work.id, item_id: x.id, enabled: true }))
+      yield* t.a.noted(t.a.configs.update(mainA.id, { show_usage: false, restart_window: true }))
+      yield* t.settle()
+
+      const onB = (yield* t.b.profiles.list).find((p) => p.name === "work")
+      assert.deepStrictEqual(onB?.claude_config_ids, [mainB.id])
+      assert.deepStrictEqual(
+        onB?.reviewers?.map((r) => [r.claude_config_id, r.model]),
+        [[mainB.id, "opus"]],
+      )
+      const xOnB = (yield* t.b.tools.global).skills.find((k) => k.name === "deploy")
+      assert.deepStrictEqual((yield* t.b.tools.global).profile_switches[onB?.id ?? ""], { [xOnB?.id ?? ""]: true })
+      const bMain = (yield* Effect.orDie(t.b.configs.list)).find((c) => c.id === mainB.id)
+      assert.deepStrictEqual([bMain?.show_usage, bMain?.restart_window, bMain?.config_dir], [false, true, "/b/claude"])
+
+      // The hub has no config of that name: its "work" waits with none, and doesn't send that back as a change.
+      const onHub = (yield* t.hub.profiles.list).find((p) => p.name === "work")
+      assert.deepStrictEqual(onHub?.claude_config_ids, [])
+      assert.deepStrictEqual((yield* t.a.profiles.list).find((p) => p.name === "work")?.claude_config_ids, [mainA.id])
+      assert.deepStrictEqual(
+        (yield* t.a.sync.entries).filter((e) => e.lost.length > 0),
+        [],
+      )
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })

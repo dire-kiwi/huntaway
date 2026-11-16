@@ -339,7 +339,7 @@ export const PlatformLive = platformLayer(Db.layer)
 
 // Step 4: every area, bottom up. Each line provides the ones above it.
 const SettingsLive = Layer.mergeAll(About.layer, HostSettings.layer, Folders.layer).pipe(Layer.provideMerge(SettingsRepo.layer))
-const ProfilesLive = Profiles.ensureFromConfig.pipe(
+const ProfilesLive = Layer.mergeAll(Profiles.ensureFromConfig, Profiles.scratchDirs).pipe(
   Layer.provideMerge(Layer.mergeAll(Profiles.layer, Usage.layer, ConfigArchives.layer)),
   Layer.provideMerge(AgentConfigs.layer),
   // 6.11: Asana (connecting a profile, its search) and config archives.
@@ -396,7 +396,7 @@ export interface ModelCalls<T, E1, R1, E2, R2, C = never, E3 = never, R3 = never
 }
 /** The agents area over what is above it. */
 const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
-  UsageWindow.loop.pipe(
+  Layer.mergeAll(UsageWindow.loop, AgentTools.catchingUp).pipe(
     Layer.provideMerge(
       Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer, CodexQueries.registered),
     ),

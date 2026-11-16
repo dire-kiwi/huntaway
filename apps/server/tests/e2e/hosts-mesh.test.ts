@@ -11,7 +11,7 @@ import { startServer } from "./launch.ts"
 // The mesh (HE-46; docs/plan/08-hosts.md, The mesh), whole servers: a link goes both ways, whichever host made it; each
 // host's directory lists the hosts its neighbours reach, and a client of any host reaches any other through the relay,
 // hop by hop; a link's Mesh switch off makes it one way again. Global skills and MCP servers sync across the mesh with
-// settings sync, through a host that links neither end.
+// settings sync (on unless switched off), through a host that links neither end, as profiles do.
 
 const BoardRpcs = PublicRpcs.merge(HostRpcs, HubRpcs)
 
@@ -183,6 +183,14 @@ describe("the mesh, whole servers", () => {
         yield* c("agentTools.removeSkill", { project_id: null, id: skill.id })
         yield* toolsWhen(a, (t) => !t.skills.some((s) => s.name === "deploy-notes"), "A no longer has the skill")
         yield* toolsWhen(b, (t) => !t.skills.some((s) => s.name === "deploy-notes") && t.mcp_servers.some((s) => s.name === "docs"), "B is the same")
+
+        // With no switch turned on anywhere (sync is on unless switched off): a profile made on C is on A, with its tint.
+        yield* c("profiles.create", { profile: { name: "side", tint: "#7c7cf8" } })
+        yield* until(
+          a("board.watch", {}).pipe(Stream.flatMap((m) => (m.type === "snapshot" || m.type === "profiles_changed" ? Stream.make(m.profiles) : Stream.empty))),
+          (profiles) => profiles.some((p) => p.name === "side" && p.tint === "#7c7cf8"),
+          "A has C's profile",
+        )
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     90_000,
   )

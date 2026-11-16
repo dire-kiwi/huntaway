@@ -10,19 +10,29 @@ import { Button, localeString, resultError, resultValue, toJson, Toggle } from "
 // A host's settings sync (docs/plan/09-frontend.md), over `settingsSync.get` and `settingsSync.resolve`, switched with
 // the host's `settings_sync` setting (`host.updateSettings`).
 
-/** A synced setting's name as the user knows it: `profile/work/limit_wait` is "work: limit wait". */
+/** A part of a synced setting's name, decoded. */
+const decoded = (part: string): string => {
+  try {
+    return decodeURIComponent(part)
+  } catch {
+    // Shown as it is.
+    return part
+  }
+}
+
+/**
+ * A synced setting's name as the user knows it: `profile/work/limit_wait` is "work: limit wait", `skill/deploy` "Skill
+ * deploy", `config/main/show_usage` "main config: show usage" (HE-46).
+ */
 export function syncLabel(name: string): string {
   const parts = name.split("/")
   const words = (parts.at(-1) ?? "").replaceAll("_", " ")
-  if (parts[0] === "profile" && parts.length === 3) {
-    let profile = parts[1] ?? ""
-    try {
-      profile = decodeURIComponent(profile)
-    } catch {
-      // Shown as it is.
-    }
-    return `${profile}: ${words}`
-  }
+  if (parts[0] === "profile" && parts.length === 3)
+    return parts[2] === "exists" ? `${decoded(parts[1] ?? "")}: on this board` : `${decoded(parts[1] ?? "")}: ${words}`
+  if (parts[0] === "config" && parts.length === 3) return `${decoded(parts[1] ?? "")} config: ${words}`
+  if (parts[0] === "skill" && parts.length === 2) return `Skill ${decoded(parts[1] ?? "")}`
+  if (parts[0] === "mcp_server" && parts.length === 2) return `MCP server ${decoded(parts[1] ?? "")}`
+  if (parts[0] === "skill_source" && parts.length === 2) return `Skill source ${decoded(parts[1] ?? "").split("|")[0] ?? ""}`
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
@@ -67,7 +77,7 @@ export function SettingsSyncRow({ host }: { host: Host }) {
       <p className="mt-1 text-[12px] text-faint">
         {sync.enabled
           ? "A setting changed here goes to the other hosts, and theirs come here. If two hosts change the same setting while one is disconnected, the later change wins and the other value is listed below."
-          : "Off: this host keeps its own settings. When it's turned on, it takes the values of the hosts already syncing where they differ, and its own are listed here to use instead. Turn it on first on the host whose settings the others should take."}
+          : "Off: this host keeps its own settings while the rest of the board shares theirs. Turned on again, it takes the board's values where they differ, and its own are listed here to use instead."}
       </p>
       {sync.enabled && lost.length > 0 && (
         <div className="mt-3 space-y-2" data-testid="sync-lost">

@@ -1,18 +1,26 @@
 import { Effect, Result, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
-import { McpServerId, SkillId } from "@huntaway/contracts"
+import { McpServerId, SkillId, SkillSourceId } from "@huntaway/contracts"
 import { AgentToolsRepo } from "../../agents/AgentToolsRepo.ts"
-import { checkServerConfig, checkServerName, checkSkill } from "../../agents/agentTools/validation.ts"
+import { checkRef, checkServerConfig, checkServerName, checkSkill, checkSubdir, normalizeUrl, sourceName } from "../../agents/agentTools/validation.ts"
 import { nowTimestamp } from "../../platform/columns.ts"
 
 // The host's global skills and MCP servers as settings that sync (HE-46; docs/plan/08-hosts.md, The mesh): one field
 // each, by name, so that adding a skill on one host and a server on another don't conflict, and a skill or server
-// removed is a field whose value is null. A skill a skill source brought, and anything of a project's, stays on its
-// host: a source is a clone the host makes itself, and a project lives on one host. Database only, as every field.
+// removed is a field whose value is null. A skill source syncs as what to clone (its URL, ref and folder): each host makes
+// its own clone, so a source taken here waits, unsynced, for `AgentTools.catchUp` to clone it, and one removed leaves its
+// clone for that to tidy. The skills a source brings come from the clone, and anything of a project's stays on its host.
+// Database only, as every field.
 
 /** A skill's field is `skill/<name>`; a server's `mcp_server/<name>`. */
 export const SKILL = "skill/"
 export const SERVER = "mcp_server/"
+/** A skill source's is `skill_source/<url>|<ref>|<folder>`. */
+export const SOURCE = "skill_source/"
+
+const sourceKey = (s: { readonly url: string; readonly ref: string | null; readonly subdir: string | null }) => `${s.url}|${s.ref ?? ""}|${s.subdir ?? ""}`
+const SourceValue = Schema.Struct({ url: Schema.String, ref: Schema.NullOr(Schema.String), subdir: Schema.NullOr(Schema.String) })
+const decodeSource = Schema.decodeUnknownEffect(SourceValue)
 
 /** A field's value as `sync` gives it: read, written, refused. */
 export interface ToolField {
@@ -93,12 +101,42 @@ export const makeToolFields = Effect.gen(function* () {
       }),
   })
 
+  const sourceField = (key: string): ToolField => {
+    const here = Effect.map(repo.sources, (all) => all.find((s) => sourceKey(s) === key))
+    return {
+      name: SOURCE + encodeURIComponent(key),
+      read: Effect.map(here, (s) => (s === undefined ? null : { url: s.url, ref: s.ref, subdir: s.subdir })),
+      write: (value) =>
+        Effect.gen(function* () {
+          const had = yield* here
+          if (value === null) return yield* had === undefined ? Effect.void : repo.removeSource(had.id)
+          if (had !== undefined) return yield* Effect.void
+          const v = yield* decodeSource(value).pipe(Effect.mapError(() => "must be {url, ref, subdir}"))
+          const url = normalizeUrl(v.url)
+          const ref = checkRef(v.ref)
+          const subdir = checkSubdir(v.subdir)
+          if (Result.isFailure(url) || Result.isFailure(ref) || Result.isFailure(subdir)) return yield* Effect.fail("isn't a repository this host takes")
+          if (sourceKey({ url: url.success, ref: ref.success, subdir: subdir.success }) !== key) return yield* Effect.fail("names another source")
+          // No commit yet: cloned by `AgentTools.catchUp`.
+          return yield* repo.insertSource(
+            { id: SkillSourceId.make(yield* newId), url: url.success, ref: ref.success, subdir: subdir.success, name: sourceName(url.success), commit: "" },
+            yield* nowTimestamp,
+          )
+        }),
+    }
+  }
+
   /** The fields: every global skill and server here, and those `known` (entries other hosts sent) that this host lacks. */
   const fields = (known: Iterable<string>) =>
     Effect.gen(function* () {
       const skills = (yield* repo.skills(null)).filter((s) => s.source_id === null).map((s) => s.name)
       const servers = (yield* repo.servers(null)).map((s) => s.name)
-      return [...namesOf(SKILL, known, skills).map(skillField), ...namesOf(SERVER, known, servers).map(serverField)]
+      const sources = (yield* repo.sources).map(sourceKey)
+      return [
+        ...namesOf(SKILL, known, skills).map(skillField),
+        ...namesOf(SERVER, known, servers).map(serverField),
+        ...namesOf(SOURCE, known, sources).map(sourceField),
+      ]
     })
 
   return { fields }
