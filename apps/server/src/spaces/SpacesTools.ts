@@ -212,7 +212,10 @@ export const spacesTools = Effect.gen(function* () {
       const next = done.submitted
         ? "Check the page shows the signed-in state (get_browser_state with this session, target_id and tab_id); a code the site asks for next is the user's to enter in the Space's viewer (space_view)."
         : "No submit button was found: the fields are filled, so submit the form yourself (press Enter in the password field)."
-      return text(`Signed in to ${origin} as ${done.username_hint} in ${s.name}.\n\n${pretty(done)}\n\n${next}`)
+      const leaked = done.password_in_address
+        ? "\n\nThe site sent the form by GET, which put the password in the tab's address: the tab was taken to the same page without it. Tell the user: the site may keep it in its logs."
+        : ""
+      return text(`Signed in to ${origin} as ${done.username_hint} in ${s.name}.\n\n${pretty(done)}\n\n${next}${leaked}`)
     })
 
   const all: ReadonlyArray<RegisteredTool> = [

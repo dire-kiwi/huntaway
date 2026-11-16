@@ -126,7 +126,8 @@ const resultOf = (tool: string, args: unknown, browser: FakeBrowser) => {
       browser.clicked.push(ref)
       if (ref === "p1:5" && onLogin(browser.url)) {
         const pw = browser.typed.findLast((t) => t.ref === "p1:3")?.text ?? ""
-        browser.url = `${new URL(browser.url).origin}/done?pw=${encodeURIComponent(pw)}`
+        // As a browser sends a GET form: application/x-www-form-urlencoded.
+        browser.url = `${new URL(browser.url).origin}/done?${new URLSearchParams({ pw }).toString()}`
       }
       return ok({}, "clicked")
     }

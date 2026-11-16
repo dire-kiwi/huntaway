@@ -17,8 +17,9 @@ import type { DriverAnswer } from "./driverMcp.ts"
 // 4. `browser_type` into each, then `browser_click` the button (in the foreground: on Linux, Chromium's trusted input
 //    activates its window, and the driver refuses it in the background).
 //
-// The password is only ever the text of one `browser_type`. Nothing returned has it: the driver's messages and the
-// tab's URL after (a form sent by GET puts it in the address) are scrubbed of it.
+// The password is only ever the text of one `browser_type`. Nothing returned has it: the driver's messages are scrubbed
+// of it, the tab's address after is told without its query and fragment, and when a form sent by GET put the password
+// in the address, the tab is taken to the same page without them, so that the caller's next look doesn't find it.
 
 /** A site's origin, `scheme://host[:port]` (lowercase, the default port left out), for an http(s) address; null otherwise. */
 export const originOf = (url: string): string | null => {
@@ -34,11 +35,31 @@ export const maskUsername = (username: string): string => {
   return `${name.slice(0, 1)}***${at > 0 ? username.slice(at) : ""}`
 }
 
-/** `text` with `secret` taken out, as typed and as an address or a form would encode it. */
+/** `text` with `secret` taken out, as typed and as an address (`encodeURIComponent`) or a form (`URLSearchParams`) encodes it. */
 export const scrub = (text: string, secret: string): string => {
   if (secret === "") return text
-  const forms = [secret, encodeURIComponent(secret), encodeURIComponent(secret).replaceAll("%20", "+")]
+  const form = new URLSearchParams({ p: secret }).toString().slice(2)
+  const forms = [secret, encodeURIComponent(secret), encodeURIComponent(secret).replaceAll("%20", "+"), form, form.replaceAll("+", "%20")]
   return [...new Set(forms)].reduce((t, f) => t.split(f).join("***"), text)
+}
+
+/**
+ * Whether an address carries `secret` in its query or fragment: a form sent by GET puts the password there, encoded
+ * as the browser chooses, so its parameters are decoded rather than matched by hand.
+ */
+export const carries = (url: string, secret: string): boolean => {
+  if (secret === "") return false
+  if (scrub(url, secret) !== url) return true
+  if (!URL.canParse(url)) return false
+  const u = new URL(url)
+  return [u.search.slice(1), u.hash.slice(1)].some((part) => [...new URLSearchParams(part).values()].some((v) => v.includes(secret)))
+}
+
+/** What the caller is told of an address: its origin and path only (never its query or fragment), scrubbed. */
+export const shownAddress = (url: string, secret: string): string => {
+  if (!URL.canParse(url)) return url === "" ? "" : scrub(url, secret)
+  const u = new URL(url)
+  return u.protocol === "http:" || u.protocol === "https:" ? scrub(`${u.origin}${u.pathname}`, secret) : scrub(url, secret)
 }
 
 /** An input of a login form: its ref and its `type`. */
@@ -224,11 +245,19 @@ export const fillSignIn = Effect.fn("signInFill.fillSignIn")(function* (call: Dr
     after = str(snap.value, "url") ?? after
     if (submit === null || pickLoginFields(list(snap.value, "refs")) === null) break
   }
+  // A form sent by GET left the password in the tab's address, where the caller's next look at the tab would read it:
+  // the tab goes to the same page without its query and fragment.
+  const leaked = carries(after, secret)
+  if (leaked && URL.canParse(after)) {
+    const u = new URL(after)
+    yield* Effect.ignore(ok("browser_navigate", { ...ids, url: `${u.origin}${u.pathname}` }))
+  }
   const done: SignedIn = {
     origin: fill.origin,
     username_hint: maskUsername(fill.username),
     submitted: submit !== null,
-    page_url: scrub(after, secret),
+    page_url: shownAddress(after, secret),
+    password_in_address: leaked,
     session: label,
     target_id: target,
     tab_id: tab,

@@ -285,7 +285,8 @@ describe("the spaces server", () => {
           const none = said(yield* spacesCall(agent, "space_sign_in", { space: "Web", url }))
           assert.isTrue(none.error && none.text.includes("no sign-in saved for http://site.test:8000"), none.text)
 
-          const secret = "s3cret Pa55&"
+          // What a form encodes and `encodeURIComponent` doesn't: `!` `'` `(` `)` `~`.
+          const secret = "s3cret Pa55&!'(~)"
           const signIns = yield* SignIns
           const saved = yield* signIns.create({ profile_id: profile, url, username: "ada@example.test", password: Redacted.make(secret), label: "Ada" })
           assert.strictEqual(saved.origin, "http://site.test:8000")
@@ -306,8 +307,12 @@ describe("the spaces server", () => {
           const done = yield* ask("s2", true)
           assert.isFalse(done.error, done.text)
           assert.include(done.text, `Signed in to http://site.test:8000 as a***@example.test in Web`)
-          // The form went by GET, so the address after had the password in it: it's taken out.
-          assert.include(done.text, "/done?pw=***")
+          // The form went by GET, so the address after had the password in it: the agent is told the page without its
+          // query, and the tab is taken off that address.
+          assert.include(done.text, '"page_url": "http://site.test:8000/done"')
+          assert.include(done.text, '"password_in_address": true')
+          assert.notInclude(done.text, "pw=")
+          assert.strictEqual(spacesd.browser.url, "http://site.test:8000/done")
           assert.deepStrictEqual(spacesd.browser.typed, [
             { ref: "p1:1", text: "ada@example.test" },
             { ref: "p1:3", text: secret },
@@ -324,8 +329,18 @@ describe("the spaces server", () => {
           const asked = yield* sql`SELECT * FROM permission_requests`
           for (const v of [kept, asked, done.text]) {
             const t = jsonOf(v)
-            for (const form of [secret, encodeURIComponent(secret), "s3cret"]) assert.notInclude(t, form)
+            for (const form of [secret, encodeURIComponent(secret), new URLSearchParams({ secret }).toString().slice(7), "s3cret"]) assert.notInclude(t, form)
           }
+
+          // The board's own sign-in (a Space's Sign in) opens the sign-in page that was saved, not the site's root.
+          spacesd.browser.url = "about:blank"
+          const board = yield* signIns.signIn(id, "board", saved.id, {})
+          assert.isTrue(board.submitted)
+          assert.strictEqual(saved.login_url, url)
+          // Its two navigations: to the saved page, then off the address the GET form put the password in.
+          const opened = spacesd.calls.filter((c) => c.tool === "browser_navigate").map((c) => jsonOf(c.args))
+          assert.include(opened.at(-2) ?? "", `"url":"${url}"`)
+          assert.include(opened.at(-1) ?? "", '"url":"http://site.test:8000/done"')
 
           // A reviewer can't.
           const reviewer = yield* fakeAgent()

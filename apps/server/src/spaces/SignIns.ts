@@ -30,7 +30,7 @@ export interface SignInsShape {
   readonly forSite: (profile: ProfileId, url: string) => Effect.Effect<ReadonlyArray<SignIn>, Invalid>
   /**
    * Types sign-in `id` into running Space `space`'s browser and submits it, on the driver's MCP session `key` (the
-   * caller's, so that a tab it named is its own): at `url` (its origin, when left out) in a Chromium the server opens,
+   * caller's, so that a tab it named is its own): at `url` (its sign-in page, when left out) in a Chromium the server opens,
    * or in the caller's `tab`, which must be on the sign-in's origin.
    */
   readonly signIn: (
@@ -68,12 +68,13 @@ export class SignIns extends Context.Service<SignIns, SignInsShape>()("huntaway-
       const create = Effect.fn("SignIns.create")(function* (input: NewSignIn) {
         yield* profiles.get(input.profile_id).pipe(Effect.mapError(() => new NotFound({ what: "profile", id: input.profile_id })))
         const origin = yield* site(input.url)
+        const login_url = new URL(input.url.trim()).href
         const username = input.username.trim()
         if (username === "") return yield* new Invalid({ field: "username", reason: "Give the username." })
         if (Redacted.value(input.password) === "") return yield* new Invalid({ field: "password", reason: "Give the password." })
         const id = yield* random.uuidV4()
         const at = yield* nowTimestamp
-        yield* repo.insert({ id, profile_id: input.profile_id, origin, username, password: input.password, label: trimmed(input.label), at })
+        yield* repo.insert({ id, profile_id: input.profile_id, origin, login_url, username, password: input.password, label: trimmed(input.label), at })
         return yield* found(id)
       })
 
@@ -83,7 +84,8 @@ export class SignIns extends Context.Service<SignIns, SignInsShape>()("huntaway-
         if (input.password !== undefined && Redacted.value(input.password) === "") {
           return yield* new Invalid({ field: "password", reason: "Give the password." })
         }
-        const set = { username, password: input.password, label: input.label === undefined ? undefined : trimmed(input.label), at: yield* nowTimestamp }
+        const page = input.url === undefined ? undefined : { origin: yield* site(input.url), login_url: new URL(input.url.trim()).href }
+        const set = { page, username, password: input.password, label: input.label === undefined ? undefined : trimmed(input.label), at: yield* nowTimestamp }
         if (!(yield* repo.update(input.id, set))) return yield* new NotFound({ what: "sign-in", id: input.id })
         return yield* found(input.id)
       })
@@ -104,7 +106,8 @@ export class SignIns extends Context.Service<SignIns, SignInsShape>()("huntaway-
           repo.password(id),
           Option.match({ onNone: () => Effect.fail(new NotFound({ what: "sign-in", id })), onSome: Effect.succeed }),
         )
-        const url = at.url ?? `${s.origin}/`
+        const url = at.url ?? s.login_url
+        if (originOf(url) !== s.origin) return yield* new Invalid({ field: "url", reason: `${url} isn't on ${s.origin}, the sign-in's site.` })
         const done = yield* fillSignIn((tool, args) => spaces.driver(space, key, "tools/call", { name: tool, arguments: args }), {
           url,
           origin: s.origin,

@@ -39,7 +39,7 @@ export function SiteSignInsModal({ profile, hostName, onClose }: { profile: Host
               <KeyRound size={13} className="shrink-0 text-muted" />
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium text-fg">
-                  {s.origin}
+                  {s.login_url}
                   {s.label ? <span className="font-normal text-muted"> · {s.label}</span> : null}
                 </div>
                 <div className="truncate text-muted">
@@ -89,12 +89,12 @@ export function SiteSignInsModal({ profile, hostName, onClose }: { profile: Host
 
 /** A new sign-in, or a change to one (its address stays; a password left empty stays as it is). */
 function SignInForm({ profile, initial, onClose }: { profile: HostProfile; initial: SignIn | null; onClose: () => void }) {
-  const [url, setUrl] = useState(initial?.origin ?? "")
+  const [url, setUrl] = useState(initial?.login_url ?? "")
   const [username, setUsername] = useState(initial?.username ?? "")
   const [password, setPassword] = useState("")
   const [label, setLabel] = useState(initial?.label ?? "")
   const [action, run] = useAction()
-  const ready = username.trim() !== "" && (initial !== null || (url.trim() !== "" && password !== ""))
+  const ready = username.trim() !== "" && url.trim() !== "" && (initial !== null || password !== "")
   const submit = () => {
     if (!ready || action.busy) return
     const change =
@@ -102,6 +102,7 @@ function SignInForm({ profile, initial, onClose }: { profile: HostProfile; initi
         ? mutate("signIns.create", profile.host_id, { profile_id: profile.id, url: url.trim(), username, password: Redacted.make(password), label })
         : mutate("signIns.update", profile.host_id, {
             id: initial.id,
+            ...(url.trim() === initial.login_url ? {} : { url: url.trim() }),
             username,
             label,
             ...(password === "" ? {} : { password: Redacted.make(password) }),
@@ -113,11 +114,12 @@ function SignInForm({ profile, initial, onClose }: { profile: HostProfile; initi
   return (
     <Modal title={initial ? `Change the sign-in for ${initial.origin}` : "Add a site sign-in"} onClose={onClose} onSubmit={submit}>
       <div className="space-y-4">
-        {initial === null && (
-          <Field label="Site" help="The site's address, e.g. https://github.com/login. Only its origin is kept: the password is typed only on that exact site.">
-            <Input autoFocus value={url} placeholder="https://example.com/login" onChange={(e) => setUrl(e.target.value)} />
-          </Field>
-        )}
+        <Field
+          label="Sign-in page"
+          help="The site's sign-in page, e.g. https://github.com/login: the board opens it to sign in. The password is typed only on that page's site (its origin)."
+        >
+          <Input autoFocus={initial === null} value={url} placeholder="https://example.com/login" onChange={(e) => setUrl(e.target.value)} />
+        </Field>
         <Field label="Username">
           <Input autoFocus={initial !== null} value={username} autoComplete="off" onChange={(e) => setUsername(e.target.value)} />
         </Field>
@@ -187,6 +189,7 @@ export function SpaceSignInModal({ hostId, space, onClose }: { hostId: string; s
             <div className="rounded bg-emerald-500/10 p-2 text-[12px] text-emerald-300">
               {done.submitted ? "Signed in" : "Filled in (no submit button found)"} as {done.username_hint}
               {done.page_url ? `: the tab is at ${done.page_url}` : ""}. Open the Space to carry on, or to enter a code the site asks for.
+              {done.password_in_address && " The site sent the password in the page's address (a form sent by GET), so it may be in the site's logs."}
             </div>
           )}
         </div>

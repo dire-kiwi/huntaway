@@ -12,6 +12,7 @@ export interface SignInRow {
   readonly id: string
   readonly profile_id: ProfileId
   readonly origin: string
+  readonly login_url: string
   readonly username: string
   readonly password: Redacted.Redacted
   readonly label: string | null
@@ -20,6 +21,8 @@ export interface SignInRow {
 
 /** What an update sets; a field left out stays. */
 export interface SignInSet {
+  /** A new sign-in page, with its origin. */
+  readonly page?: { readonly origin: string; readonly login_url: string } | undefined
   readonly username?: string | undefined
   readonly password?: Redacted.Redacted | undefined
   readonly label?: string | null | undefined
@@ -55,19 +58,19 @@ export class SignInRepo extends Context.Service<SignInRepo, SignInRepoShape>()("
         Result: SignIn,
         execute: (profile) =>
           profile === null
-            ? sql`SELECT id, profile_id, origin, username, label, created_at, updated_at, last_used_at FROM sign_ins ORDER BY origin, username`
-            : sql`SELECT id, profile_id, origin, username, label, created_at, updated_at, last_used_at FROM sign_ins WHERE profile_id = ${profile} ORDER BY origin, username`,
+            ? sql`SELECT id, profile_id, origin, login_url, username, label, created_at, updated_at, last_used_at FROM sign_ins ORDER BY origin, username`
+            : sql`SELECT id, profile_id, origin, login_url, username, label, created_at, updated_at, last_used_at FROM sign_ins WHERE profile_id = ${profile} ORDER BY origin, username`,
       })
       const one = SqlSchema.findOneOption({
         Request: Schema.String,
         Result: SignIn,
-        execute: (id) => sql`SELECT id, profile_id, origin, username, label, created_at, updated_at, last_used_at FROM sign_ins WHERE id = ${id}`,
+        execute: (id) => sql`SELECT id, profile_id, origin, login_url, username, label, created_at, updated_at, last_used_at FROM sign_ins WHERE id = ${id}`,
       })
       const ofOrigin = SqlSchema.findAll({
         Request: Schema.Struct({ profile: Schema.String, origin: Schema.String }),
         Result: SignIn,
         execute: ({ profile, origin }) =>
-          sql`SELECT id, profile_id, origin, username, label, created_at, updated_at, last_used_at FROM sign_ins WHERE profile_id = ${profile} AND origin = ${origin} ORDER BY username`,
+          sql`SELECT id, profile_id, origin, login_url, username, label, created_at, updated_at, last_used_at FROM sign_ins WHERE profile_id = ${profile} AND origin = ${origin} ORDER BY username`,
       })
       const secret = SqlSchema.findOneOption({
         Request: Schema.String,
@@ -77,6 +80,8 @@ export class SignInRepo extends Context.Service<SignInRepo, SignInRepoShape>()("
 
       const update = (id: string, set: SignInSet) =>
         sql<{ readonly id: string }>`UPDATE sign_ins SET
+            origin = COALESCE(${set.page?.origin ?? null}, origin),
+            login_url = COALESCE(${set.page?.login_url ?? null}, login_url),
             username = COALESCE(${set.username ?? null}, username),
             password = COALESCE(${set.password === undefined ? null : Redacted.value(set.password)}, password),
             label = CASE WHEN ${set.label === undefined ? 0 : 1} = 1 THEN ${set.label ?? null} ELSE label END,
@@ -92,8 +97,8 @@ export class SignInRepo extends Context.Service<SignInRepo, SignInRepoShape>()("
         forOrigin: (profile, origin) => ofOrigin({ profile, origin }).pipe(Effect.orDie),
         password: (id) => secret(id).pipe(Effect.map(Option.map((r) => Redacted.make(r.password, { label: "password" }))), Effect.orDie),
         insert: (r) =>
-          sql`INSERT INTO sign_ins (id, profile_id, origin, username, password, label, created_at, updated_at)
-              VALUES (${r.id}, ${r.profile_id}, ${r.origin}, ${r.username}, ${Redacted.value(r.password)}, ${r.label}, ${r.at}, ${r.at})`.pipe(
+          sql`INSERT INTO sign_ins (id, profile_id, origin, login_url, username, password, label, created_at, updated_at)
+              VALUES (${r.id}, ${r.profile_id}, ${r.origin}, ${r.login_url}, ${r.username}, ${Redacted.value(r.password)}, ${r.label}, ${r.at}, ${r.at})`.pipe(
             Effect.asVoid,
             Effect.orDie,
           ),

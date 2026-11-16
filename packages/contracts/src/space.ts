@@ -81,6 +81,8 @@ export const SignIn = Schema.Struct({
   profile_id: ProfileId,
   /** The site it's for, `scheme://host[:port]`: it is typed only into a page on exactly this origin. */
   origin: Schema.String,
+  /** Its sign-in page, as the user gave it (on `origin`): where the board opens the site to sign in. */
+  login_url: Schema.String,
   username: Schema.String,
   /** What the user calls it, if anything. */
   label: Schema.NullOr(Schema.String),
@@ -93,7 +95,7 @@ export interface SignIn extends Schema.Schema.Type<typeof SignIn> {}
 /** A password as it goes to the server: a plain string on the wire, `Redacted` once decoded (never logged or shown). */
 export const Password = Schema.RedactedFromValue(Schema.String)
 
-/** What `signIns.create` takes: the site's address (its origin is kept), the username and the password. */
+/** What `signIns.create` takes: the site's sign-in page (and so its origin), the username and the password. */
 export const NewSignIn = Schema.Struct({
   profile_id: ProfileId,
   url: Schema.String,
@@ -106,6 +108,8 @@ export interface NewSignIn extends Schema.Schema.Type<typeof NewSignIn> {}
 /** What `signIns.update` changes; a field left out stays. */
 export const SignInChange = Schema.Struct({
   id: Schema.String,
+  /** A new sign-in page; the sign-in is then for its origin. */
+  url: Schema.optional(Schema.String),
   username: Schema.optional(Schema.String),
   password: Schema.optional(Password),
   label: Schema.optional(Schema.NullOr(Schema.String)),
@@ -119,8 +123,13 @@ export const SignedIn = Schema.Struct({
   username_hint: Schema.String,
   /** A submit button was found and clicked. */
   submitted: Schema.Boolean,
-  /** Where the tab went after (with the password taken out, if a form put it in the address). */
+  /** Where the tab went: its origin and path, never its query or fragment. */
   page_url: Schema.String,
+  /**
+   * The site sent the form by GET, so the password was in the tab's address: the tab was taken to the same page without
+   * its query, and the site may have the password in its own logs.
+   */
+  password_in_address: Schema.Boolean,
   /** The browser tab it filled, as Cua Driver names it: the caller's, or one the server opened (with a session label of its own). */
   session: Schema.String,
   target_id: Schema.String,

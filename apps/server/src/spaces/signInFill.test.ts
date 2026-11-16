@@ -2,12 +2,13 @@ import { assert, describe, it } from "@effect/vitest"
 import { Effect, Fiber, Redacted } from "effect"
 import { TestClock } from "effect/testing"
 import { LOGIN_REFS } from "@huntaway/testing"
-import { fillSignIn, maskUsername, originOf, pickLoginFields, scrub } from "./signInFill.ts"
+import { carries, fillSignIn, maskUsername, originOf, pickLoginFields, scrub, shownAddress } from "./signInFill.ts"
 import type { DriverCall, Fill } from "./signInFill.ts"
 
 // The sign-in sequence (HE-48) over a scripted Cua Driver: what it types where, and what it refuses before typing.
 
-const SECRET = "s3cret Pa55&"
+/** With what a form encodes and `encodeURIComponent` doesn't: `!` `'` `(` `)` `~`. */
+const SECRET = "s3cret Pa55&!'(~)"
 
 /** A driver tool's answer that it did it. */
 const ok = (structuredContent: Record<string, unknown>) => ({ result: { content: [], structuredContent: { status: "ok", ...structuredContent } } })
@@ -33,7 +34,8 @@ const scripted = (url: string, typeAnswer?: unknown) => {
         case "browser_type":
           return typeAnswer === undefined ? ok({}) : { result: typeAnswer }
         case "browser_click":
-          tab.url = `${new URL(tab.url).origin}/home?pw=${encodeURIComponent(SECRET)}`
+          // As a browser sends a GET form.
+          tab.url = `${new URL(tab.url).origin}/home?${new URLSearchParams({ pw: SECRET }).toString()}#x`
           return ok({})
         default:
           return { error: `no tool ${tool}` }
@@ -59,7 +61,13 @@ describe("the sign-in sequence", () => {
     assert.isNull(originOf("not a url"))
     assert.strictEqual(maskUsername("ada@example.test"), "a***@example.test")
     assert.strictEqual(maskUsername("ada"), "a***")
-    assert.strictEqual(scrub(`a ${SECRET} b ${encodeURIComponent(SECRET)} c s3cret+Pa55%26`, SECRET), "a *** b *** c ***")
+    const form = new URLSearchParams({ p: SECRET }).toString().slice(2)
+    assert.strictEqual(scrub(`a ${SECRET} b ${encodeURIComponent(SECRET)} c ${form}`, SECRET), "a *** b *** c ***")
+    assert.strictEqual(scrub("pw=Passw0rd%21", "Passw0rd!"), "pw=***")
+    assert.isTrue(carries("https://x.test/done?user=a&pw=its%28me%29%7E", "its(me)~"))
+    assert.isTrue(carries("https://x.test/done#pw=Hunter2%21", "Hunter2!"))
+    assert.isFalse(carries("https://x.test/done?user=a", "Hunter2!"))
+    assert.strictEqual(shownAddress(`https://x.test/done?pw=${form}#t`, SECRET), "https://x.test/done")
   })
 
   it("picks the password input, the username input before it and the submit button after it", () => {
@@ -83,11 +91,17 @@ describe("the sign-in sequence", () => {
         ["p1:3", SECRET, true],
       ])
       assert.strictEqual(d.calls.find((c) => c.tool === "browser_click")?.args["delivery_mode"], "foreground")
+      // The tab is taken off the address the GET form put the password in.
+      assert.deepStrictEqual(d.calls.at(-1), {
+        tool: "browser_navigate",
+        args: { session: "huntaway-sign-in-1", target_id: "bt-1", tab_id: "tab-1", url: "https://login.example.test/home" },
+      })
       assert.deepStrictEqual(done, {
         origin: "https://login.example.test",
         username_hint: "a***@example.test",
         submitted: true,
-        page_url: "https://login.example.test/home?pw=***",
+        page_url: "https://login.example.test/home",
+        password_in_address: true,
         session: "huntaway-sign-in-1",
         target_id: "bt-1",
         tab_id: "tab-1",
