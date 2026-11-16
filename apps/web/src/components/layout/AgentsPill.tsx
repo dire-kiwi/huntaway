@@ -1,6 +1,6 @@
 import { clsx } from "clsx"
 import { Bot, ChevronDown, Loader2 } from "lucide-react"
-import { useMemo, useRef, useState } from "react"
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { createPortal } from "react-dom"
 import { useNarrow } from "../../narrow"
 import { subagentTitle, useSubagentView } from "../task/thread/subagentView"
@@ -12,13 +12,10 @@ import { useDismiss } from "../ui"
 export function AgentsPill({
   task,
   onReveal,
-  align = "right",
   className,
 }: {
   task: { readonly host_id: string; readonly id: string; readonly running: boolean }
   onReveal?: (() => void) | undefined
-  /** Which of the pill's edges the list hangs from: its right at the right of a header, its left where it's on the left. */
-  align?: "left" | "right" | undefined
   className?: string | undefined
 }) {
   // The thread's own model (itemModel builds it once for both): a long thread's window knows the subagents started
@@ -33,6 +30,7 @@ export function AgentsPill({
   const narrow = useNarrow()
   const menu = useRef<HTMLDivElement>(null)
   const root = useDismiss<HTMLDivElement>(open, () => setOpen(false), menu)
+  const place = usePlace(root, open && !narrow)
 
   if (subagents.length === 0) return null
   const running = subagents.filter((s) => s.status === "running").length
@@ -91,9 +89,10 @@ export function AgentsPill({
           )
         ) : (
           <div
+            style={place ?? undefined}
             className={clsx(
-              "absolute top-full z-30 mt-1.5 max-h-96 w-96 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl",
-              align === "left" ? "left-0" : "right-0",
+              "absolute top-full z-30 mt-1.5 max-h-96 overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl",
+              !place && "invisible",
             )}
           >
             {items}
@@ -101,4 +100,42 @@ export function AgentsPill({
         ))}
     </div>
   )
+}
+
+/** How wide the list is, where there's room, and how far it stays from the edges of what would cut it off. */
+const WIDTH = 384
+const EDGE = 8
+
+/**
+ * Where the list goes beside the pill (`root`) while it's `open`: under it, lined up with its right edge, unless that
+ * would put it past what cuts it off on the left (the task dialog, the window), which can be close when there are many
+ * controls after the pill; then as far right as fits. Null until it's measured.
+ */
+function usePlace(root: RefObject<HTMLElement | null>, open: boolean): { left: number; width: number } | null {
+  const [place, setPlace] = useState<{ left: number; width: number } | null>(null)
+  useLayoutEffect(() => {
+    if (!open) return undefined
+    const measure = () => {
+      const el = root.current
+      if (!el) return
+      let lo = EDGE
+      let hi = window.innerWidth - EDGE
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        if (getComputedStyle(p).overflowX === "visible") continue
+        const r = p.getBoundingClientRect()
+        lo = Math.max(lo, r.left + EDGE)
+        hi = Math.min(hi, r.right - EDGE)
+      }
+      const b = el.getBoundingClientRect()
+      const width = Math.min(WIDTH, hi - lo)
+      setPlace({ left: Math.max(lo, Math.min(b.right, hi) - width) - b.left, width })
+    }
+    measure()
+    window.addEventListener("resize", measure)
+    return () => {
+      window.removeEventListener("resize", measure)
+      setPlace(null)
+    }
+  }, [root, open])
+  return place
 }

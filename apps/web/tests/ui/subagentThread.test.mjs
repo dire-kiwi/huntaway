@@ -249,34 +249,64 @@ test("the Agents list shows in the narrow layout, and opens a subagent", async (
   })
 })
 
-// HE-40 review: with the task view too narrow for the controls beside the title (but not the narrow layout), they are a
-// row of their own from the left, and the list hung from the pill's right edge went off the dialog's left, titles and all.
-test("the Agents list stays within a task view whose controls are in a row of their own", async () => {
+// HE-40 review: the list hung from the pill's right edge went off the task dialog's left, titles and all, wherever the
+// pill was far enough left: with the controls in a row of their own (a view under 880 wide), or in the title row of a
+// view just wide enough with more controls after it (terminal tools' tabs). And the pill pushed the title row's last
+// buttons out of the dialog where the controls only just fitted beside the title.
+/** A terminal tool, which adds a tab to the task view's controls. */
+const tool = (n) => ({ id: `t${n}`, name: `tool ${n}`, command: "true" })
+
+test("the Agents list and the header stay within the task view, however crowded its controls", async () => {
   const task = await threadTask("Subagents in a small window")
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    // In the task dialog, and in the side panel beside the board.
-    for (const [size, side] of [
-      ["760x900", ""],
-      ["950x900", ""],
-      ["1400x900", "&side"],
-    ]) {
-      await ui.run([
-        `size ${size}`,
-        `goto /p/${board.project.id}?task=${task.id}${side}`,
-        "click Thread",
-        "wait Main agent's summary.",
-        "click Subagents in this thread",
-      ])
-      const title = page.locator(".shadow-xl button:has-text('Explore config') span.truncate").first()
-      await title.waitFor()
-      const fits = await title.evaluate((el) => {
-        const list = el.closest(".shadow-xl").getBoundingClientRect()
-        const r = el.getBoundingClientRect()
-        return list.left >= 0 && list.right <= window.innerWidth && el.contains(document.elementFromPoint(r.x + 4, r.y + r.height / 2))
-      })
-      assert.ok(fits, `the list isn't all shown at ${size}`)
-      await ui.run(["press Escape", "gone css=.shadow-xl button:has-text('Explore config')"])
+    // What cuts off what's in `el`: its nearest ancestor that clips, or the window.
+    await page.addInitScript(() => {
+      window.clipOf = (el) => {
+        for (let p = el; p; p = p.parentElement) if (getComputedStyle(p).overflowX !== "visible") return p.getBoundingClientRect()
+        return { left: 0, right: window.innerWidth }
+      }
+    })
+    for (const tools of [0, 1, 3]) {
+      await server.rpc("host.updateSettings", { patch: { terminal_tools: Array.from({ length: tools }, (_, n) => tool(n)) } })
+      // In the task dialog, and in the side panel beside the board.
+      for (const [size, side] of [
+        ["760x900", ""],
+        ["950x900", ""],
+        ["962x900", ""],
+        ["980x900", ""],
+        ["1020x900", ""],
+        ["1400x900", "&side"],
+      ]) {
+        const where = `${size}${side} with ${tools} terminal tools`
+        await ui.run([
+          `size ${size}`,
+          `goto /p/${board.project.id}?task=${task.id}${side}`,
+          "click Thread",
+          "wait Main agent's summary.",
+          "click Subagents in this thread",
+        ])
+        const title = page.locator(".shadow-xl button:has-text('Explore config') span.truncate").first()
+        await title.waitFor()
+        // The list is all within the view, and its first item's title is what's on top at its left.
+        const fits = await title.evaluate((el) => {
+          const clip = window.clipOf(el.closest(".shadow-xl").parentElement)
+          const list = el.closest(".shadow-xl").getBoundingClientRect()
+          const r = el.getBoundingClientRect()
+          return list.left >= clip.left && list.right <= clip.right && el.contains(document.elementFromPoint(r.x + 4, r.y + r.height / 2))
+        })
+        assert.ok(fits, `the list isn't all shown at ${where}`)
+        await ui.run(["press Escape", "gone css=.shadow-xl button:has-text('Explore config')"])
+        // The title row's last button is within the view, and the title has room.
+        const header = await page.locator("h1[title='Double-click to rename']").evaluate((h1) => {
+          const clip = window.clipOf(h1.parentElement)
+          const last = h1.parentElement.lastElementChild.getBoundingClientRect()
+          return { inside: last.right <= clip.right, title: h1.clientWidth }
+        })
+        assert.ok(header.inside, `the header's last button is cut off at ${where}`)
+        assert.ok(header.title >= 100, `the title is ${header.title}px wide at ${where}`)
+      }
     }
+    await server.rpc("host.updateSettings", { patch: { terminal_tools: [] } })
   })
 })
