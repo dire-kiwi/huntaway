@@ -48,6 +48,7 @@ that host's session.
 | `Relay`           | Tickets, and piping a client's socket to a host's                                                                                        |
 | `Uplink`          | Board tool calls from a host's agents up to a hub                                                                                        |
 | `Discovery`       | Finding hosts: mDNS for `_huntaway._tcp.local`, Tailscale peers, hosts that linked hosts know                                            |
+| `Mesh`            | The hosts the neighbours reach, by route (HE-46, [The mesh](#the-mesh))                                                                  |
 | `Ssh`             | The hub's key, the forced command, the port forward                                                                                      |
 | `SettingsSync`    | Settings shared between hosts, with version vectors                                                                                      |
 
@@ -261,6 +262,112 @@ closes the old gap where a linked host could not tell a phone from the board.
   linked host).
 - `hub.hosts.watch` streams the whole list on every change (a link's state, its heard time on each ping, the links
   themselves). `Host` gained `status` and `status_reason`, optional.
+
+## The mesh (HE-46)<a id="the-mesh"></a>
+
+A link used to go one way: the host that held it reached the other, never the other way back, and a host's directory
+listed only its own links (code.dire.nz showed omarchy, omarchy didn't show code.dire.nz). Now any hosts joined by links
+show as one board on every one of them.
+
+- **Both ways.** A link this host dials (`outbound`, `ssh`) with its **Mesh switch** on (`links.mesh`, on by default,
+  old links too) also holds `link.attach` open on its dialled connection, saying who it is. The host it dials takes that
+  as it takes a dial-in (`OpenStream` for each socket it wants, answered on its `/api/link/stream/<id>`, which now takes
+  its own board token as well as the hub token), and registers the link as `reverse`: the sealed session it attached
+  with shows that the other end holds its token, which is more than a dial-in shows. A host that dials in with the hub
+  token under the id of a `reverse` link is refused, and a reverse attach is taken even for a profile's assistant host
+  (that rule is for a host this one dials itself). The attach back is held, and made again with back-off, for as long
+  as the dialled connection lasts, and it takes the place of a `reverse` or dial-in registration of its id the host
+  still holds (a half-open socket, a link the host forgot), so the link comes back by itself. The session a ticket
+  gives is the hub's to say: a board user's scopes at most, a device's for a device, never `link` (the host's agents
+  call board tools up its control connection, under `uplink`). `as` on `hub.hosts.openRelay` only ever narrows the
+  asker's own session. A host that dialled in (`--hub`) asks its hub for a ticket on the
+  connection it attached on (`link.ticket { path, session }`), which the hub gives while its `inbound` link to that host
+  has the switch on. That link starts with the switch **off** when a host dials in under an id the hub hasn't seen
+  (`LinkRepo.upsert`): the hub token, which every host given it holds, is all that names it, so the user lets each one
+  reach the hub back once, in Settings → Hosts (decided with the user on review of HE-46; a link this host makes starts
+  on). With it on, the hub token is what that host's board user then holds on the hub's board, and a host claiming
+  that id while it is away does too; the host opens the hub's `/api/relay/<ticket>`, piped to the hub's own `path` with the session
+  sealed by the hub, and registers the hub as a `hub` link (a `links` row with its URL and no token) while its connection
+  lasts. Only `outbound` and `ssh` links are dialled (`dials`); a `reverse` or `hub` link waits for the other end and
+  shows `offline` until it is heard from. Each of these is a `Live` like the others, so the relay, settings sync and discovery use them alike. The switch
+  turned off redials the link (or drops the host that dialled in, which dials again and gets no tickets). A ticket
+  given for a session that came over a link (every `link.ticket` one, and one asked for under a session with
+  `via_link`) is held to that link's connection at the time (`Relay`'s `Guard`): it isn't taken once the connection has
+  gone or the link no longer lets it in, and a relay opened with it ends then too (`Opened.revoked`, raced with the pipe),
+  so the switch turned off cuts every socket the host opened while it was on, not only its connection (review of HE-46).
+- **Settings sync and the directory with a host that dialled in** wait for the switch too (`sharedWith`, on review of
+  HE-46): while its `inbound` link has it off, the hub neither reads that host's synced entries, nor sends it its own,
+  nor watches its board or its directory, so the hub token alone neither reads nor writes any host's skills, MCP servers
+  (and their secrets), profiles or approval rules. A host the hub dials, or one attached back over a link it dialled,
+  proved it holds the other end's own token and shares from the start. Turning the switch on drops the host, which
+  dials in again and is taken into the exchange then.
+- **What it lets in.** With the switch on, the users of the other host can use this board as this host's users can use
+  theirs, and the hosts this one reaches. A host's agents still call board tools across hosts only as before: calls go
+  down only over `dialled` and `dial-in` connections, and up to a hub under its `uplink` switch (`Uplink.otherHosts`
+  leaves `reverse` and `hub` out).
+- **The directory** (`hosts/Mesh.ts`) is a path vector. Each connected neighbour with the `mesh` capability has its
+  `hub.hosts.watch` watched; every host it lists connected that this one doesn't link, isn't itself and isn't the
+  neighbour is taken as `mode: "mesh"`, with `through` (the neighbour) and `route` (the neighbour first, then that
+  entry's own route). An entry whose route already passes through this host is left out, so no route loops back and a
+  host that goes away leaves every directory as its neighbours' do. Of two routes the shorter is taken; none longer than
+  8. A host this one links itself is always its own entry, even while that link is down. A neighbour's list like the one
+  held changes nothing, and `hub.hosts.watch` sends only a list that differs from the one before (`sameHosts`): each
+  host's list is made from its neighbours', so two that took every list as news would send theirs back and forth for
+  ever (found on review).
+- **The relay** to a mesh host asks the neighbour for a ticket (`hub.hosts.openRelay` with `as`: the client's kind,
+  scopes and device), and opens the neighbour's `/api/relay/<ticket>` over this host's way to it. A session of kind
+  `link` may now ask the relay, but only for a client of its own (`as`), never with more than its own scopes, never
+  `link`. A host answering `OpenStream` or a ticket may be asked for `/api/relay/<64 hex>` as well as `/api/rpc` and a
+  terminal (`STREAM_PATH`).
+- **Roles.** A host's `role` setting (`host_role`, not synced) is `projects` (the default) or `access`: a way in to the
+  board, like a public hub, which isn't offered for new projects (`holdsProjects` in the client: Add project's host
+  picker and the default host for new work). It is in `host.info`, `link.hello` and each `Host`; the web app reads each
+  host's own from its board (`hostSettings`), since a hello is only as new as the connection. Settings → Hosts sets it
+  on any host, through that host's session.
+- **Config sync across the mesh.** Settings sync's exchange runs over every connected `Live` it shares with (`reverse` and `hub` ones
+  included, a host that dialled in once its Mesh switch is on), and its merge is idempotent, commutative and associative, so a change crosses the mesh hop by hop. The
+  host's **global skills and MCP servers** sync as fields (`hosts/settingsSync/agentTools.ts`): `skill/<name>`
+  (`{ content, enabled }`) and `mcp_server/<name>` (`{ config, enabled, auto_allow }`), null when removed. The fields are
+  the host's own and those other hosts' entries name (`fields(known)`), so one added elsewhere is made here when it is
+  applied; one this host lacks and only an entry names makes no entry of its own (it isn't one it removed). A skill
+  whose text names another skill, one a skill source here has the name of, or a server whose config doesn't check is
+  kept and not applied. Skills from a skill source, projects' own skills and servers, and the profiles' switches stay
+  on their host. `AgentTools` emits `agent_tools_changed` after a change to a global skill, server or source, which the
+  observer and the exchange (here and on the hosts watching) take as a trigger, and the client's `agentTools.get`
+  reads again on.
+- **The board's settings as an eventually consistent store.** Whichever host a client is on, it sees the same settings.
+  Sync is on unless a host switches it off (`settings_sync` "false"; unset is on, so every host takes part from the
+  start). The merge was already convergent (version vectors; changes made apart go to the later, then by host id, and
+  the value that lost is kept to use instead); what changed is how much of the board it holds
+  (`hosts/settingsSync/boardFields.ts`):
+  - **Profiles themselves**: `profile/<name>/exists` (true, null once removed, or `{ renamed_to }`). A profile one host
+    has is made on the others (a row with no configs, then its other fields; `Profiles.folders` makes its scratch
+    folder). A rename is kept as the profile's former name (`profile_former_names`, `ProfileRepo.renamed`), so the old
+    name reads `{ renamed_to }` and the other hosts rename theirs (a change of case too), with its work, in place of an empty one of the new name
+    that sync may have made first. A name a profile takes is no former name any more (`ProfileRepo.insert`, `update`),
+    so a new profile of an old name, removed, reads as removed. One removed is removed elsewhere only where it holds nothing (`ProfileRepo.holds`:
+    no projects, tasks, automations, pens, documents or their images, or docs site connection, all of which deleting a
+    profile deletes; on review of HE-46): sync never deletes work, and the value it couldn't take waits (it isn't sent
+    back as a change) until the profile holds nothing there. Its folder goes after, as `Profiles.delete` removes it
+    (`Profiles.folders`, on `profiles_changed`).
+  - **More of a profile**: `asana_enabled`, `telemetry`, `telemetry_titles`, `tint`; its configs (`configs`), its
+    assistant's and threads' config, and its reviewers' and summarizers' configs, all by config name; its switches for
+    global skills and servers (`tool_switches`, `skill:<name>` and `mcp:<name>`). Its configs are one field each,
+    `profile/<name>/config/<config>` (true, or null once taken off), so each host keeps the configs of its own the others
+    have none of; one taken off resets the assistant's and threads' config if it was theirs, as `Profiles.update` does.
+    Agent configs and their names are each host's own, so a config renamed or deleted on one host isn't taken off the
+    profile elsewhere: a field is looked at only while this host has a config of its name.
+  - **Agent configs' options by config name**: `config/<name>/show_usage`, `restart_window`. Not `api_url`: a proxy goes
+    with the key for it, which stays on its host, and may be one only that host reaches (on review of HE-46).
+  - **Skill sources**: `skill_source/<url>|<ref>|<folder>`. A host takes one with no commit, and `AgentTools.catchUp`
+    (at the start and on every `agent_tools_changed`) clones it there and deletes the clones of sources removed.
+  - A value naming a config, skill or server this host lacks is taken in part or not at all, and taken again once it has
+    it: settings sync's "couldn't take" path, which never sends this host's value back as a change. Paths (`clone_dir`,
+    `config_dir`), logins and keys (`asana_token`, configs' keys and proxies, telemetry's password), `assistant_host`,
+    `scratch_host`, `public_url`, the host's role, its links and every browser's own preferences stay where they are.
+- Tested: `hosts/Mesh.test.ts` (the path vector), `hosts/SettingsSync.test.ts` (skills and servers), and
+  `tests/e2e/hosts-mesh.test.ts` (three servers in a chain by URL, a host dialled in to a hub, each switch turned off,
+  and skills and servers synced through a host that links neither end).
 
 ## Versions across a fleet
 

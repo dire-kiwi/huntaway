@@ -1,7 +1,8 @@
 // Settings → Skills and MCP on a board with two hosts (HE-41): each host keeps its own skills, and only its own
 // profiles' agents get them. The panel always showed the board's own host, so on a board whose host has no profiles (a
 // laptop showing another machine's projects) a skill added there reached no agent, with nothing to switch it on with.
-// It now starts on a host with profiles, and a picker says whose tools these are.
+// It now starts on a host with profiles, and a picker says whose tools these are. (With settings sync, on by default since
+// HE-46, hosts have the same global skills and profiles; these are hosts where it is off.)
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
 import { eventually, makeProfile, startServer, withBrowser } from "./harness.mjs"
@@ -12,6 +13,9 @@ beforeAll(async () => {
   board = startServer("--fake-claude")
   home = startServer("--fake-claude")
   profile = await makeProfile(home, "Personal")
+  // Hosts that differ: with settings sync on (the default since HE-46) the board's host would take home's profile and
+  // skills, so it is switched off there, as a host that keeps its own.
+  await board.rpc("host.updateSettings", { patch: { settings_sync: false } })
 })
 afterAll(() => {
   board?.stop()

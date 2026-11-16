@@ -1,4 +1,4 @@
-import { Config, Context, DateTime, Effect, FileSystem, Layer, Option, Schema, Semaphore } from "effect"
+import { Config, Context, DateTime, Effect, FileSystem, Layer, Option, Schema, Semaphore, Stream } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { McpServerId, SkillId, SkillSourceId, threadKindOf } from "@huntaway/contracts"
 import type {
@@ -20,6 +20,7 @@ import type {
 } from "@huntaway/contracts"
 import { Git } from "../git/Git.ts"
 import { DataDir } from "../platform/DataDir.ts"
+import { Events } from "../platform/Events.ts"
 import { Db } from "../platform/Db.ts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
@@ -118,6 +119,11 @@ export interface AgentToolsShape {
   readonly taskSkills: (task: TaskId) => Effect.Effect<TaskSkills, TaskNotFound>
   /** A deleted review or summary thread's skills folder goes with it. */
   readonly removeThreadSkills: (project: ProjectId, thread: TaskId) => Effect.Effect<void>
+  /**
+   * Settings sync's sources (HE-46): those it added, which have no clone yet, are cloned (one that fails says why on the
+   * source, and is tried again next time), and the clones of sources it removed are deleted.
+   */
+  readonly catchUp: Effect.Effect<void>
 }
 
 const nonBlank = (s: string | null | undefined): string | null => {
@@ -169,6 +175,7 @@ export class AgentTools extends Context.Service<AgentTools, AgentToolsShape>()("
       const projects = yield* ProjectRepo
       const configs = yield* AgentConfigRepo
       const codex = yield* CodexQueries
+      const events = yield* Events
       // One source operation at a time: they clone, swap folders and write skills. (Runs only read the clones.)
       const busy = yield* Semaphore.make(1)
       // Never wait for a password: ssh in batch mode, unless the environment says how to run ssh.
@@ -682,26 +689,60 @@ export class AgentTools extends Context.Service<AgentTools, AgentToolsShape>()("
         return result
       })
 
+      // The host's global skills and servers changed: its settings read them again, and settings sync passes them on (HE-46).
+      const changed = events.emit({ type: "agent_tools_changed" })
+      const announced = <A, E>(owner: ProjectId | null, effect: Effect.Effect<A, E>) => (owner === null ? Effect.tap(effect, () => changed) : effect)
+
       return AgentTools.of({
         global,
         project: overview,
         updateProject,
-        setSwitch,
-        addSkill,
-        updateSkill,
-        removeSkill,
-        addServer,
-        updateServer,
-        removeServer,
-        addSource,
-        updateSource,
-        removeSource,
+        // A profile's switches sync by name; a project's stay with it.
+        setSwitch: (input) => Effect.tap(setSwitch(input), () => (input.scope === "profile" ? changed : Effect.void)),
+        addSkill: (owner, input) => announced(owner, addSkill(owner, input)),
+        updateSkill: (owner, id, input) => announced(owner, updateSkill(owner, id, input)),
+        removeSkill: (owner, id) => announced(owner, removeSkill(owner, id)),
+        addServer: (owner, input) => announced(owner, addServer(owner, input)),
+        updateServer: (owner, id, input) => announced(owner, updateServer(owner, id, input)),
+        removeServer: (owner, id) => announced(owner, removeServer(owner, id)),
+        addSource: (input) => announced(null, addSource(input)),
+        updateSource: (id) => announced(null, updateSource(id)),
+        removeSource: (id) => announced(null, removeSource(id)),
         forRun: forTask(true),
         preview: forTask(false),
         recordSeen,
         taskSkills,
         removeThreadSkills: (project, thread) => removeDir(threadSkillsRoot(project, thread)),
+        catchUp: Effect.gen(function* () {
+          for (const s of yield* repo.sources) {
+            if (s.commit === "")
+              yield* updateSource(s.id).pipe(
+                Effect.tap(() => changed),
+                Effect.ignore,
+              )
+          }
+          const ids = new Set((yield* repo.sources).map((s) => String(s.id)))
+          const clones = yield* fs.readDirectory(sourcesRoot).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))
+          // `<id>.new` and `<id>.old` are a clone being swapped in, under the lock.
+          for (const dir of clones) if (!dir.includes(".") && !ids.has(dir)) yield* busy.withPermits(1)(removeDir(`${sourcesRoot}/${dir}`))
+        }).pipe(Effect.withSpan("AgentTools.catchUp")),
       })
+    }),
+  )
+
+  /** `catchUp` at the start, and after every change to the host's skills and servers (settings sync's among them). */
+  static readonly catchingUp = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const tools = yield* AgentTools
+      const events = yield* Events
+      yield* Effect.gen(function* () {
+        const watch = yield* events.watch(undefined)
+        yield* tools.catchUp
+        yield* watch.live.pipe(
+          Stream.filter((e) => e.type === "agent_tools_changed"),
+          Stream.runForEach(() => tools.catchUp),
+        )
+      }).pipe(Effect.scoped, Effect.forever, Effect.forkScoped)
     }),
   )
 }

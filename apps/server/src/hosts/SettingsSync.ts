@@ -55,7 +55,7 @@ interface Pass {
 }
 
 export interface SettingsSyncShape {
-  /** Whether this host syncs its settings (`settings_sync`). */
+  /** Whether this host syncs its settings: unless `settings_sync` is "false". */
   readonly enabled: Effect.Effect<boolean>
   /** Notes the changes made on this host since the last look. Nothing while sync is off. */
   readonly observe: Effect.Effect<void>
@@ -97,7 +97,7 @@ export class SettingsSync extends Context.Service<SettingsSync, SettingsSyncShap
       const { fields, announce } = yield* makeFields
       const me: HostId = identity.hostId
 
-      const enabled = Effect.map(settings.get(SETTING), (v) => v === "true")
+      const enabled = Effect.map(settings.get(SETTING), (v) => v !== "false")
 
       /** A change made on this host: its counter goes up, and what lost to the value before is dropped. */
       const bump = (r: Row, value: unknown, now: string) => {
@@ -128,7 +128,7 @@ export class SettingsSync extends Context.Service<SettingsSync, SettingsSyncShap
        * entry last saw it was changed here; one with no entry gets its first, which loses to any host's real change (it
        * has no time); and an entry kept for a profile that has appeared since is applied to it.
        */
-      const observeIn = (have: Map<string, Row>, pass: Pass) =>
+      const observeIn = (have: Map<string, Row>, pass: Pass, incoming: ReadonlyArray<string> = []) =>
         Effect.gen(function* () {
           const now = yield* nowTimestamp
           // The first look since sync was switched on: what differs was set while it was off, not just now.
@@ -149,10 +149,12 @@ export class SettingsSync extends Context.Service<SettingsSync, SettingsSyncShap
               }
             }
           }
-          const here = new Map((yield* fields).map((f) => [f.name, f]))
+          const here = new Map((yield* fields([...have.keys(), ...incoming])).map((f) => [f.name, f]))
           for (const f of here.values()) {
             const cur = canon(yield* f.read)
             let r = have.get(f.name)
+            // A skill or server this host doesn't have, which only another's entry names, isn't one it removed.
+            if (r === undefined && f.absentUnknown === true && cur === canon(null)) continue
             if (r === undefined) {
               r = { name: f.name, value: null, vv: {}, changed_at: "", changed_by: me, since, lost: [], seen: cur }
               beforeSync(r, parseJson(cur), since)
@@ -221,7 +223,11 @@ export class SettingsSync extends Context.Service<SettingsSync, SettingsSyncShap
           Effect.gen(function* () {
             const pass: Pass = { changed: false, events: [] }
             const have = yield* rows
-            const here = yield* observeIn(have, pass)
+            const here = yield* observeIn(
+              have,
+              pass,
+              incoming.map((e) => e.name),
+            )
             pass.changed = false
             let n = 0
             for (const e of incoming) {
@@ -291,7 +297,9 @@ export class SettingsSync extends Context.Service<SettingsSync, SettingsSyncShap
         const watch = yield* events.watch(undefined)
         yield* look
         yield* watch.live.pipe(
-          Stream.filter((e) => e.type === "settings_changed" || e.type === "profiles_changed" || e.type === "approval_rules"),
+          Stream.filter(
+            (e) => e.type === "settings_changed" || e.type === "profiles_changed" || e.type === "approval_rules" || e.type === "agent_tools_changed",
+          ),
           Stream.runForEach(() => look),
         )
       }).pipe(Effect.scoped, Effect.forever)

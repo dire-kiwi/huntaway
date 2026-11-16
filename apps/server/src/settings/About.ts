@@ -7,6 +7,7 @@ import { ImportGuard } from "../platform/ImportGuard.ts"
 import type { ImportRecord } from "../platform/ImportRecord.ts"
 import { Proc } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
+import { SettingsRepo } from "./SettingsRepo.ts"
 
 export interface AboutShape {
   /** `public.health` and `GET /api/health`: part of the stable core. */
@@ -22,7 +23,8 @@ export class About extends Context.Service<About, AboutShape>()("huntaway-server
     const identity = yield* Identity
     const config = yield* ServerConfig
     const dataDir = yield* DataDir
-    const capabilities: ReadonlyArray<string> = rehearsal === null ? [Capability.settingsSync] : [Capability.readOnly]
+    const settings = yield* SettingsRepo
+    const capabilities: ReadonlyArray<string> = rehearsal === null ? [Capability.settingsSync, Capability.mesh] : [Capability.readOnly]
     // The commit it runs: a checkout's HEAD when it started, else the release's or the deployment's (`ServerConfig`).
     const proc = yield* Proc
     const head =
@@ -48,7 +50,7 @@ export class About extends Context.Service<About, AboutShape>()("huntaway-server
     }
     // Codex runs where its CLI is installed (5.2): looked for once, as the server starts.
     const codex = yield* onPath(config.codexBin)
-    const info: HostInfo = {
+    const infoWith = (role: "projects" | "access"): HostInfo => ({
       host_id: identity.hostId,
       host_name: identity.hostName,
       build_id: config.commit ?? config.version,
@@ -67,8 +69,11 @@ export class About extends Context.Service<About, AboutShape>()("huntaway-server
       data_dir: dataDir.root,
       hostname: identity.hostName,
       home: config.home,
-    }
-    return About.of({ health: Effect.succeed(health), info: Effect.succeed(info) })
+      // What it is for is a setting (HE-46), read each time.
+      role,
+    })
+    const info = Effect.map(settings.get("host_role"), (v) => infoWith(v === "access" ? "access" : "projects"))
+    return About.of({ health: Effect.succeed(health), info })
   })
 
   static readonly layer = Layer.effect(About, About.make(null))

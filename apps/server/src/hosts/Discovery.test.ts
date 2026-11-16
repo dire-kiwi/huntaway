@@ -16,6 +16,7 @@ const link = (id: string, url: string | null): LinkRow => ({
   token: "tok",
   ssh: null,
   uplink: false,
+  mesh: true,
   last_seen: null,
   created_at: Timestamp.make("2026-11-12T00:00:00.000Z"),
 })

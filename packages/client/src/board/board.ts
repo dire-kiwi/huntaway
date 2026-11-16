@@ -115,6 +115,11 @@ const linkedHost = (entry: Host, live: boolean): Host => ({
   last_seen: entry.last_seen,
   last_message_at: entry.last_message_at,
   uplink: entry.uplink,
+  // HE-46: its link's Mesh switch, the way the mesh reaches it, and what it is for.
+  ...(entry.mesh !== undefined && { mesh: entry.mesh }),
+  ...(entry.through !== undefined && { through: entry.through }),
+  ...(entry.route !== undefined && { route: entry.route }),
+  ...(entry.role !== undefined && { role: entry.role }),
   ...(entry.status !== undefined && { status: entry.status }),
   ...(entry.status_reason !== undefined && { status_reason: entry.status_reason }),
 })
@@ -135,6 +140,7 @@ const ownHost = (id: HostId, view: SessionView, local: boolean): Host => ({
   last_seen: null,
   last_message_at: null,
   uplink: false,
+  ...(view.info?.role !== undefined && { role: view.info.role }),
 })
 
 const sameItems = <T>(a: ReadonlyArray<T>, b: ReadonlyArray<T>): boolean => a.length === b.length && a.every((x, i) => x === b[i])

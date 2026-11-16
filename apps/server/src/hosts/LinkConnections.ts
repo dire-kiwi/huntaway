@@ -1,5 +1,22 @@
 import { NodeWS } from "@effect/platform-node"
-import { Clock, Context, Deferred, Duration, Effect, FiberMap, Latch, Layer, Option, Queue, Redacted, Ref, Schedule, Stream, SubscriptionRef } from "effect"
+import {
+  Clock,
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  FiberMap,
+  FiberSet,
+  Latch,
+  Layer,
+  Option,
+  Queue,
+  Redacted,
+  Ref,
+  Schedule,
+  Stream,
+  SubscriptionRef,
+} from "effect"
 import type { Scope } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Hex } from "effect/encoding"
@@ -7,7 +24,7 @@ import { Headers } from "effect/http"
 import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
 import type { Rpc, RpcClientError, RpcGroup } from "effect/rpc"
 import { Socket } from "effect/socket"
-import { Auth, boardScopes, HostOffline, LinkId, LinkRefused, LINK_HEADER, PROTOCOL, PeerRpcs, SESSION_HEADER } from "@huntaway/contracts"
+import { Auth, boardScopes, Capability, HostOffline, LinkId, LinkRefused, LINK_HEADER, PROTOCOL, PeerRpcs, SESSION_HEADER } from "@huntaway/contracts"
 import type { AssertedSession, HostInfo, LinkHello, LinkStatus, OpenStream, SessionShape, Timestamp } from "@huntaway/contracts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { Events } from "../platform/Events.ts"
@@ -15,7 +32,7 @@ import { Identity } from "../platform/Identity.ts"
 import { About } from "../settings/About.ts"
 import { LinkRepo } from "./LinkRepo.ts"
 import type { LinkRow } from "./LinkRepo.ts"
-import { dial } from "./pipe.ts"
+import { dial, pipe } from "./pipe.ts"
 import type { Pipeable } from "./pipe.ts"
 import { SessionSeal } from "./SessionSeal.ts"
 import { Ssh } from "./Ssh.ts"
@@ -35,12 +52,22 @@ import { Ssh } from "./Ssh.ts"
 // token every such host shares, so a dial-in is refused under an id already connected (either way), and under the id
 // of a profile's assistant host the hub dials even while that link is down; a dialled connection replaces whatever is
 // registered (a dial-in that stood in for it while it was down).
+//
+// Both ways (HE-46, docs/plan/08-hosts.md, The mesh): a link the hub dials with its Mesh switch on also holds
+// `link.attach` open on its connection, so the host it dials can ask it for sockets as a hub asks a host that dialled in
+// (the host registers it as `reverse`: the sealed session it attached with shows it holds the host's token). A host that
+// dialled in to a hub with the `mesh` capability asks it for tickets on its control connection (`link.ticket`), which the
+// hub gives while its link to that host has the switch on; the host registers the hub as `hub`. Each such connection is a
+// `Live` like the others, so the relay, settings sync and the mesh's directory use them all alike.
 
 /** A linked host's RPC client: its own groups and `link.*`. */
 export type PeerClient = RpcClient.RpcClient.Flat<RpcGroup.Rpcs<typeof PeerRpcs>, RpcClientError.RpcClientError>
 
-/** How a connection came: the hub dialled it, or it dialled in. */
-export type Via = "dialled" | "dial-in"
+/**
+ * How a connection came: the hub dialled it, it dialled in, it dialled this host and attached back on that connection
+ * (`reverse`), or this host dialled in to it as a hub (`hub`).
+ */
+export type Via = "dialled" | "dial-in" | "reverse" | "hub"
 
 /** How a link looks now: the hub's directory shows it, `hub.hosts.watch` streams it. */
 export interface LinkView {
@@ -84,12 +111,20 @@ const without = <K, V>(all: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> => {
   return next
 }
 
+/**
+ * What a host may be asked to open for its peer: its RPC, a terminal by its ticket (the relay's own rule), or a relay by
+ * its ticket (a hop on the way to a host further on, HE-46).
+ */
+export const STREAM_PATH = /^\/api\/(rpc|terminal\/[A-Za-z0-9_-]{1,200}|relay\/[0-9a-f]{64})$/
+
 /** The RPC ping's interval and how long a link may be silent before it counts as dead. */
 export const PING = "20 seconds"
 export const SILENCE = "60 seconds"
 /** How long `link.hello` may take, and a dial-in host to answer a request for a socket. */
 const HELLO_TIMEOUT = "10 seconds"
 const STREAM_TIMEOUT = "30 seconds"
+/** An attach-back that lasted this long resets its back-off. */
+const ATTACH_LASTED = Duration.minutes(1)
 /** A link's own session lasts this long; a connection that outlives it is dialled again. */
 const LINK_SESSION = Duration.days(7)
 
@@ -103,13 +138,28 @@ export const helloOf = (info: HostInfo): LinkHello => ({
   commit: info.commit,
   agents: info.agents,
   updates_from: info.updates_from,
+  ...(info.role === undefined ? {} : { role: info.role }),
 })
+
+/** Whether a peer that said `hello` joins the mesh: it speaks this protocol and has the capability. */
+export const meshes = (hello: LinkHello): boolean => hello.protocol === PROTOCOL && hello.capabilities.includes(Capability.mesh)
+
+/** Whether this host dials `link` itself: by URL, or over SSH. */
+export const dials = (link: Pick<LinkRow, "mode">): boolean => link.mode === "outbound" || link.mode === "ssh"
+
+/**
+ * Whether this host shares its board with `live` (settings sync, the mesh's directory), `row` being its link: always but
+ * for a host that dialled in, whose hub token any host given it holds, which is shared with only while its link's Mesh
+ * switch is on (docs/plan/08-hosts.md, The mesh), as the relay's tickets for it are.
+ */
+export const sharedWith = (live: Pick<Live, "via">, row: Pick<LinkRow, "mode" | "mesh"> | null | undefined): boolean =>
+  live.via !== "dial-in" || (row?.mode === "inbound" && row.mesh)
 
 /** `http(s)://…` as the websocket URL of `path` there. */
 export const wsUrl = (url: string, path: string) => `${url.replace(/\/+$/, "").replace(/^http/, "ws")}${path}`
 
 /** The hub's own session on a host: every board scope and `link`. */
-const linkSession = (now: number): AssertedSession => ({
+export const linkSession = (now: number): AssertedSession => ({
   kind: "link",
   scopes: [...boardScopes, "link"],
   device_id: null,
@@ -207,6 +257,18 @@ export class LinkConnections extends Context.Service<
     readonly live: (id: LinkId) => Effect.Effect<Live, HostOffline>
     /** Every live connection. */
     readonly connected: Effect.Effect<ReadonlyArray<Live>>
+    /** The server listens at `local` (`http://host:port`): sockets a peer asks for are piped to it from now on. */
+    readonly listening: (local: string) => Effect.Effect<void>
+    /**
+     * A socket to this host's own `path` carrying `session`, sealed under its own token, asked for by peer `via`: what a
+     * peer's ticket (`link.ticket`) or request for a socket (`OpenStream`) is answered with. Waits for the listener.
+     */
+    readonly self: (path: string, session: AssertedSession, via: string) => Effect.Effect<Pipeable, HostOffline, Scope.Scope>
+    /**
+     * The hub at `url` this host dialled in to (`--hub`), which said `hello` and takes `link.ticket`s from `control`: it
+     * is registered as a `hub` link for the scope, if it lets this host reach it (its link's Mesh switch).
+     */
+    readonly viaHub: (url: string, hello: LinkHello, control: PeerClient) => Effect.Effect<void, never, Scope.Scope>
   }
 >()("huntaway-server/hosts/LinkConnections") {
   static readonly layer = Layer.effect(
@@ -226,11 +288,32 @@ export class LinkConnections extends Context.Service<
       // The dial-in hosts by the RPC connection they attached on.
       const attachedOn = yield* Ref.make<ReadonlyMap<Rpc.ServerClient, Registered>>(new Map())
       const bumps = yield* SubscriptionRef.make(0)
+      const local = yield* Deferred.make<string>()
 
       const setView = (id: LinkId, change: (view: LinkView) => LinkView) =>
         SubscriptionRef.update(views, (all) => new Map(all).set(id, change(all.get(id) ?? initialView)))
       const nameOf = (id: LinkId) => Effect.map(repo.get(id), (row) => row?.name ?? id)
       const offline = (id: LinkId) => Effect.flatMap(nameOf(id), (name) => Effect.fail(new HostOffline({ host_id: id, host_name: name })))
+
+      const self = (path: string, session: AssertedSession, via: string) =>
+        Effect.gen(function* () {
+          if (!STREAM_PATH.test(path)) return yield* offline(LinkId.make(identity.hostId))
+          const at = yield* Deferred.await(local).pipe(Effect.timeoutOption(STREAM_TIMEOUT))
+          if (Option.isNone(at)) return yield* offline(LinkId.make(identity.hostId))
+          const sealed = yield* seal.seal(identity.token, session)
+          return yield* dial(wsUrl(at.value, path), { headers: { [LINK_HEADER]: via, [SESSION_HEADER]: sealed } })
+        })
+
+      /**
+       * Answers a peer's request for a socket (`OpenStream`): `there` is the peer's end (its `/api/link/stream/<id>`),
+       * piped to this host's own `path` until either closes.
+       */
+      const answer = (peer: string, request: OpenStream, there: (path: string) => Effect.Effect<Pipeable, never, Scope.Scope>) =>
+        Effect.gen(function* () {
+          const here = yield* self(request.path, request.session, peer)
+          const end = yield* there(`/api/link/stream/${request.id}`)
+          yield* pipe(end, here)
+        }).pipe(Effect.scoped, Effect.ignore)
 
       /** Connected (or `needs_update`): its state, and its heard time kept current while it lasts (scoped). */
       const connectedView = (id: LinkId, hello: LinkHello, via: Via) =>
@@ -313,6 +396,27 @@ export class LinkConnections extends Context.Service<
           yield* Effect.addFinalizer(() => unregister(live))
           yield* connectedView(link.id, hello, "dialled")
           yield* Effect.logInfo(`connected to host ${link.name}`)
+          // Both ways: the host may ask this one for sockets, on this connection (it registers this host as `reverse`).
+          // Held for as long as the connection lasts: attached again, backing off, whenever it ends or is refused (the
+          // host forgot the link, or still held a registration that has since gone).
+          if (link.mesh && meshes(hello)) {
+            const answers = yield* FiberSet.make()
+            const there = (path: string) => dial(wsUrl(url, path), { headers: { authorization: `Bearer ${token}` } })
+            const attachBack = client("link.attach", mine).pipe(
+              Stream.runForEach((request) => FiberSet.run(answers, answer(link.id, request, there))),
+              Effect.catchCause((cause) => Effect.logDebug(`host ${link.name} doesn't reach this host back`, cause)),
+            )
+            yield* Effect.gen(function* () {
+              let backoff = Duration.seconds(1)
+              for (;;) {
+                const started = yield* Clock.currentTimeMillis
+                yield* attachBack
+                const lasted = (yield* Clock.currentTimeMillis) - started
+                backoff = lasted >= Duration.toMillis(ATTACH_LASTED) ? Duration.seconds(1) : Duration.min(Duration.times(backoff, 2), Duration.seconds(30))
+                yield* Effect.sleep(backoff)
+              }
+            }).pipe(Effect.forkScoped)
+          }
           yield* Deferred.await(disconnected)
           yield* Effect.logInfo(`lost host ${link.name}`)
           return true
@@ -376,14 +480,26 @@ export class LinkConnections extends Context.Service<
         yield* SubscriptionRef.update(views, (all) => without(all, id))
       })
 
-      /** Why a dial-in under `hello`'s id is refused, if it is. */
+      /**
+       * Why a dial-in under `hello`'s id is refused, if it is. One on a dialled connection of that host's own (a session it
+       * sealed with this host's token, naming itself) attaches back (`reverse`); a host that does that isn't taken from
+       * one with the hub token.
+       */
       const refusal = Effect.fn(function* (hello: LinkHello, session: SessionShape) {
-        if (session.kind !== "link" || session.via_link !== null) return "a host dials in with the hub token"
+        const reverse = session.kind === "link" && session.via_link !== null && String(session.via_link) === String(hello.host_id)
+        if (session.kind !== "link" || (session.via_link !== null && !reverse)) return "a host dials in with the hub token"
         if (hello.host_id === identity.hostId) return "a host can't link to itself"
         const id = LinkId.make(hello.host_id)
-        if ((yield* Ref.get(lives)).has(id)) return `host ${hello.host_id} is already connected to this hub`
+        // One that attaches back holds this host's token, so it takes the place of a registration of its id that came
+        // with less (a dial-in), or one of its own the host has since lost (a half-open socket after a network drop).
+        const existing = (yield* Ref.get(lives)).get(id)
+        if (existing !== undefined && !(reverse && (existing.via === "reverse" || existing.via === "dial-in")))
+          return `host ${hello.host_id} is already connected to this hub`
         const row = yield* repo.get(id)
-        if (row !== null && row.mode !== "inbound" && (yield* repo.assistantHosts).has(id))
+        if (!reverse && row?.mode === "reverse")
+          return `${row.name} links ${identity.hostName} itself, so a host that dials in under its id (${id}) with the hub token isn't taken for it`
+        // One that attaches back holds this host's token: it is the host, whatever profile runs its assistant there.
+        if (!reverse && row !== null && dials(row) && (yield* repo.assistantHosts).has(id))
           return `${identity.hostName} links assistant host ${row.name} itself, so a host that dials in under its id (${id}) isn't taken for it`
         return null
       })
@@ -394,7 +510,16 @@ export class LinkConnections extends Context.Service<
             const refused = yield* refusal(hello, session)
             if (refused !== null) return yield* new LinkRefused({ reason: refused })
             const id = LinkId.make(hello.host_id)
-            yield* repo.upsert({ id, name: hello.name, mode: "inbound", url: null, token: null, ssh: null, now: yield* nowTimestamp })
+            const via: Via = session.via_link === null ? "dial-in" : "reverse"
+            yield* repo.upsert({
+              id,
+              name: hello.name,
+              mode: via === "reverse" ? "reverse" : "inbound",
+              url: null,
+              token: null,
+              ssh: null,
+              now: yield* nowTimestamp,
+            })
             const requests = yield* Queue.unbounded<OpenStream>()
             const dropped = yield* Deferred.make<string>()
             /** A socket to `path` on the host: asked for on the stream, answered on `/api/link/stream/<id>`. */
@@ -416,26 +541,77 @@ export class LinkConnections extends Context.Service<
               "",
               null,
             )
-            const live: Registered = { id, hello, client, via: "dial-in", open, drop: (reason) => Deferred.succeed(dropped, reason).pipe(Effect.asVoid) }
-            const registered = yield* Ref.modify(lives, (all): [boolean, ReadonlyMap<LinkId, Registered>] =>
-              all.has(id) ? [false, all] : [true, new Map(all).set(id, live)],
+            const live: Registered = { id, hello, client, via, open, drop: (reason) => Deferred.succeed(dropped, reason).pipe(Effect.asVoid) }
+            const replaces = (other: Registered) => via === "reverse" && (other.via === "reverse" || other.via === "dial-in")
+            const before = yield* Ref.modify(
+              lives,
+              (all): [{ readonly ok: boolean; readonly old: Registered | undefined }, ReadonlyMap<LinkId, Registered>] => {
+                const other = all.get(id)
+                if (other !== undefined && !replaces(other)) return [{ ok: false, old: undefined }, all]
+                return [{ ok: true, old: other }, new Map(all).set(id, live)]
+              },
             )
-            if (!registered) return yield* new LinkRefused({ reason: `host ${hello.host_id} is already connected to this hub` })
+            if (!before.ok) return yield* new LinkRefused({ reason: `host ${hello.host_id} is already connected to this hub` })
+            if (before.old !== undefined) yield* before.old.drop(`${hello.name} attached back again`)
             yield* Effect.addFinalizer(() => unregister(live))
             if (over !== undefined) {
               yield* Ref.update(attachedOn, (all) => new Map(all).set(over, live))
               yield* Effect.addFinalizer(() => Ref.update(attachedOn, (all) => without(all, over)))
             }
             yield* connections.touch
-            yield* connectedView(id, hello, "dial-in")
-            yield* Effect.logInfo(`host ${hello.name} connected in`)
+            yield* connectedView(id, hello, via)
+            yield* Effect.logInfo(via === "reverse" ? `host ${hello.name} lets this host reach it back` : `host ${hello.name} connected in`)
             return Stream.fromQueue(requests).pipe(
               Stream.interruptWhen(Effect.flatMap(Deferred.await(dropped), (reason) => Effect.fail(new LinkRefused({ reason })))),
             )
           }),
         )
 
+      const viaHub = (url: string, hello: LinkHello, control: PeerClient) =>
+        Effect.gen(function* () {
+          const id = LinkId.make(hello.host_id)
+          if (hello.host_id === identity.hostId || !meshes(hello)) return
+          // A host this one links itself (by URL or over SSH) is reached that way.
+          const row = yield* repo.get(id)
+          if (row !== null && (row.mode === "outbound" || row.mode === "ssh")) return
+          const dropped = yield* Deferred.make<string>()
+          const open = (path: string, asserted: AssertedSession) =>
+            Effect.gen(function* () {
+              if (yield* Deferred.isDone(dropped)) return yield* offline(id)
+              const { ticket } = yield* control("link.ticket", { path, session: asserted }).pipe(Effect.catch(() => offline(id)))
+              return yield* dial(wsUrl(url, `/api/relay/${ticket}`))
+            })
+          // Whether it lets this host reach it: a ticket it gives (unused, it lapses). The hub registers this host as it
+          // attaches, which may not have happened yet, so it is asked again for a few seconds.
+          const lets = yield* control("link.ticket", { path: "/api/rpc", session: linkSession(yield* Clock.currentTimeMillis) }).pipe(
+            Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 20 }),
+            Effect.option,
+          )
+          if (Option.isNone(lets)) {
+            yield* Effect.logInfo(`hub ${hello.name} doesn't let this host reach it back`)
+            return
+          }
+          const client = yield* clientOver(
+            Layer.effect(Socket.Socket, reopening(Effect.flatMap(Clock.currentTimeMillis, (now) => open("/api/rpc", linkSession(now))))),
+            "",
+            null,
+          )
+          yield* repo.upsert({ id, name: hello.name, mode: "hub", url, token: null, ssh: null, now: yield* nowTimestamp })
+          const live: Registered = { id, hello, client, via: "hub", open, drop: (reason) => Deferred.succeed(dropped, reason).pipe(Effect.asVoid) }
+          const registered = yield* Ref.modify(lives, (all): [boolean, ReadonlyMap<LinkId, Registered>] =>
+            all.has(id) ? [false, all] : [true, new Map(all).set(id, live)],
+          )
+          if (!registered) return
+          yield* Effect.addFinalizer(() => Effect.andThen(Deferred.succeed(dropped, "gone"), unregister(live)))
+          yield* connections.touch
+          yield* connectedView(id, hello, "hub")
+          yield* Effect.logInfo(`hub ${hello.name} lets this host reach it back`)
+        })
+
       const connections = {
+        listening: (at: string) => Deferred.succeed(local, at).pipe(Effect.asVoid),
+        self,
+        viaHub,
         start,
         stop,
         attach,
@@ -471,7 +647,7 @@ export class LinkConnections extends Context.Service<
             for (const live of (yield* Ref.get(lives)).values()) {
               if (live.via !== "dial-in" || !assistants.has(live.id)) continue
               const row = yield* repo.get(live.id)
-              if (row !== null && row.mode !== "inbound")
+              if (row !== null && dials(row))
                 yield* live.drop(`${identity.hostName} links assistant host ${row.name} itself, so a host that dials in under its id isn't taken for it`)
             }
           }),
@@ -479,8 +655,9 @@ export class LinkConnections extends Context.Service<
         Effect.forkScoped,
       )
 
-      // Every link the hub dials is dialled from the start.
-      for (const link of yield* repo.list) if (link.mode !== "inbound") yield* start(link)
+      // Every link the hub dials is dialled from the start: by URL or over SSH. One that dials in, attaches back
+      // (`reverse`) or is a hub this host dials in to (`hub`) comes another way, and has no URL and token to dial.
+      for (const link of yield* repo.list) if (dials(link)) yield* start(link)
 
       return LinkConnections.of(connections)
     }),

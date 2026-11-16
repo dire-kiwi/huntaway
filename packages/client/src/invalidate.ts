@@ -83,6 +83,8 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   "tasks.fanout": (board, p) => fanoutState(board, p.id),
   // A host's status is another once it has booted again (a restart, an update): its new boot id, commit and version.
   "admin.status": (board) => board.boot,
+  // A host's skills and servers, as they change there (settings sync brings another host's, HE-46).
+  "agentTools.get": (board) => board.agentTools,
   // What a host's settings sync lists changes with its settings (the old SettingsSyncRow read it again on them).
   "settingsSync.get": (board) => Hash.hash(board.settings),
   // 6.7: a profile's approval rules and action log, on its `approval_rules` and `approval_log` events.

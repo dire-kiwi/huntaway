@@ -10,6 +10,13 @@ type HostLike = Pick<Host, "local" | "connected" | "agents" | "protocol" | "capa
 export const canRunAgents = (h: Pick<HostLike, "connected" | "agents"> | undefined): boolean => !!h && h.connected && h.agents !== false
 
 /**
+ * A host new projects may go on (HE-46): one that can run agents and isn't for access only. `role` is its own setting as
+ * its board has it, when the board has it; else what it said when it connected.
+ */
+export const holdsProjects = (h: Pick<Host, "connected" | "agents" | "role"> | undefined, role?: Host["role"]): boolean =>
+  canRunAgents(h) && (role ?? h?.role) !== "access"
+
+/**
  * A connected host this UI can work with and that can run agents: it speaks this protocol (the board's own host always
  * does). A hub that cannot run agents (one deployed only to show other hosts) gets no new work; `boardHosts` says what it
  * shows.

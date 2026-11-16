@@ -7,8 +7,12 @@ import { Bit, JsonColumn } from "../platform/columns.ts"
 // The `links` table (docs/plan/08-hosts.md): all a hub keeps of another host, how to reach it. `id` is that host's
 // `host_id`. Single statements; `SqlError` and `SchemaError` are defects. Nothing here waits.
 
-/** How a link is made: the hub dials its URL, the host dials in, or the hub reaches it over SSH. */
-export const LinkMode = Schema.Literals(["outbound", "inbound", "ssh"])
+/**
+ * How a link is made: the hub dials its URL, the host dials in, or the hub reaches it over SSH; or (HE-46) the host links
+ * this one itself and lets it reach it back (`reverse`), or this host dials in to it (`hub`, from `--hub`). This host
+ * dials only `outbound` and `ssh` links itself.
+ */
+export const LinkMode = Schema.Literals(["outbound", "inbound", "ssh", "reverse", "hub"])
 export type LinkMode = typeof LinkMode.Type
 
 /** An SSH link's target: `user@host`, its SSH port and the port the host's server listens on there. */
@@ -25,20 +29,26 @@ export const LinkRow = Schema.Struct({
   ssh: JsonColumn(Schema.NullOr(SshTarget), null),
   /** Its agents may use this board's tools, up the link. */
   uplink: Bit,
+  /**
+   * It may reach this board back, and the hosts this one reaches (HE-46): `outbound`, `ssh` and `inbound` links. On for a
+   * link this host makes; off for a host that dials in under an id not seen before, until the user turns it on.
+   */
+  mesh: Bit,
   /** When the hub last heard from it, written when its connection ends. */
   last_seen: Schema.NullOr(Timestamp),
   created_at: Timestamp,
 })
 export interface LinkRow extends Schema.Schema.Type<typeof LinkRow> {}
 
-const COLUMNS = "id, name, mode, url, token, ssh, uplink, last_seen, created_at"
+const COLUMNS = "id, name, mode, url, token, ssh, uplink, mesh, last_seen, created_at"
 
 export interface LinkRepoShape {
   readonly list: Effect.Effect<ReadonlyArray<LinkRow>>
   readonly get: (id: LinkId) => Effect.Effect<LinkRow | null>
   /**
-   * Adds a link, or changes how an existing one is reached. An inbound one (a host that dialled in) keeps an existing
-   * row's mode, URL and token: a host the hub dials may dial in too.
+   * Adds a link, or changes how an existing one is reached. One this host doesn't dial itself (`inbound`, `reverse`,
+   * `hub`) keeps an existing row's mode, URL and token: a host the hub dials may dial in too. A `reverse` one takes the
+   * place of an `inbound` one: that host has shown it holds this host's token.
    */
   readonly upsert: (link: {
     readonly id: LinkId
@@ -51,6 +61,7 @@ export interface LinkRepoShape {
   }) => Effect.Effect<void>
   readonly rename: (id: LinkId, name: string) => Effect.Effect<void>
   readonly setUplink: (id: LinkId, uplink: boolean) => Effect.Effect<void>
+  readonly setMesh: (id: LinkId, mesh: boolean) => Effect.Effect<void>
   readonly setToken: (id: LinkId, token: string) => Effect.Effect<void>
   readonly setLastSeen: (id: LinkId, at: Timestamp) => Effect.Effect<void>
   /** The links some profile's assistant runs on (`profiles.assistant_host`). */
@@ -81,17 +92,25 @@ export class LinkRepo extends Context.Service<LinkRepo, LinkRepoShape>()("huntaw
         upsert: (link) =>
           Effect.gen(function* () {
             const ssh = link.ssh === null ? null : yield* encodeSsh(link.ssh)
-            yield* link.mode === "inbound"
-              ? sql`INSERT INTO links (id, name, mode, url, token, ssh, uplink, created_at)
-                    VALUES (${link.id}, ${link.name}, 'inbound', NULL, NULL, NULL, 0, ${link.now})
+            // A host that dials in for the first time is known only by the id it gives with the hub token, which every
+            // such host holds: it reaches this board back (Mesh) only once the user lets it (HE-46).
+            yield* link.mode === "inbound" || link.mode === "hub"
+              ? sql`INSERT INTO links (id, name, mode, url, token, ssh, uplink, mesh, created_at)
+                    VALUES (${link.id}, ${link.name}, ${link.mode}, ${link.url}, NULL, NULL, 0, ${link.mode === "inbound" ? 0 : 1}, ${link.now})
                     ON CONFLICT (id) DO UPDATE SET name = excluded.name`
-              : sql`INSERT INTO links (id, name, mode, url, token, ssh, uplink, created_at)
+              : link.mode === "reverse"
+                ? sql`INSERT INTO links (id, name, mode, url, token, ssh, uplink, created_at)
+                      VALUES (${link.id}, ${link.name}, 'reverse', NULL, NULL, NULL, 0, ${link.now})
+                      ON CONFLICT (id) DO UPDATE SET name = excluded.name,
+                        mode = CASE WHEN links.mode = 'inbound' THEN 'reverse' ELSE links.mode END`
+                : sql`INSERT INTO links (id, name, mode, url, token, ssh, uplink, created_at)
                     VALUES (${link.id}, ${link.name}, ${link.mode}, ${link.url}, ${link.token}, ${ssh}, 0, ${link.now})
                     ON CONFLICT (id) DO UPDATE SET name = excluded.name, mode = excluded.mode, url = excluded.url,
                       token = excluded.token, ssh = excluded.ssh`
           }).pipe(Effect.asVoid, Effect.orDie),
         rename: (id, name) => sql`UPDATE links SET name = ${name} WHERE id = ${id}`.pipe(Effect.asVoid, Effect.orDie),
         setUplink: (id, uplink) => sql`UPDATE links SET uplink = ${uplink ? 1 : 0} WHERE id = ${id}`.pipe(Effect.asVoid, Effect.orDie),
+        setMesh: (id, mesh) => sql`UPDATE links SET mesh = ${mesh ? 1 : 0} WHERE id = ${id}`.pipe(Effect.asVoid, Effect.orDie),
         setToken: (id, token) => sql`UPDATE links SET token = ${token} WHERE id = ${id}`.pipe(Effect.asVoid, Effect.orDie),
         setLastSeen: (id, at) => sql`UPDATE links SET last_seen = ${at} WHERE id = ${id}`.pipe(Effect.asVoid, Effect.orDie),
         assistantHosts: sql<{ readonly id: string }>`SELECT DISTINCT assistant_host AS id FROM profiles WHERE assistant_host IS NOT NULL`.pipe(

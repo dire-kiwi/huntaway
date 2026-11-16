@@ -37,6 +37,11 @@ export const ProfilesChanged = Schema.Struct({
 })
 /** The host's settings changed: all of them. */
 export const SettingsChanged = Schema.Struct({ type: Schema.Literal("settings_changed"), settings: HostSettings, ...seq })
+/**
+ * The host's global skills or MCP servers changed (HE-46): its Skills and MCP settings are read again, and settings
+ * sync looks for what to pass on.
+ */
+export const AgentToolsChanged = Schema.Struct({ type: Schema.Literal("agent_tools_changed"), ...seq })
 /** A profile's pens changed: all of them. */
 export const PensChanged = Schema.Struct({ type: Schema.Literal("pens"), profile_id: ProfileId, pens: Schema.Array(Pen), ...seq })
 /** An agent config's usage changed: all of it. */
@@ -143,6 +148,7 @@ export const BoardEvent = Schema.Union([
   ProjectDeleted,
   ProfilesChanged,
   SettingsChanged,
+  AgentToolsChanged,
   PensChanged,
   UsageChanged,
   ApprovalRulesChanged,

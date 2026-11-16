@@ -12,5 +12,10 @@ export const Capability = {
   readOnly: "read_only",
   /** It takes part in settings sync (`settingsSync.*`) when switched on. */
   settingsSync: "settings_sync",
+  /**
+   * It joins the mesh (HE-46): a link goes both ways (`link.attach` on a dialled connection, `link.ticket` for a host
+   * that dialled in), and its directory lists the hosts its neighbours reach.
+   */
+  mesh: "mesh",
 } as const
 export type Capability = (typeof Capability)[keyof typeof Capability]

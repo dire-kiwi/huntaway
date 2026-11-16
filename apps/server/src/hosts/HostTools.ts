@@ -5,7 +5,7 @@ import { ToolCalls } from "../mcp/ToolCalls.ts"
 import { Identity } from "../platform/Identity.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { About } from "../settings/About.ts"
-import { helloOf, LinkConnections } from "./LinkConnections.ts"
+import { dials, helloOf, LinkConnections } from "./LinkConnections.ts"
 import type { Live, Via } from "./LinkConnections.ts"
 import { LinkRepo } from "./LinkRepo.ts"
 
@@ -45,7 +45,7 @@ export class HostTools extends Context.Service<HostTools, HostToolsShape>()("hun
       const takeUp = Effect.fn("HostTools.takeUp")(function* (host: LinkId, via: Via, call: RemoteToolCall & { readonly call_id: string }) {
         const link = yield* repo.get(host)
         if (link === null || !link.uplink) return off(null)
-        const linkedVia = via === "dial-in" ? link.mode === "inbound" : link.mode !== "inbound"
+        const linkedVia = via === "dial-in" ? link.mode === "inbound" : dials(link)
         if (!linkedVia) {
           return off(
             `${hostName} links ${link.name} ${link.mode === "inbound" ? "as a host that dials in" : "itself"}, and this call came another way, so it isn't taken`,

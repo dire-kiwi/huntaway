@@ -12,6 +12,13 @@ import { Timestamp } from "./time.ts"
 export const HostEffort = Schema.Literals(["low", "medium", "high", "xhigh", "max"])
 export type HostEffort = typeof HostEffort.Type
 
+/**
+ * What a host is for (HE-46): `projects` holds projects and runs their agents; `access` is a way in to the board (a public
+ * hub, say), offered for no new project. Absent is `projects`.
+ */
+export const HostRole = Schema.Literals(["projects", "access"])
+export type HostRole = typeof HostRole.Type
+
 /** A TUI program offered as a shortcut in task terminals, e.g. `lazygit`. */
 export const TerminalTool = Schema.Struct({ id: Schema.String, name: Schema.String, command: Schema.String })
 export interface TerminalTool extends Schema.Schema.Type<typeof TerminalTool> {}
@@ -30,7 +37,7 @@ export const HostSettings = Schema.Struct({
   public_url: Schema.NullOr(Schema.String),
   /** Release checks include prereleases. */
   release_prereleases: Schema.Boolean,
-  /** Keep this host's settings the same as the board's other hosts that have this on. */
+  /** Keep this host's settings the same as the board's other hosts that have this on: on unless switched off (HE-46). */
   settings_sync: Schema.Boolean,
   /**
    * The experiments switched on (Settings → Experiments), for the whole board. Open strings, and optional, so that a
@@ -38,6 +45,8 @@ export const HostSettings = Schema.Struct({
    * `knownExperiments`.
    */
   experiments: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** What this host is for; absent from hosts before HE-46 (`projects`). Not synced: each host says its own. */
+  role: Schema.optionalKey(HostRole),
 })
 export interface HostSettings extends Schema.Schema.Type<typeof HostSettings> {}
 
@@ -55,6 +64,7 @@ export const HostSettingsPatch = Schema.Struct({
   settings_sync: Schema.optional(Schema.Boolean),
   /** The experiments to have on, all of them: the rest are switched off. */
   experiments: Schema.optional(Schema.Array(ExperimentId)),
+  role: Schema.optional(HostRole),
 })
 export interface HostSettingsPatch extends Schema.Schema.Type<typeof HostSettingsPatch> {}
 
@@ -97,6 +107,8 @@ export const HostInfo = Schema.Struct({
   /** It can run agents, and which agents' CLIs it has. */
   agents: Schema.Boolean,
   agent_clis: Schema.Array(Schema.String),
+  /** What it is for (its setting); absent from hosts before HE-46. */
+  role: Schema.optionalKey(HostRole),
   data_dir: Schema.String,
   /** The machine's name, and the home folder of the user it runs as. */
   hostname: Schema.String,
@@ -114,8 +126,12 @@ export const Host = Schema.Struct({
   /** The host the board is served from. */
   local: Schema.Boolean,
   connected: Schema.Boolean,
-  /** `outbound`: the hub connects to it; `inbound`: it dials the hub; `ssh`: the hub starts it and tunnels to it. */
-  mode: Schema.Literals(["local", "outbound", "inbound", "ssh"]),
+  /**
+   * `outbound`: the hub connects to it; `inbound`: it dials the hub; `ssh`: the hub starts it and tunnels to it;
+   * `reverse`: it links the hub itself (by URL or over SSH) and lets the hub reach it back; `hub`: the hub dials in to it
+   * (`--hub`); `mesh`: one of the hub's neighbours reaches it (`through`), HE-46.
+   */
+  mode: Schema.Literals(["local", "outbound", "inbound", "ssh", "reverse", "hub", "mesh"]),
   /** It can run agents (false for a hub that only shows other hosts). */
   agents: Schema.NullOr(Schema.Boolean),
   url: Schema.NullOr(Schema.String),
@@ -129,6 +145,16 @@ export const Host = Schema.Struct({
   last_message_at: Schema.NullOr(Timestamp),
   /** Its agents may use this board's tools, up the link. */
   uplink: Schema.Boolean,
+  /**
+   * The link's Mesh switch (HE-46): the host it links may reach this board back, and the hosts it reaches. Only on the
+   * links whose other end it governs (`outbound`, `ssh`, `inbound`).
+   */
+  mesh: Schema.optionalKey(Schema.Boolean),
+  /** For `mesh`: the neighbour it is reached through, and every host on the way there from the hub (that one first). */
+  through: Schema.optionalKey(Schema.NullOr(HostId)),
+  route: Schema.optionalKey(Schema.Array(HostId)),
+  /** What it is for, as it last said (absent: `projects`, or not known yet). */
+  role: Schema.optionalKey(HostRole),
   /** The link's live state (M7); absent from a host's own entry. */
   status: Schema.optional(Schema.Literals(["connecting", "connected", "offline", "needs_update", "refused"])),
   /** Why it is `offline` or `refused`, to show beside it. */

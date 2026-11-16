@@ -63,6 +63,15 @@ export interface ProfileRepoShape {
   /** How many of the profile's tasks have an agent running. */
   readonly running: (id: ProfileId) => Effect.Effect<number>
   /**
+   * How many projects, tasks, automations, pens, documents (and their images) and docs site connections the profile has
+   * here: everything deleting it deletes, and what keeps settings sync from deleting it (HE-46).
+   */
+  readonly holds: (id: ProfileId) => Effect.Effect<number>
+  /** Notes that the profile was called `from` (HE-46): settings sync tells a rename from a removal by it. */
+  readonly renamed: (id: ProfileId, from: string) => Effect.Effect<void>
+  /** The profile that was called `name` before, if it is still here. */
+  readonly formerly: (name: string) => Effect.Effect<ProfileId | null>
+  /**
    * Delete the profile and what hangs off it, by hand and in order: review threads, its other tasks, its projects,
    * the row. (The foreign keys would cascade; the order is the old `delete_profile`'s, for the steps later milestones
    * put between.)
@@ -93,6 +102,8 @@ export class ProfileRepo extends Context.Service<ProfileRepo, ProfileRepoShape>(
         Effect.gen(function* () {
           const row = yield* encodeColumns({ ...columns, id, created_at: createdAt })
           yield* sql`INSERT INTO profiles ${sql.insert(row)}`
+          // A name a profile takes is no other's former name any more (HE-46).
+          if (columns.name !== undefined) yield* sql`DELETE FROM profile_former_names WHERE name = ${columns.name}`
         }).pipe(Effect.orDie)
 
       const update = (id: ProfileId, columns: ProfileColumns) =>
@@ -100,6 +111,7 @@ export class ProfileRepo extends Context.Service<ProfileRepo, ProfileRepoShape>(
           const row = yield* encodeColumns(columns)
           if (Object.keys(row).length === 0) return
           yield* sql`UPDATE profiles SET ${sql.update(row)} WHERE id = ${id}`
+          if (columns.name !== undefined) yield* sql`DELETE FROM profile_former_names WHERE name = ${columns.name}`
         }).pipe(Effect.orDie)
 
       const asanaToken = (id: ProfileId) =>
@@ -113,6 +125,16 @@ export class ProfileRepo extends Context.Service<ProfileRepo, ProfileRepoShape>(
 
       const running = (id: ProfileId) =>
         sql<{ readonly n: number }>`SELECT COUNT(*) AS n FROM tasks WHERE profile_id = ${id} AND running = 1`.pipe(
+          Effect.map((rows) => rows[0]?.n ?? 0),
+          Effect.orDie,
+        )
+
+      const holds = (id: ProfileId) =>
+        sql<{ readonly n: number }>`SELECT
+            (SELECT COUNT(*) FROM projects WHERE profile_id = ${id}) + (SELECT COUNT(*) FROM tasks WHERE profile_id = ${id})
+            + (SELECT COUNT(*) FROM automations WHERE profile_id = ${id}) + (SELECT COUNT(*) FROM pens WHERE profile_id = ${id})
+            + (SELECT COUNT(*) FROM docs WHERE profile_id = ${id}) + (SELECT COUNT(*) FROM doc_images WHERE profile_id = ${id})
+            + (SELECT COUNT(*) FROM docs_site_connections WHERE profile_id = ${id}) AS n`.pipe(
           Effect.map((rows) => rows[0]?.n ?? 0),
           Effect.orDie,
         )
@@ -142,6 +164,15 @@ export class ProfileRepo extends Context.Service<ProfileRepo, ProfileRepoShape>(
         update,
         asanaToken,
         running,
+        holds,
+        renamed: (id, from) =>
+          sql`INSERT INTO profile_former_names (name, profile_id) VALUES (${from}, ${id})
+              ON CONFLICT (name) DO UPDATE SET profile_id = excluded.profile_id`.pipe(Effect.asVoid, Effect.orDie),
+        formerly: (name) =>
+          sql<{ readonly id: ProfileId }>`SELECT profile_id AS id FROM profile_former_names WHERE name = ${name}`.pipe(
+            Effect.map((rows) => rows[0]?.id ?? null),
+            Effect.orDie,
+          ),
         delete: remove,
         usedPaths,
       })

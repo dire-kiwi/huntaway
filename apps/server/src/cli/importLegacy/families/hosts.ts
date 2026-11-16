@@ -58,7 +58,8 @@ export const convertSsh = (text: string | null): { readonly value: string | null
   return Result.isSuccess(target) ? { value: target.success, unreadable: false } : { value: null, unreadable: true }
 }
 
-export const convertLink = (l: OldLink): NewRow => ({ ...l, ssh: convertSsh(l.ssh).value })
+/** The old links had no Mesh switch (HE-46): on, as for every link. */
+export const convertLink = (l: OldLink): NewRow => ({ ...l, ssh: convertSsh(l.ssh).value, mesh: 1 })
 
 /** Whether a subscription is a browser's (imported) rather than the phone app's through Expo (not yet). */
 export const isWebSubscription = (s: OldPushSubscription) => s.kind !== "expo"

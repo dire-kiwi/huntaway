@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { Rpc, RpcGroup } from "effect/rpc"
-import { LinkHello, LinkRefused, OpenStream } from "../link.ts"
+import { AssertedSession, LinkHello, LinkRefused, OpenStream } from "../link.ts"
 import { Auth, RequiredScope } from "../session.ts"
 import { RemoteToolCall, ToolOutcome } from "./tools.ts"
 
@@ -29,6 +29,15 @@ export class LinkRpcs extends RpcGroup.make(
    * it (7.4). Only on the hub's own connection (a sealed session of kind `link` from that hub).
    */
   Rpc.make("link.upcalls", { payload: LinkHello, success: UpCall, error: LinkRefused, stream: true }).annotate(RequiredScope, "link"),
+  /**
+   * A host that dialled in, on the connection it attached on, asks for a socket to this hub's `path` carrying `session`
+   * (HE-46): a single-use ticket for `/api/relay/<ticket>`. Only while the hub's link to it has its Mesh switch on.
+   */
+  Rpc.make("link.ticket", {
+    payload: { path: Schema.String, session: AssertedSession },
+    success: Schema.Struct({ ticket: Schema.String }),
+    error: LinkRefused,
+  }).annotate(RequiredScope, "link"),
   /** The hub's answer to a call it took on `link.upcalls`. */
   Rpc.make("link.upcallResult", { payload: UpCallResult }).annotate(RequiredScope, "link"),
 ).middleware(Auth) {}

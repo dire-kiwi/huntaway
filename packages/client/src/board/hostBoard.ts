@@ -69,6 +69,8 @@ export interface HostBoard {
    * `automations_changed` event about it, which what shows them reads them again on.
    */
   readonly automations: ReadonlyMap<string, number>
+  /** HE-46: the number of the latest `agent_tools_changed` event, which the host's Skills and MCP settings read again on. */
+  readonly agentTools: number
   /**
    * 6.7: the number of the latest `approval_rules` and `approval_log` event about a profile (`rules <profile>`,
    * `log <profile>`), which the assistant's rules and action log read them again on.
@@ -120,6 +122,7 @@ export const emptyHostBoard = (host_id: HostId): HostBoard => ({
   restart: null,
   checkpoints: new Map(),
   automations: new Map(),
+  agentTools: 0,
   approvalRules: new Map(),
   workflows: new Map(),
   workflowRuns: new Map(),
@@ -248,6 +251,8 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
       return { ...next, profiles: reuse(h, board.profiles, message.profiles), configs: reuse(h, board.configs, message.configs) }
     case "settings_changed":
       return { ...next, settings: keep(board.settings, message.settings) }
+    case "agent_tools_changed":
+      return { ...next, agentTools: message.seq }
     case "pens":
       return { ...next, pens: replacePens(board.pens, h, message.profile_id, message.pens) }
     case "usage": {
