@@ -5,8 +5,9 @@ import { SqlClient } from "effect/sql"
 import { Backup } from "./Backup.ts"
 import { Db } from "./Db.ts"
 import { migration } from "./migration.ts"
-import { loadMigrations, runMigrations } from "./Migrations.ts"
+import { loadMigrations, Migrations, runMigrations } from "./Migrations.ts"
 import type { NamedMigration } from "./Migrations.ts"
+import { StartupProgress } from "./StartupProgress.ts"
 
 const backups = Ref.makeUnsafe<ReadonlyArray<string>>([])
 const FakeBackup = Layer.succeed(Backup, Backup.of({ beforeMigrate: (from, to) => Ref.update(backups, (b) => [...b, `${from}->${to}`]) }))
@@ -51,6 +52,21 @@ describe("Migrations", () => {
       // Again: nothing to do, no backup.
       assert.deepStrictEqual(yield* runMigrations([a, b]), ["2026-01-01-a", "2026-01-02-b"])
       assert.strictEqual((yield* Ref.get(backups)).length, 1)
+    }).pipe(Effect.provide(TestLive)),
+  )
+
+  it.effect("reports each migration as it starts, then the start of the rest (HUNTAWAY_PROGRESS)", () =>
+    Effect.gen(function* () {
+      const steps = yield* Ref.make<ReadonlyArray<string>>([])
+      const record = (step: { readonly step: string; readonly done?: number; readonly total?: number }) =>
+        Ref.update(steps, (all) => [...all, `${step.step} ${step.done ?? ""}/${step.total ?? ""}`])
+      const a = named("2026-03-01-a", "CREATE TABLE pa (x INTEGER) STRICT")
+      const b = named("2026-03-02-b", "CREATE TABLE pb (x INTEGER) STRICT")
+      yield* runMigrations([a, b]).pipe(Effect.provideService(StartupProgress, record))
+      assert.deepStrictEqual(yield* Ref.get(steps), ["migrate 0/2", "migrate 1/2"])
+      yield* Ref.set(steps, [])
+      yield* Layer.build(Migrations.layer).pipe(Effect.scoped, Effect.provideService(StartupProgress, record))
+      assert.strictEqual((yield* Ref.get(steps)).at(-1), "start /")
     }).pipe(Effect.provide(TestLive)),
   )
 

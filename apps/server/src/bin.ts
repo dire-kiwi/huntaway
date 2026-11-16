@@ -1,6 +1,7 @@
 import { NodeHttpServer, NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Console, Context, Effect, Layer, Option, Redacted, Schema } from "effect"
 import { Command, Flag } from "effect/cli"
+import { StartupStep } from "@huntaway/contracts"
 import { createServer } from "node:http"
 import { Digest, Mac, SecureRandom } from "effect/crypto"
 import { FetchHttpClient, HttpServer } from "effect/http"
@@ -20,6 +21,7 @@ import { DataDir } from "./platform/DataDir.ts"
 import { Identity } from "./platform/Identity.ts"
 import { Listening } from "./platform/Listening.ts"
 import { InfoAndAbove, LoggingLive } from "./platform/Logging.ts"
+import { StartupProgress } from "./platform/StartupProgress.ts"
 import { releaseBuild, ServerConfig, serveArgs, serveFlags, VERSION } from "./platform/ServerConfig.ts"
 import type { ServeFlags } from "./platform/ServerConfig.ts"
 // 9.1: the guard over an imported folder, and the read-only server a rehearsal is served by.
@@ -31,6 +33,7 @@ import { readOnlyServerLayer } from "./ReadOnlyMain.ts"
 
 /** What the desktop shell and the test scripts read from stdout: `HUNTAWAY_READY {"port":…,"token":…}`. */
 const ReadyLine = Schema.fromJsonString(Schema.Struct({ port: Schema.Int, token: Schema.NullOr(Schema.String) }))
+const StartupLine = Schema.fromJsonString(StartupStep)
 
 /** Shutdown waits this long for its finalizers, then the process exits regardless. */
 const SHUTDOWN_FALLBACK = "2 seconds"
@@ -44,6 +47,13 @@ const exitFallback = Effect.addFinalizer(() =>
 const ready = (port: number, identity: Identity["Service"]) =>
   Effect.flatMap(Schema.encodeEffect(ReadyLine)({ port, token: identity.tokenGiven ? null : Redacted.value(identity.token) }), (line) =>
     Console.log(`HUNTAWAY_READY ${line}`),
+  )
+
+/** How far the start has got, for the desktop app: `HUNTAWAY_PROGRESS {"step":…}` (contracts' `StartupStep`). */
+const printProgress = (step: StartupStep) =>
+  Schema.encodeEffect(StartupLine)(step).pipe(
+    Effect.flatMap((line) => Console.log(`HUNTAWAY_PROGRESS ${line}`)),
+    Effect.ignore,
   )
 
 /**
@@ -80,7 +90,7 @@ const serveReadOnly = (guard: ImportGuard["Service"]) =>
 const serveBoard = Effect.gen(function* () {
   const config = yield* ServerConfig
   yield* exitFallback
-  const context = yield* Layer.build(serverLayer(config))
+  const context = yield* Layer.build(serverLayer(config)).pipe(Effect.provideService(StartupProgress, printProgress))
   const server = Context.get(context, HttpServer.HttpServer)
   const identity = Context.get(context, Identity)
   // Only now, listening with the hubs dialled and discovery answering, has a release come up: it becomes current (the

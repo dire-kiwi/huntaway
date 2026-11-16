@@ -13,6 +13,21 @@ export type RestartPhase = typeof RestartPhase.Type
 export const RestartJob = Schema.Struct({ phase: RestartPhase, log: Schema.String, error: Schema.NullOr(Schema.String) })
 export interface RestartJob extends Schema.Schema.Type<typeof RestartJob> {}
 
+/**
+ * How far a server has got with its start, before it listens: a `HUNTAWAY_PROGRESS {…}` line on its stdout, which the
+ * desktop app reads (docs/plan/06-server.md, Startup) and passes to the board's restart dialog. `step` is `backup` (the
+ * copy of the database before a migration: `total` bytes into `file`, which the app watches grow, as the copy holds
+ * the server's one thread), `migrate` (`done` of `total` migrations applied) or `start` (the database is ready, the
+ * rest is being built). A step this build doesn't know is shown as starting.
+ */
+export const StartupStep = Schema.Struct({
+  step: Schema.String,
+  done: Schema.optionalKey(Schema.Finite),
+  total: Schema.optionalKey(Schema.Finite),
+  file: Schema.optionalKey(Schema.String),
+})
+export interface StartupStep extends Schema.Schema.Type<typeof StartupStep> {}
+
 /** What `--update-from`'s deployment said when last asked. */
 export const Deployed = Schema.Struct({
   /** The commit it runs (kept from an earlier check while it can't be reached). */

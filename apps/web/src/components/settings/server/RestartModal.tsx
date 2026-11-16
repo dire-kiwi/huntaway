@@ -1,6 +1,5 @@
 import { mutate, type RestartState } from "@huntaway/client"
 import type { ReleaseStatus, ServerStatus } from "@huntaway/contracts"
-import { clsx } from "clsx"
 import { Effect, Exit } from "effect"
 import { CircleAlert, ExternalLink, GitCommitHorizontal, Loader2, RotateCw, Undo2 } from "lucide-react"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
@@ -10,15 +9,17 @@ import { after } from "../../../state/timers"
 import { Markdown } from "../../task/thread/Markdown"
 import { Button, Modal, ModalFooter, Toggle } from "../../ui"
 import { PHASES, short, stagedRelease, useServerStatus, Warning } from "./parts"
+import { RestartProgress, useServerStartProgress } from "./RestartProgress"
 
 // The old Server.tsx's RestartModal (docs/plan/09-frontend.md) over `admin.restart`, `admin.update`,
 // `admin.updateRelease` and `admin.rollback`. This host's restart is followed by its `restart` and `restart_log` events
 // (the board's `restart`), and once it is restarting by polling its `admin.status` for the new boot; a linked host's by
 // its page, polling. The old "Copy again" (`recopy`) is dropped with the two-file database
-// (docs/plan/14-dropped-and-open.md).
+// (docs/plan/14-dropped-and-open.md). A restart in progress shows its steps and a bar (RestartProgress, HE-44).
 
-/** What the dialog says when the server it restarted doesn't come back. */
-const NOT_BACK = "The server didn't come back within 2 minutes. Check its logs."
+/** What the dialog says when the server it restarted doesn't come back: it goes on waiting all the same. */
+const NOT_BACK =
+  "The server didn't come back within 2 minutes. This dialog keeps waiting, and the board reloads once it's back; if it doesn't come back, check its logs."
 
 /** What a restart this dialog has just asked for shows until the host's first event of it arrives. */
 const STARTING: RestartState = { phase: "starting", error: null, log: [] }
@@ -53,7 +54,7 @@ export function RestartModal({
   const starting = asking.busy
   // The restart's new process didn't answer within 2 minutes.
   const [timedOut, setTimedOut] = useState(false)
-  const err = timedOut ? NOT_BACK : asking.error
+  const err = asking.error
   // The commit to update to, kept from when the modal opened.
   const [target] = useState(!release && update && status.deployed_commits?.length ? (status.deployed?.commit ?? null) : null)
   // The release to update to, or what a rollback goes back to, also kept from when the modal opened.
@@ -79,10 +80,15 @@ export function RestartModal({
   const phase = job?.phase
   const logLines = job?.log.length ?? 0
 
-  // Once the server goes down for the restart, wait for the new process (a new boot), then reload for the new UI.
+  // Once the server goes down for the restart, wait for the new process (a new boot), then reload for the new UI: after
+  // the 2 minutes too, for a server that comes back late.
   const restarting = phase === "restarting"
-  const { status: now } = useServerStatus(restarting && !timedOut ? localHost : null, "1 second")
+  const { status: now, down } = useServerStatus(restarting ? localHost : null, "1 second")
   const back = !!now && now.boot_id !== boot
+  // The board's connection to this host: lost once the old process has gone.
+  const connected = useBoard((s) => s.connected)
+  // In the desktop app, how far the new server has got as it starts.
+  const serverStart = useServerStartProgress(restarting)
   useEffect(() => {
     if (back) window.location.reload()
   }, [back])
@@ -139,7 +145,7 @@ export function RestartModal({
   const action = release === "rollback" ? `Roll back to ${rollbackTo}` : release || target ? "Update & restart" : rebuild ? "Rebuild & restart" : "Restart"
   const title = release === "update" ? "Update Huntaway" : release === "rollback" ? "Roll back Huntaway" : target ? "Update server" : "Rebuild & restart server"
   return (
-    <Modal title={title} onClose={inProgress ? () => {} : onClose} width="max-w-2xl">
+    <Modal title={title} onClose={inProgress && !timedOut ? () => {} : onClose} width="max-w-2xl">
       <div className="space-y-4 text-[13px]">
         {!job && release === "update" && version && status.release && <ReleaseUpdate release={status.release} version={version} remote={remote} />}
         {!job && release === "rollback" && (
@@ -222,15 +228,27 @@ export function RestartModal({
 
         {job && (
           <div className="space-y-3">
-            <div className={clsx("flex items-center gap-2", job.phase === "failed" ? "text-red-400" : "text-fg")}>
-              {job.phase === "failed" ? <CircleAlert size={15} /> : <Loader2 size={15} className="animate-spin text-accent" />}
-              {job.phase === "restarting" ? "Restarting, waiting for the server to come back…" : (PHASES[job.phase] ?? job.phase)}
-            </div>
+            {job.phase === "failed" ? (
+              <div className="flex items-center gap-2 text-red-400">
+                <CircleAlert size={15} />
+                {PHASES[job.phase] ?? job.phase}
+              </div>
+            ) : (
+              <RestartProgress
+                kind={release === "update" ? "release" : target ? "update" : !release && rebuild ? "rebuild" : "restart"}
+                job={job}
+                version={release === "update" ? version : null}
+                server={serverStart}
+                down={down || !connected}
+                back={back}
+              />
+            )}
+            {timedOut && !back && <Warning>{NOT_BACK}</Warning>}
             {job.error && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{job.error}</div>}
             {job.log.length > 0 && (
               <pre
                 ref={logRef}
-                className="h-72 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[11.5px] leading-[1.45] whitespace-pre-wrap text-[#b9b9c8]"
+                className="max-h-72 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[11.5px] leading-[1.45] whitespace-pre-wrap text-[#b9b9c8]"
               >
                 {job.log.join("\n")}
               </pre>
@@ -242,7 +260,7 @@ export function RestartModal({
         <ModalFooter className="space-y-4">
           {err && <div className="text-xs text-red-400">{err}</div>}
           <div className="flex justify-end gap-2">
-            {!inProgress && (
+            {(!inProgress || timedOut) && (
               <Button variant="ghost" onClick={onClose}>
                 Close
               </Button>

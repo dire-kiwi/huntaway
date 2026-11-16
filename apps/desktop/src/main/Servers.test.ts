@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Layer, Schema } from "effect"
+import { Deferred, Effect, Layer, Ref, Schema, Stream, SubscriptionRef } from "effect"
 import { Digest } from "effect/crypto"
 import { FetchHttpClient } from "effect/http"
 import { afterEach } from "vite-plus/test"
@@ -41,7 +41,7 @@ const freePort = () =>
     })
   })
 
-type Behaviour = "ready" | "exit" | "backup"
+type Behaviour = "ready" | "exit" | "backup" | "progress"
 
 /**
  * A stand-in launcher at `file`: it records its arguments, environment and pid beside itself, then says it is ready (and
@@ -53,6 +53,19 @@ const launcher = (file: string, behaviour: Behaviour, token = "tok") => {
     ready: `echo 'HUNTAWAY_READY {"port":1,"token":"${token}"}'\nexec sleep 600`,
     exit: "echo 'it went wrong' >&2\nexit 1",
     backup: `echo 'HUNTAWAY_BACKUP_FAILED {"reason":"space","why":"No space left on device","dir":"/backups"}'\nexit 1`,
+    // A backup the app watches grow (it's written whole here, and the app looks every 250 ms), two migrations, then ready.
+    progress: [
+      `head -c 3000 /dev/zero > "$0.backup.db"`,
+      `echo 'HUNTAWAY_PROGRESS {"step":"backup","done":0,"total":3000,"file":"'"$0.backup.db"'"}'`,
+      `echo 'INFO server: backing up' >&2`,
+      "sleep 1",
+      `echo 'HUNTAWAY_PROGRESS {"step":"migrate","done":0,"total":2}'`,
+      `echo 'HUNTAWAY_PROGRESS {"step":"migrate","done":1,"total":2}'`,
+      `echo 'a line of its own on stdout'`,
+      `echo 'HUNTAWAY_PROGRESS {"step":"start"}'`,
+      `echo 'HUNTAWAY_READY {"port":1,"token":"${token}"}'`,
+      "exec sleep 600",
+    ].join("\n"),
   }[behaviour]
   writeFileSync(file, `#!/bin/sh\necho "$*" > "$0.args"\nenv > "$0.env"\necho $$ > "$0.pid"\necho x >> "$0.starts"\n${says}\n`)
   chmodSync(file, 0o755)
@@ -209,6 +222,42 @@ describe("Servers", () => {
       }).pipe(Effect.provide(serversLayer({ dataDir: join(dir, "data"), port, serverBin: bin })))
       assert.strictEqual(error.message, "Server exited with code 1")
       assert.deepStrictEqual(log, ["it went wrong"])
+    }),
+  )
+
+  it.live("follows the server's start for the progress page: its steps, the backup's file, and its output but for its lines for the app", () =>
+    Effect.gen(function* () {
+      const dir = temp()
+      const port = yield* freePort()
+      const bin = launcher(join(dir, "bin", "huntaway"), "progress", "secret-token")
+      yield* Effect.gen(function* () {
+        const servers = yield* Servers
+        const seen = yield* Ref.make<ReadonlyArray<string>>([])
+        const listening = yield* Deferred.make<void>()
+        const opened = yield* Deferred.make<void>()
+        yield* SubscriptionRef.changes(servers.startup).pipe(
+          Stream.runForEach((s) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(listening, undefined)
+              const view = `${s.step}${s.detail === null ? "" : ` (${s.detail})`}${s.share === null ? "" : ` ${Math.round(s.share * 100)}%`}`
+              yield* Ref.update(seen, (all) => (all.at(-1) === view ? all : [...all, view]))
+              if (s.step === "Opening the board") yield* Deferred.succeed(opened, undefined)
+            }),
+          ),
+          Effect.forkScoped,
+        )
+        yield* Deferred.await(listening)
+        assert.strictEqual((yield* servers.resolve).token, "secret-token")
+        yield* Deferred.await(opened)
+        const steps = yield* Ref.get(seen)
+        assert.include(steps, "Backing up the database (3 KB of 3 KB, so that it can go back if the new version is no good) 100%")
+        assert.include(steps, "Updating the database (1 of 2) 0%")
+        assert.include(steps, "Updating the database (2 of 2) 50%")
+        assert.include(steps, "Starting the board")
+        assert.strictEqual(steps.at(-1), "Opening the board")
+        const log = yield* servers.log
+        assert.deepStrictEqual(log, ["INFO server: backing up", "a line of its own on stdout"])
+      }).pipe(Effect.scoped, Effect.provide(serversLayer({ dataDir: join(dir, "data"), port, serverBin: bin })))
     }),
   )
 })

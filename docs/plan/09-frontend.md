@@ -507,7 +507,14 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   preload's `shellUpdateKind`/`updateShell` read with `Reflect` as notifier.ts does), and `RestartModal` (restart,
   `admin.update`, `admin.updateRelease`, `admin.rollback`). This host's restart is followed by the board's `restart`
   (its `restart` and `restart_log` events): where the old modal set the store's restart to "starting", it keeps the
-  board's restart as it was when it asked and shows "Starting…" until that changes. The sidebar has `UpdateButton`
+  board's restart as it was when it asked and shows "Starting…" until that changes. Since HE-44 a restart in progress
+  shows its steps (`RestartProgress`: download, check, install or fetch and build, then stop and start again) with a
+  bar that fills where a step's share is known (the release's download from `release_download` events, kept on the
+  board's `restart`; the new server's backup and migrations as the desktop app relays them, its preload's
+  `onServerProgress`) and moves otherwise, and says not to reload. "Start again" begins once the board's connection
+  drops. After 2 minutes it says the server hasn't come back, lets the dialog close, and goes on polling `admin.status`,
+  so a server that comes back late still reloads the page. While the board first loads (`authed` or the first board not
+  there yet) the page says "Loading the board…" after a moment, rather than staying blank. The sidebar has `UpdateButton`
   again. The host page has `HostVersion`, settings sync (`hosts/SettingsSync.tsx` over `settingsSync.get` and
   `resolve`, read again when the host's settings change), a linked host's `RemoteServer` and any host's `HostService`
   (`server/RemoteServer.tsx`, polling that host's `admin.status` through the relay, as its events go down with it), and
@@ -817,8 +824,8 @@ The Electron shell (six CommonJS files, 1,687 lines) becomes TypeScript, with it
 health, open windows, update itself. What it does, and the rules that make it safe, are unchanged (inventory 10,
 section 9): only `ECONNREFUSED` means "no server"; a failed start is blamed on the new build only after another
 server came up; AppImage and pacman installs are done by the shell; `app/state.json` is shared with the server's
-`Releases` service and keeps its format; the preload exposes the same six members on `window.huntawayDesktop`, to
-the main frame only, with origin checks.
+`Releases` service and keeps its format; the preload exposes the same six members on `window.huntawayDesktop` (and
+`onServerProgress`, HE-44), to the main frame only, with origin checks.
 
 As built (8.3):
 
@@ -831,7 +838,7 @@ apps/desktop/
                  Servers (find, attach or start; the blame rule; restarts; stop on quit), ServerProcess (the launcher's
                  process, its ready line and output), fallback.ts (startWithFallback), health.ts, appState.ts, install.ts,
                  stamp.ts, shellUpdate.ts (the AppImage and pacman update), Windows.ts (windows, navigation, browser
-                 pane, IPC, menu, relaunch), urls.ts, errorPage.ts
+                 pane, IPC, menu, relaunch), urls.ts, errorPage.ts, progressPage.ts and progress.ts (HE-44)
   src/preload/   preload.ts (its own tsconfig, with the DOM)
   scripts/       dist.ts (electron-builder), stamp.ts (the release manifest's `shell` and `electron/shell.json`)
 ```
@@ -858,9 +865,29 @@ apps/desktop/
   `apps/server/bin/huntaway` once `apps/server/node_modules` is installed), run as a child that is not in a process
   group of its own, so that stopping it is SIGTERM to the launcher alone (SIGKILL after 10 seconds). Its PATH is the
   login shell's for a packaged app; the old shell changed its own `process.env.PATH` instead.
-- **What the shell reads of the server**: `HUNTAWAY_READY {"port","token"}`, and `HUNTAWAY_BACKUP_FAILED {reason, why,
-  dir}` for the error page's "Start without a backup". The server does not print the second yet (its `Backup` fails
-  the start with a `StartupError`); until it does, a failed backup shows as a server that exited.
+- **What the shell reads of the server**: `HUNTAWAY_READY {"port","token"}`, `HUNTAWAY_PROGRESS {step, done, total,
+  file}` as it starts (06-server.md, Startup, step 2), and `HUNTAWAY_BACKUP_FAILED {reason, why, dir}` for the error
+  page's "Start without a backup". The server does not print the last yet (its `Backup` fails the start with a
+  `StartupError`); until it does, a failed backup shows as a server that exited.
+- **The progress page** (HE-44): a window with no board to show yet shows it rather than a black window: while
+  `Servers.resolve` takes more than 300 ms (a server starting, or another launch's being waited for), and in every window
+  as the app quits to relaunch (a new shell after an Update, or its own package update, after which the next instance
+  says "Starting Huntaway 0.0.5": `relaunch-windows.json` is `{windows, heading}` now, and a plain list is still read).
+  Like the error page it is a `data:` URL in the board's theme: the app's heading, the step (`Servers.startup`: looking
+  for the server, starting it, then the server's own steps, "Backing up the database: 0.6 GB of 1.6 GB" with the size
+  of the backup's file read every 250 ms, "Updating the database: 2 of 3", "Starting the board", "Opening the board",
+  or "Stopping the server" on quitting), a bar (filled to the step's share where it's known, a moving stripe
+  otherwise), that it can take a minute and not to reload or close the window, and the server's last 40 lines (stderr,
+  and stdout but for the lines for the app, as the ready line has the token) folded away. The main process loads it
+  once and then calls `huntawayProgress(state)` in it (`executeJavaScript`, which sets text only), also after a reload
+  of it. A page of the app's own doesn't run the shell check: reloading the progress page while a new version starts
+  doesn't relaunch the app (HE-43's Ctrl+R).
+- **The ready wait counts silence, not the whole start**: a start fails as slow (not blamed, as before) after 15 s with
+  no `HUNTAWAY_PROGRESS` line and no growth of the backup's file, so a long backup or migration that goes on reporting
+  doesn't put up the error page.
+- **The board hears the steps** of the server it started as it starts again in place (a Restart or an Update execs
+  under the same launcher): the main process sends each new step to the board's windows, and the preload has a seventh
+  member, `onServerProgress(listener)`, which returns the function that stops it. The restart dialog shows them.
 - **The package update** asks the board for the release status with `admin.status` over `POST /api/rpc` (a one-method
   group with the contracts' `Auth`), where the old shell called `GET /api/admin/server`. It reads only
   `release.latest.version` and `release.shell.outdated`. It hashes the download after writing it (Effect's `Digest`

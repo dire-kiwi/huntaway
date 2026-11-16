@@ -66,7 +66,7 @@ test("a staged release is offered in the sidebar, and Update restarts onto it", 
     await ui.run(["wait Starting…"])
     assert.deepEqual(calls.update, [{ version: "0.2.0" }])
     restart("installing")
-    await ui.run(["wait Installing the release…"])
+    await ui.run(["wait Installing v0.2.0…"])
     restarted = true
     restart("restarting")
     // A new boot id reloads the page, which runs 0.2.0 and has nothing to update to.
@@ -222,7 +222,7 @@ test("a restart the dialog is showing still shows its failure, and doesn't skip 
     const { calls, push } = await fakeAdmin(page, "rpc", () => ({ release: r, restart: { phase: "installing", log: "Downloading 0.3.0", error: null } }))
     const restart = restartEvents(push)
     const dialog = page.getByRole("dialog")
-    await ui.run(["goto /settings/server", "click Update to v0.3.0", "wait Installing the release…"])
+    await ui.run(["goto /settings/server", "click Update to v0.3.0", "wait Installing v0.3.0…"])
     restart("failed", "sha256 mismatch")
     await ui.run(["wait Restart failed", "wait sha256 mismatch", "wait The server is still running v0.2.0.", "gone Release notes"])
     // Its button shows this dialog's confirm rather than retrying.
@@ -241,5 +241,45 @@ test("a restart the dialog is showing still shows its failure, and doesn't skip 
     await dialog.getByRole("button", { name: "Roll back to v0.1.0", exact: true }).click()
     await ui.run(["wait Starting…"])
     assert.deepEqual([calls.update, calls.rollback], [[], 1])
+  })
+})
+
+// HE-44: a restart shows its steps with a bar (a download's bytes fill it), says not to reload while the server is
+// down, and after its 2 minutes says the server hasn't come back but goes on waiting: one back later still reloads.
+test("a restart shows its steps, says not to reload, and reloads for a server back after 2 minutes", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    await page.clock.install()
+    let restarted = false
+    const { push } = await fakeAdmin(page, "rpc", () =>
+      restarted
+        ? { boot_id: "after-update", release: release({ running: "0.2.0", staged: null, latest: { ...release().latest, newer: false } }) }
+        : { release: release() },
+    )
+    let seq = 2_000_000
+    const restart = (phase) => push({ type: "restart", phase, error: null, seq: ++seq })
+    const dialog = page.getByRole("dialog")
+    await ui.run(["goto /settings/server", "click Update to v0.2.0", "wait Release notes"])
+    await page.evaluate(() => (window.__beforeUpdate = true))
+    await dialog.getByRole("button", { name: "Update & restart" }).click()
+    restart("downloading")
+    push({ type: "release_download", download: { version: "0.2.0", phase: "downloading", bytes: 12e6, total: 40e6, error: null }, seq: ++seq })
+    await ui.run(["wait Downloading v0.2.0…", "wait 12.0 MB of 40.0 MB"])
+    const bar = dialog.getByRole("progressbar")
+    assert.equal(await bar.getAttribute("aria-valuenow"), "6")
+    restart("installing")
+    await ui.run(["wait Installing v0.2.0…", "gone 12.0 MB of 40.0 MB"])
+    restart("restarting")
+    await ui.run(["wait Stopping the server…", "wait don't reload or close this window"])
+    // Only the title bar's ×, which does nothing while it restarts.
+    assert.equal(await dialog.getByRole("button", { name: "Close", exact: true }).count(), 1)
+    await page.clock.fastForward("02:05")
+    await ui.run(["wait didn't come back within 2 minutes", "wait This dialog keeps waiting"])
+    // Now it can be closed.
+    assert.equal(await dialog.getByRole("button", { name: "Close", exact: true }).count(), 2)
+    // The server comes back late: the dialog still notices, and the page reloads.
+    restarted = true
+    await page.clock.fastForward("00:03")
+    await page.waitForFunction(() => !window.__beforeUpdate, null, { timeout: 10_000 })
   })
 })
