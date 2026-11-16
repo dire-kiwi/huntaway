@@ -39,29 +39,31 @@ export function useWide() {
 const TITLE_MIN = 120
 
 /**
- * Whether the header's controls go in the title row: where the task view is `wide`, and the title keeps `TITLE_MIN` of
- * its width beside them (or all of it, if shorter). The tabs, pills and buttons vary from task to task, so it's
- * measured: when they don't fit, the width they'd need is kept, and they go back once the view (`width`, useWide's) is
- * that wide. Use the returned ref on the title row, which holds the title's `h1`. Starts again when `reset` changes.
+ * Whether the header's controls go in the title row: where they may (`wide`), and the title keeps `TITLE_MIN` of its
+ * width beside them (or all of it, if shorter). The tabs, pills and buttons vary from task to task, so it's measured:
+ * when they don't fit, the width they'd need is kept, and they go back once the view (`width`, useWide's) is that wide.
+ * Use the returned ref on the title row, which holds the title's `h1` and is as wide as the view. Starts again when
+ * `reset` changes.
  */
 export function useControlsFit(wide: boolean, width: number | null, reset: string) {
   const [row, setRow] = useState<HTMLElement | null>(null)
   const [need, setNeed] = useState({ reset, px: 0 })
   const inRow = wide && (width === null || need.reset !== reset || width >= need.px)
   useLayoutEffect(() => {
-    if (!row || !inRow || width === null) return undefined
+    if (!row || !inRow) return undefined
     const check = () => {
       const title = row.querySelector("h1")
       if (!title) return
       // What the title is short of, and how far the row overflows once it's down to nothing.
       const short = Math.min(TITLE_MIN, title.scrollWidth) - title.clientWidth + Math.max(0, row.scrollWidth - row.clientWidth)
-      if (short > 0) setNeed({ reset, px: width + short })
+      // The row's width as it is now: the observer can see a new size before `width` has caught up with it.
+      if (short > 0) setNeed({ reset, px: row.getBoundingClientRect().width + short })
     }
     // A change in any of the row's parts (a pill coming, a tab) changes the title's width, or the controls'.
     const ro = new ResizeObserver(check)
     for (const el of row.children) ro.observe(el)
     return () => ro.disconnect()
-  }, [row, inRow, width, reset])
+  }, [row, inRow, reset])
   return [setRow, inRow] as const
 }
 

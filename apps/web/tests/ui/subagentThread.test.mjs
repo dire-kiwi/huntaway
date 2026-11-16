@@ -6,7 +6,9 @@
 // - "Codex children show their metadata, nested transcript and permission source": Codex's translator comes with M5.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, seedBoard, seedThread, startServer, withBrowser } from "./harness.mjs"
+import { DatabaseSync } from "node:sqlite"
+import { join } from "node:path"
+import { eventually, makeProject, seedBoard, seedThread, startServer, withBrowser } from "./harness.mjs"
 
 let server, board
 beforeAll(async () => {
@@ -308,5 +310,73 @@ test("the Agents list and the header stay within the task view, however crowded 
       }
     }
     await server.rpc("host.updateSettings", { patch: { terminal_tools: [] } })
+  })
+})
+
+// HE-40 review: the width the controls needed was taken from the view's width as it was before a resize, so collapsing
+// the dialog into the side panel and expanding it again left them in a row of their own in a view with room for them.
+test("the controls come back beside the title once the view is wide again", async () => {
+  const task = await threadTask("Subagents, with a title long enough to need its room in the header of the task view")
+  await server.rpc("host.updateSettings", { patch: { terminal_tools: [tool(0), tool(1)] } })
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    const besideTitle = () =>
+      page.locator("h1[title='Double-click to rename']").evaluate((h1) => !!h1.parentElement.querySelector("[title='Subagents in this thread']"))
+    await ui.run([
+      "size 1900x1000",
+      `goto /p/${board.project.id}?task=${task.id}`,
+      "click Thread",
+      "wait Main agent's summary.",
+      "wait Subagents in this thread",
+    ])
+    assert.ok(await besideTitle(), "the controls aren't beside the title in the dialog")
+    await ui.run(["click Collapse into the side panel", "wait Expand"])
+    await eventually(async () => assert.ok(!(await besideTitle()), "the controls are still beside the title in the side panel"))
+    await ui.run(["click Expand", "wait Collapse into the side panel"])
+    await eventually(async () => assert.ok(await besideTitle(), "the controls didn't come back beside the title"))
+    // And after the window is made smaller and larger again.
+    await ui.run(["size 1000x1000"])
+    await eventually(async () => assert.ok(!(await besideTitle())))
+    await ui.run(["size 1900x1000"])
+    await eventually(async () => assert.ok(await besideTitle(), "the controls didn't come back after the window grew"))
+  })
+  await server.rpc("host.updateSettings", { patch: { terminal_tools: [] } })
+})
+
+// HE-40 review: a review thread's header was one row, and the Agents pill pushed its last buttons (Close, Expand) out of
+// the side panel. Here a long project name crowds it, where a running reviewer's Context and Stop would.
+test("a crowded review thread's header keeps its buttons within the side panel", async () => {
+  const project = await makeProject(server, board.profile, "Longer project name", "LNG")
+  const parent = await server.rpc("tasks.create", { task: { project_id: project.id, title: "Reviewed work", status: "in_review" } })
+  const thread = await server.rpc("tasks.create", { task: { project_id: project.id, title: "Review", status: "in_review" } })
+  const db = new DatabaseSync(join(server.dataDir, "board.db"))
+  try {
+    db.exec("PRAGMA busy_timeout = 5000")
+    db.prepare("UPDATE tasks SET kind = 'review', parent_id = ? WHERE id = ?").run(parent.id, thread.id)
+  } finally {
+    db.close()
+  }
+  const { items, requests } = subagentThread()
+  seedThread(server, thread, items, requests)
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    for (const size of ["1000x900", "720x900", "1900x900"]) {
+      await ui.run([`size ${size}`, `goto /p/${project.id}?task=${thread.id}&side`, "wait Main agent's summary.", "wait Subagents in this thread"])
+      const header = await page.locator("header:has([title^='Close']) h1").evaluate((h1) => {
+        let clip = { left: 0, right: window.innerWidth }
+        // The nearest ancestor that clips: the side panel's view.
+        for (let p = h1.closest("header").parentElement; p; p = p.parentElement)
+          if (getComputedStyle(p).overflowX !== "visible") {
+            clip = p.getBoundingClientRect()
+            break
+          }
+        const close = h1.closest("header").querySelector("[title^='Close']").getBoundingClientRect()
+        return { inside: close.right <= Math.min(clip.right, window.innerWidth), title: h1.clientWidth, natural: h1.scrollWidth }
+      })
+      assert.ok(header.inside, `Close is cut off at ${size}`)
+      assert.ok(header.title >= Math.min(100, header.natural), `the title is ${header.title}px wide at ${size}`)
+    }
+    // The list opens from the pill wherever it is.
+    await ui.run(["size 720x900", "click Subagents in this thread", "click css=.shadow-xl button:has-text('Explore config')", "wait Show in thread"])
   })
 })
