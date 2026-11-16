@@ -27,6 +27,8 @@ export const invalidates: { readonly [M in keyof Methods]?: ReadonlyArray<GroupO
   // A host's settings are part of what its status (`release_prereleases`: the release checks run again) and its
   // settings sync (`settings_sync`) say.
   "host.updateSettings": ["admin", "settingsSync"],
+  // HE-48: signing in to a site in a Space marks the sign-in used.
+  "spaces.signIn": ["signIns"],
 }
 
 /** What a query reads again on, as picked from its host's board: it is read again whenever the value changes. */

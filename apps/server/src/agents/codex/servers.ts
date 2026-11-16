@@ -68,7 +68,7 @@ export const mcpServerConfig = (
     out["tools"] = Object.fromEntries(DESKTOP_READS.map((tool) => [tool, { approval_mode: "approve" }]))
   }
   if (name === SPACES_SERVER) {
-    // Its read-only tools need no approval, nor delete_space, which asks the user itself; the rest ask. Making the first
+    // Its read-only tools need no approval, nor delete_space and space_sign_in, which ask the user themselves; the rest ask. Making the first
     // Space builds its image, which takes minutes.
     out["tool_timeout_sec"] = 3600
     out["tools"] = Object.fromEntries([...SPACES_READS, ...SPACES_ASKS_ITSELF].map((tool) => [tool, { approval_mode: "approve" }]))

@@ -1,4 +1,5 @@
 import { Effect, Option, Schema } from "effect"
+import type { Tool } from "effect/ai"
 import type { Invalid, NotFound, Space, Unavailable } from "@huntaway/contracts"
 import { CuaResult, forAgent, text } from "../desktop/cua.ts"
 import type { DesktopContent } from "../desktop/cua.ts"
@@ -11,8 +12,10 @@ import { Listening } from "../platform/Listening.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
 import { driverTools, HIDDEN_TOOLS, readOnly, toolDetail, toolsSummary } from "./driverMcp.ts"
 import type { DriverAnswer } from "./driverMcp.ts"
+import { SignIns } from "./SignIns.ts"
+import { maskUsername, originOf } from "./signInFill.ts"
 import { Spaces } from "./Spaces.ts"
-import { CreateSpace, DeleteSpace, ListSpaces, SpaceBash, SpaceCallTool, SpaceListTools, SpaceView, StartSpace, StopSpace } from "./tools.ts"
+import { CreateSpace, DeleteSpace, ListSpaces, SpaceBash, SpaceCallTool, SpaceListTools, SpaceSignIn, SpaceView, StartSpace, StopSpace } from "./tools.ts"
 
 // The `spaces` server's handlers (HE-37): this host's Spaces for its agents, as Cua Spaces' MCP tools give them. What
 // the server adds to `Spaces`:
@@ -22,7 +25,9 @@ import { CreateSpace, DeleteSpace, ListSpaces, SpaceBash, SpaceCallTool, SpaceLi
 // - A Space is named by id or name (`Spaces.find`).
 // - Reviewers and threads in plan mode only look: `list_spaces`, `space_list_tools`, `space_view` (a link that only
 //   watches) and the driver's tools that say they only look. Checked per call, as the desktop's are.
-// - `delete_space` asks the user first, whatever the thread's mode (`McpHooks.askRule` with no rule).
+// - `delete_space` asks the user first, whatever the thread's mode (`McpHooks.askRule` with no rule), and so does
+//   `space_sign_in` (HE-48), which picks one of the task's profile's sign-ins for the page's site and has `SignIns` type
+//   it in. The agent is told the site, a masked username and where the tab went, never the password.
 // - `space_bash`'s output is capped; the driver's results reach the agent as `desktop`'s do (`forAgent`: text, images
 //   as MCP image content, and the structured fields as a line of JSON).
 //
@@ -67,6 +72,7 @@ const onlyLooks = (caller: LocalCaller, tool: string): string | null => {
 /** The `spaces` server's tools with their handlers, and its gate. */
 export const spacesTools = Effect.gen(function* () {
   const spaces = yield* Spaces
+  const signIns = yield* SignIns
   const hooks = yield* McpHooks
   const settings = yield* HostSettings
   const listening = yield* Listening
@@ -179,6 +185,39 @@ export const spacesTools = Effect.gen(function* () {
       return text(`${board}${v.relay_path}${v.fragment}\n\nThe link opens ${s.name}'s desktop until ${v.expires_at}.`)
     })
 
+  const signIn = (caller: LocalCaller, a: Tool.Parameters<typeof SpaceSignIn>) =>
+    Effect.gen(function* () {
+      const s = yield* spaces.find(a.space)
+      const origin = originOf(a.url)
+      if (origin === null) return text(`${a.url} isn't a website's address: give the sign-in page's http:// or https:// URL.`, true)
+      const saved = yield* signIns.forSite(caller.task.profile_id, a.url)
+      const named = a.sign_in === undefined ? saved : saved.filter((x) => x.id === a.sign_in)
+      const listed = saved.map((x) => `- ${x.id}: ${maskUsername(x.username)}${x.label === null ? "" : ` (${x.label})`}`).join("\n")
+      if (saved.length === 0) {
+        return text(
+          `The user has no sign-in saved for ${origin}. Ask them to add one (Settings → Profiles → Site sign-ins), then call space_sign_in again; never ask them for the password itself.`,
+          true,
+        )
+      }
+      if (named.length === 0) return text(`There's no sign-in ${a.sign_in ?? ""} for ${origin}. The saved ones:\n${listed}`, true)
+      const one = named[0]
+      if (one === undefined || named.length > 1) return text(`The user has several sign-ins for ${origin}: name one with sign_in.\n${listed}`, true)
+      const tool = `mcp__spaces__${SpaceSignIn.name}`
+      const asked = yield* Effect.result(
+        hooks.askRule(caller, tool, { space: s.name, site: origin, username: maskUsername(one.username), sign_in: one.label ?? one.id }, null),
+      )
+      if (asked._tag === "Failure") return text(`Not signed in to ${origin}: ${asked.failure.message}`, true)
+      const tab = { session: a.session, target_id: a.target_id, tab_id: a.tab_id }
+      const done = yield* signIns.signIn(s.id, caller.task.id, one.id, { url: a.url, tab })
+      const next = done.submitted
+        ? "Check the page shows the signed-in state (get_browser_state with this session, target_id and tab_id); a code the site asks for next is the user's to enter in the Space's viewer (space_view)."
+        : "No submit button was found: the fields are filled, so submit the form yourself (press Enter in the password field)."
+      const leaked = done.password_in_address
+        ? "\n\nThe site sent the form by GET, which put the password in the tab's address: the tab was taken to the same page without it. Tell the user: the site may keep it in its logs."
+        : ""
+      return text(`Signed in to ${origin} as ${done.username_hint} in ${s.name}.\n\n${pretty(done)}\n\n${next}${leaked}`)
+    })
+
   const all: ReadonlyArray<RegisteredTool> = [
     localToolHandler(ListSpaces, () => answer(Effect.map(spaces.status, (st) => text(pretty(st.spaces.map(shown)))))),
     localToolHandler(CreateSpace, (a, caller) => acting(caller, CreateSpace.name, create(a.name, a.reuse ?? true))),
@@ -208,6 +247,7 @@ export const spacesTools = Effect.gen(function* () {
     localToolHandler(SpaceListTools, (a, caller) => answer(listTools(caller, a.space, a.tool))),
     localToolHandler(SpaceCallTool, (a, caller) => answer(call(caller, a.space, a.tool, a.args ?? {}))),
     localToolHandler(SpaceView, (a, caller) => answer(view(caller, a.space))),
+    localToolHandler(SpaceSignIn, (a, caller) => acting(caller, SpaceSignIn.name, signIn(caller, a))),
   ]
   return all
 })

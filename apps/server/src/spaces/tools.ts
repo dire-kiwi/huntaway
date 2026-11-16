@@ -7,7 +7,7 @@ import { BASH_MAX_SECONDS } from "./Spaces.ts"
 // The `spaces` server's tools (HE-37), after Cua Spaces' own (https://cua.ai/docs/spaces/guides/use-from-an-agent):
 // make or reuse a Space on this host, run commands in it, and drive its desktop through its own Cua Driver. The ones
 // that only look say so (`readOnlyHint`: Codex runs them without asking; Claude runs have them in `--allowedTools`)
-// and may run again after a restart; the others ask, as any tool does. `delete_space` asks the user itself.
+// and may run again after a restart; the others ask, as any tool does. `delete_space` and `space_sign_in` ask the user themselves.
 
 const space = Schema.String.annotate({ description: "The Space's id, or its name (from `list_spaces`)." })
 const opt = Schema.optionalKey
@@ -75,5 +75,29 @@ export const SpaceView = look(
   { space },
 )
 
+export const SpaceSignIn = change(
+  "space_sign_in",
+  "Sign in to a website in a running Space's browser with a username and password the user saved on the board (HE-48), after the user approves it. You never see the password: the board types it into the page itself, only on the saved site's exact origin, and submits the form. Without `target_id` and `tab_id`, it opens `url` in a fresh Chromium of its own and returns that tab (its `session`, `target_id` and `tab_id`) for you to carry on in; with them (and `session`, from your own `get_browser_state`), it fills that tab, which must already show the sign-in page. Returns the tab it filled and where it went. Never ask the user for a password; if none is saved for the site, ask them to add one in Settings → Profiles → Site sign-ins. Two-factor codes are the user's to enter, in the Space's viewer.",
+  {
+    space,
+    url: Schema.String.annotate({ description: "The site's sign-in page (http or https): its origin picks the saved sign-in." }),
+    sign_in: opt(Schema.String.annotate({ description: "Which saved sign-in, by id, when the site has several (the answer lists them)." })),
+    session: opt(Schema.String.annotate({ description: "Your Cua Driver session label for the tab, if you used one." })),
+    target_id: opt(Schema.String.annotate({ description: "Your tab's browser target, from get_browser_state." })),
+    tab_id: opt(Schema.String.annotate({ description: "Your tab, from get_browser_state." })),
+  },
+)
+
 /** The tools, in `tools/list`'s order. */
-export const SPACES_TOOLS = [ListSpaces, CreateSpace, StartSpace, StopSpace, DeleteSpace, SpaceBash, SpaceListTools, SpaceCallTool, SpaceView] as const
+export const SPACES_TOOLS = [
+  ListSpaces,
+  CreateSpace,
+  StartSpace,
+  StopSpace,
+  DeleteSpace,
+  SpaceBash,
+  SpaceListTools,
+  SpaceCallTool,
+  SpaceView,
+  SpaceSignIn,
+] as const

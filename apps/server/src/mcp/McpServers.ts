@@ -53,7 +53,9 @@ export const SPACES_INSTRUCTIONS =
   "the driver's tools and `space_call_tool` to call them: `get_desktop_state` for a screenshot and its windows, " +
   "`get_window_state` with `query` for a window's accessibility tree, then `run_steps` with a batch of clicks and typing on " +
   "`element_token`s or pixels. Name a Space by its id or name. `space_view` gives the user a link to watch it. Stop or " +
-  "delete the Spaces you made once you're done, unless the user wants to keep them; `delete_space` asks the user first."
+  "delete the Spaces you made once you're done, unless the user wants to keep them; `delete_space` asks the user first. " +
+  "To sign in to a website in a Space, `space_sign_in` types a password the user saved on the board, once they approve; " +
+  "never ask the user for a password."
 
 /** What each server says it is in `initialize` (`serverInfo.name`, `instructions`). gh's name the run's account (`ghInstructions`). */
 export const SERVER_INFO: { readonly [S in BuiltInServer]: { readonly name: string; readonly instructions: string | null } } = {

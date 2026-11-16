@@ -11,6 +11,7 @@ export const spacesNote = (codex: boolean, host: string): string => {
     `makes one (or reuses one of that name), ${t("space_bash")} runs commands in it, and ${t("space_list_tools")} and ` +
     `${t("space_call_tool")} drive its desktop through its Cua Driver (screenshots, clicks, typing). Use one when the work needs ` +
     `a desktop or a machine of its own to try things on, not for what your own shell can do. ${t("space_view")} gives a link ` +
-    `for the user to watch it. Stop or delete the Spaces you made when you're done with them, unless the user wants to keep them.`
+    `for the user to watch it, and ${t("space_sign_in")} signs in to a website there with a password the user saved, once they approve. ` +
+    `Stop or delete the Spaces you made when you're done with them, unless the user wants to keep them.`
   )
 }

@@ -6,6 +6,10 @@ import { createServer } from "node:http"
 // hides. It answers `tools/list` as JSON and `tools/call` as an event stream, as the transport allows either. As
 // spacesd does, it opens an MCP session on `initialize`, answers 404 for one it doesn't know and 400 for one without
 // `mcp-protocol-version`, and answers a request without a session too. It never touches a desktop.
+//
+// HE-48: its browser tools act on one scripted tab (`browser`): a page whose path is `/login` shows a login form (an
+// email input, a password input, a submit button); clicking submit sends the form by GET, so the address after has the
+// password in it, as a real GET form's would.
 
 /** A tool call it was given, with the bearer token and the MCP session it came with. */
 export interface FakeSpacesdCall {
@@ -23,7 +27,27 @@ export interface FakeSpacesd {
   readonly listed: { count: number }
   /** The MCP sessions it has opened (`initialize`), which it forgets as a restarted spacesd would (`clear`). */
   readonly sessions: Set<string>
+  /** Its one browser tab. */
+  readonly browser: FakeBrowser
 }
+
+/** The fake's browser tab: where it is, and what was typed and clicked in it. */
+export interface FakeBrowser {
+  url: string
+  readonly typed: Array<{ readonly ref: string; readonly text: string }>
+  readonly clicked: Array<string>
+  /** `browser_type` into the password field refuses, saying what it was given. */
+  refuseType: boolean
+}
+
+/** The login form's refs, as `get_browser_state` gives a `dom_refs_v1` snapshot's. */
+export const LOGIN_REFS = [
+  { frame: "main", label: null, node: "label", ref: "p1:0" },
+  { frame: "main", label: "name=email id=email type=email", node: "input", ref: "p1:1" },
+  { frame: "main", label: "name=pw id=pw type=password", node: "input", ref: "p1:3" },
+  { frame: "main", label: "type=button", node: "button", ref: "p1:4" },
+  { frame: "main", label: "type=submit", node: "button", ref: "p1:5" },
+]
 
 /** A one-pixel PNG. */
 export const PIXEL = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
@@ -62,9 +86,51 @@ const Request = Schema.fromJsonString(
 const decode = Schema.decodeUnknownOption(Request)
 const json = (v: unknown) => Option.getOrElse(Schema.encodeOption(Schema.fromJsonString(Schema.Unknown))(v), () => "{}")
 
+const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> => typeof v === "object" && v !== null && !Array.isArray(v)
+const arg = (args: unknown, key: string): unknown => (isRecord(args) ? args[key] : undefined)
+const argText = (args: unknown, key: string): string => {
+  const v = arg(args, key)
+  return typeof v === "string" ? v : ""
+}
+const onLogin = (url: string) => URL.canParse(url) && new URL(url).pathname === "/login"
+const ok = (structuredContent: Record<string, unknown>, text = "ok") => ({
+  content: [{ type: "text", text }],
+  structuredContent: { status: "ok", ...structuredContent },
+})
+
 /** What a tool call answers. */
-const resultOf = (tool: string) => {
+const resultOf = (tool: string, args: unknown, browser: FakeBrowser) => {
   switch (tool) {
+    case "browser_prepare":
+      return ok({ prepared: true, prepared_pid: 349 })
+    case "get_browser_state":
+      if (arg(args, "pid") !== undefined) return ok({ target_id: "bt-1", tabs: [{ tab_id: "tab-1", active: true, url: browser.url }] })
+      return ok({ url: browser.url, refs: onLogin(browser.url) ? LOGIN_REFS : [] })
+    case "browser_navigate":
+      browser.url = argText(args, "url")
+      return ok({ url: browser.url })
+    case "browser_type": {
+      const text = argText(args, "text")
+      if (browser.refuseType && argText(args, "ref") === "p1:3") {
+        return {
+          content: [{ type: "text", text: `refused: could not type ${text}` }],
+          structuredContent: { status: "refused", effect: "refused" },
+          isError: true,
+        }
+      }
+      browser.typed.push({ ref: argText(args, "ref"), text })
+      return ok({}, `typed ${text.length} char(s)`)
+    }
+    case "browser_click": {
+      const ref = argText(args, "ref")
+      browser.clicked.push(ref)
+      if (ref === "p1:5" && onLogin(browser.url)) {
+        const pw = browser.typed.findLast((t) => t.ref === "p1:3")?.text ?? ""
+        // As a browser sends a GET form: application/x-www-form-urlencoded.
+        browser.url = `${new URL(browser.url).origin}/done?${new URLSearchParams({ pw }).toString()}`
+      }
+      return ok({}, "clicked")
+    }
     case "get_desktop_state":
       return {
         content: [
@@ -74,7 +140,15 @@ const resultOf = (tool: string) => {
         structuredContent: { screen_width: 1280, screen_height: 800 },
       }
     case "list_windows":
-      return { content: [{ type: "text", text: 'window_id=7 pid=226 "Desktop"' }] }
+      return {
+        content: [{ type: "text", text: 'window_id=7 pid=226 "Desktop"' }],
+        structuredContent: {
+          windows: [
+            { pid: 226, window_id: 7 },
+            { pid: 349, window_id: 9 },
+          ],
+        },
+      }
     case "click":
       return { content: [{ type: "text", text: "clicked" }] }
     default:
@@ -86,6 +160,7 @@ const resultOf = (tool: string) => {
 export const fakeSpacesd = Effect.acquireRelease(
   Effect.callback<{ readonly fake: FakeSpacesd; readonly close: () => void }>((resume) => {
     const calls: Array<FakeSpacesdCall> = []
+    const browser: FakeBrowser = { url: "about:blank", typed: [], clicked: [], refuseType: false }
     const listed = { count: 0 }
     /** What a request is answered with: its status, headers and body. */
     const sessions = new Set<string>()
@@ -128,7 +203,11 @@ export const fakeSpacesd = Effect.acquireRelease(
       if (rpc === "tools/call") {
         const tool = params?.name ?? ""
         calls.push({ tool, args: params?.arguments ?? {}, token: auth.slice(7), session })
-        return [200, { "content-type": "text/event-stream" }, `event: message\ndata: ${json({ jsonrpc: "2.0", id, result: resultOf(tool) })}\n\n`]
+        return [
+          200,
+          { "content-type": "text/event-stream" },
+          `event: message\ndata: ${json({ jsonrpc: "2.0", id, result: resultOf(tool, params?.arguments ?? {}, browser) })}\n\n`,
+        ]
       }
       return [200, { "content-type": "application/json" }, json({ jsonrpc: "2.0", id, error: { code: -32601, message: "method not found" } })]
     }
@@ -143,7 +222,7 @@ export const fakeSpacesd = Effect.acquireRelease(
     server.listen(0, "127.0.0.1", () => {
       const address = server.address()
       const port = typeof address === "object" && address !== null ? address.port : 0
-      resume(Effect.succeed({ fake: { port, calls, listed, sessions }, close: () => server.close() }))
+      resume(Effect.succeed({ fake: { port, calls, listed, sessions, browser }, close: () => server.close() }))
     })
   }),
   ({ close }) => Effect.sync(close),

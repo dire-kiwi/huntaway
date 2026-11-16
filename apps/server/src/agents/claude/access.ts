@@ -32,9 +32,9 @@ export const DESKTOP_WRITES: ReadonlyArray<string> = ["act", "launch", "clipboar
 /** The spaces server's tools that only look (`space_call_tool` is refused by the server for an action of a caller that only looks). */
 export const SPACES_READS: ReadonlyArray<string> = ["list_spaces", "space_list_tools", "space_view"]
 /** Those that change a Space, which reviewers don't get. */
-export const SPACES_WRITES: ReadonlyArray<string> = ["create_space", "start_space", "stop_space", "delete_space", "space_bash"]
-/** The one that asks the user itself, whatever the mode, so the agent doesn't ask first too. */
-export const SPACES_ASKS_ITSELF: ReadonlyArray<string> = ["delete_space"]
+export const SPACES_WRITES: ReadonlyArray<string> = ["create_space", "start_space", "stop_space", "delete_space", "space_bash", "space_sign_in"]
+/** Those that ask the user themselves, whatever the mode, so the agent doesn't ask first too. */
+export const SPACES_ASKS_ITSELF: ReadonlyArray<string> = ["delete_space", "space_sign_in"]
 
 /** What a reviewer may use without asking (huntaway's review.ts `ALLOWED_TOOLS`): reading, and git and gh that only read. */
 export const REVIEW_ALLOWED: ReadonlyArray<string> = [
@@ -127,7 +127,7 @@ export const desktopAllowed = (): ReadonlyArray<string> => DESKTOP_READS.map((t)
 /** The desktop tools a run doesn't get: the ones that act, for a reviewer (the server refuses them too). */
 export const desktopDisallowed = (review: boolean): ReadonlyArray<string> => (review ? DESKTOP_WRITES : [])
 
-/** The spaces tools a run may use without asking: those that only look, and `delete_space`, which asks the user itself. */
+/** The spaces tools a run may use without asking: those that only look, and `delete_space` and `space_sign_in`, which ask the user themselves. */
 export const spacesAllowed = (): ReadonlyArray<string> => [...SPACES_READS, ...SPACES_ASKS_ITSELF].map((t) => `mcp__${SPACES_SERVER}__${t}`)
 
 /** The spaces tools a run doesn't get: the ones that change a Space, for a reviewer (the server refuses them too). */

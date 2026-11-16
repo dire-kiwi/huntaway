@@ -1213,7 +1213,7 @@ Electron's Node can speak it. A Rust or worker-thread relay waits for a measurem
 - **`spaces/`** (below `desktop/`): `Docker` (the CLI through `Proc`: `HUNTAWAY_DOCKER`, else `docker`; tests replace
   the service, or give `fakeDocker`'s CLI), `Spaces` (status, create, start, stop, remove, `syncAgents`, `view`,
   `settled`, `relayTarget`; HE-37's `setAgentTools`, `toolsEnabled`, `toolsAvailable`, `find`, `bash`, `driver`),
-  `SpacesTools` (the `spaces` MCP server, below). Pure
+  `SpacesTools` (the `spaces` MCP server, below), HE-48's `SignIns` and `SignInRepo` (below). Pure
   parts: `containers.ts` (`docker run`'s arguments, labels, `docker inspect` read back, the image's Dockerfile and tag),
   `spacesd.ts` (`CreateViewerTicket` over gRPC-Web, hand-written protobuf; the relay's header rules), `agentFiles.ts`.
 - **No table**: a Space is a container named `huntaway-space-<id>` and labelled with the host's id, its name, its
@@ -1296,6 +1296,57 @@ Runs get a `spaces` MCP server beside `desktop`, after Cua Spaces' own tools
   shows); a Space has no one at it to share with, and `mcp_calls` keeps each call's arguments and answer.
 - **Tests**: `SpacesTools.test.ts` runs the server through `ToolCalls` on `TestBoard` over `packages/testing`'s
   `fakeDocker` (bin/fake-docker, state in a folder) and `fakeSpacesd` (health, a viewer ticket, `/mcp`).
+
+#### Sign-ins for Spaces (HE-48)
+
+Passwords for websites in a Space, after Cua's Keyvault and `request_site_login`
+([Keyvault](https://cua.ai/docs/spaces/guides/keyvault)), which ship with the Cua Spaces app and its host daemon, not
+with the `cua` CLI or the Space's image. **Decided** (with the user, HE-48): the board keeps them and types them itself
+through the Space's own Cua Driver; Cua's teleport (a browser's signed-in state moved into a Space) is HE-49.
+
+- **Kept per profile** in `sign_ins` (migration `2026-11-16-sign-ins`: origin, the sign-in page the user gave
+  (`login_url`, on that origin: where the board opens the site, since a site's root rarely has the form), username,
+  password, label, when made, changed and last used; cascades with its profile). `SignInRepo` is the only reader of `password`, as a `Redacted`
+  (04-database.md, secrets); the RPCs' `Password` is `Schema.RedactedFromValue(Schema.String)`, so a password is a
+  `Redacted` from the decoded payload to the driver's `browser_type`, and no answer has it. Stored as typed, as the
+  telemetry password is: encrypting it with a key the same server holds would add nothing.
+- **`SignIns`** (`spaces/SignIns.ts`): `list`, `create` (the address's origin is kept: `scheme://host[:port]`, http(s)
+  only), `update`, `remove`, `forSite`, and `signIn(space, key, id, {url?, tab?})`, which runs `signInFill.ts` on the
+  driver's MCP session `key` (the agent's task, or `board`).
+- **The fill** (`spaces/signInFill.ts`, Cua's sequence, checked on Cua's image with cua-driver 0.49.1): the caller's tab
+  (`session`, `target_id`, `tab_id`), or a fresh Chromium of the server's own (`browser_prepare` with `isolated_new`,
+  `list_windows`, `get_browser_state` with the window, `browser_navigate`); a snapshot whose URL must be on the sign-in's
+  **exact origin** with a password field (else nothing is typed: `Invalid`, field `page`); the first password input,
+  the username-like input before it and the submit button after it from the snapshot's refs; `browser_type` each, then
+  `browser_click` in the foreground (Linux Chromium refuses trusted input in the background). The driver's refusals
+  are scrubbed of the password (as typed, `encodeURIComponent`d and form-encoded). The tab's address after is told as
+  its origin and path only, never its query or fragment: a form sent by GET puts the password there, encoded as the
+  browser chooses (form encoding escapes `!'()~`, which `encodeURIComponent` doesn't: found on review), so no matching
+  by hand is trusted with it. When the decoded parameters carry it, the tab is navigated to the same page without them
+  (the caller's next `get_browser_state` would read the address) and the answer says so (`password_in_address`). Found running it: the driver's browser tools need a session label; a label belongs to the MCP
+  session that first used it ("session is not available to this transport" on another, such as the board's after a
+  restart); a named profile's browser belongs to the session that launched it, and each refusal counts toward a pause in
+  launching any browser. So each fill of its own takes a fresh label (`huntaway-sign-in-<8 hex>`) and a fresh profile,
+  and returns the tab for the caller to carry on in. Nothing the driver answers shows an input's value (snapshots,
+  `get_window_state`, `page`).
+- **`space_sign_in {space, url, sign_in?, session?, target_id?, tab_id?}`** on the `spaces` server: the task's profile's
+  sign-ins for the URL's origin (none: the agent is told to ask the user to add one, never for the password; several:
+  it names one by id); then it **asks the user**, whatever the mode, as `delete_space` does (`McpHooks.askRule` with no
+  rule; in `SPACES_ASKS_ITSELF`, so Claude and Codex don't ask first too; reviewers and plan mode are refused). The card
+  shows the Space, the site, the masked username and the sign-in's label. One approval is one sign-in, as in Cua: an
+  allow-always answer adds the tool to the thread's list, which `askRule` doesn't read, so the next one asks again. The
+  agent gets the origin, the masked username, whether it submitted, the scrubbed URL and the tab.
+- **RPCs** (in `SpacesRpcs`, `admin`): `signIns.list {profile_id?}`, `signIns.create`, `signIns.update` (a new `url`
+  moves it to that page and its origin), `signIns.delete`, and `spaces.signIn {id, sign_in_id}` (the board's own, on the
+  MCP session `board`, at the saved sign-in page).
+- **The web**: Settings → Profiles → a profile's **Site sign-ins** (`settings/SiteSignIns.tsx`: add, change, delete; a
+  password is never shown again and can only be replaced), and **Sign in** on a running Space on the host's page.
+- **What it protects**: the password stays out of the model's context, the transcript, `mcp_calls`, the prompt's row
+  and the log. It doesn't stop an agent set on getting it: the Space's user has passwordless sudo, so a command in it can
+  watch the browser. The Site sign-ins dialog says so in a line. Two-factor codes are the user's, in the viewer.
+- **Tests**: `signInFill.test.ts` (a scripted driver: the sequence, the origin check, the scrubbing) and
+  `SpacesTools.test.ts` (the tool through `ToolCalls` over `fakeSpacesd`'s scripted login tab, `LOGIN_REFS`: asked in
+  Bypass, denied, allowed, and no row the board kept has the password).
 
 ## Hook commands<a id="hook-commands"></a>
 
