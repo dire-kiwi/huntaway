@@ -1124,7 +1124,10 @@ As built in 8.1 and 8.2 (`apps/server/src/update/`):
   any more (`--recopy-db` went with the two-file database); `restartArgs` keeps the rule for the next one.
 - **`Restarts`** (not in the plan's list): the one restart job (`Conflict` `restart_in_progress` for a second), its
   phase and log tail, the `restart` and `restart_log` events, and `restartInto` (phase `restarting`, 300 ms for the
-  last events, exec). `Updater`, `Releases` and `Service` all run their jobs through it.
+  last events, exec). `Updater`, `Releases` and `Service` all run their jobs through it. Once it has exec'd, the new
+  process says nothing to the board until it listens; under the desktop app, its `HUNTAWAY_PROGRESS` lines (startup
+  step 2) reach the launcher's stdout, which the app reads and passes on to the board's restart dialog (09-frontend.md,
+  The desktop shell, HE-44).
 - **`Updater`**: `status` (`admin.status`), `restart` (rebuild: `pnpm install --frozen-lockfile --filter
   huntaway-server... --filter huntaway-web...`, the web build, `cargo build --release -p ia-shim` unless there's no
   cargo and a prebuilt `apps/server/bin/ia-shim`; output streamed into the log; a failed step ends the job and the
@@ -1322,7 +1325,12 @@ the one-off moves removed:
 
 1. `Supervisor.take` (restart file and parent PID out of the environment) · data folder · `ImportGuard` (below) ·
    `Releases.execInstalled` (hand over to a newer staged release) · `Identity`.
-2. `Backup.beforeStart` · `Db` · `Migrations`.
+2. `Backup.beforeStart` · `Db` · `Migrations`. As it goes, `serve` prints how far it has got on stdout for the desktop
+   app (HE-44): `HUNTAWAY_PROGRESS {"step":…}`, contracts' `StartupStep`. `backup` before the `VACUUM INTO`, with the
+   pages in use as `total` bytes and the backup's `file` (the copy holds the one thread, so the app watches the file
+   grow rather than the server saying); `migrate` with `done` of `total` before each migration; `start` once the
+   database is ready and the rest is built. `StartupProgress` is a `Context.Reference` (does nothing by default: tests,
+   the read-only server), which `serve` sets to the printer around `Layer.build`.
 3. (Moved to step 6, HE-3: the listener binds once every area is built and recovery has run, so no request can
    reach a server that is still starting, and no gate is needed. A client sees "connection refused" until then,
    which it already treats as "not up yet".)

@@ -85,6 +85,8 @@ export class Servers extends Context.Service<
     readonly log: Effect.Effect<ReadonlyArray<string>>
     /** How far the start of the server has got, and its output, as it changes. */
     readonly startup: SubscriptionRef.SubscriptionRef<Startup>
+    /** What the app is doing about its server now, for the progress page ("Restarting the app"). */
+    readonly setStep: (view: StartupView) => Effect.Effect<void>
     /** Whether a server started here is running, read at once: Electron's before-quit decides there and then. */
     readonly runningNow: () => boolean
     /**
@@ -458,6 +460,7 @@ export class Servers extends Context.Service<
         skipBackupOnce: note("starting without a backup of the database, as asked").pipe(Effect.andThen(Ref.set(skipBackup, true))),
         log: Effect.map(SubscriptionRef.get(startup), (s) => s.log),
         startup,
+        setStep,
         runningNow: () => Option.isSome(Ref.getUnsafe(server)),
         quit: (then) => quit(then).pipe(Effect.provideContext(context)),
       })

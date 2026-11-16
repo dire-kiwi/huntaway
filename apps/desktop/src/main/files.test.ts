@@ -13,7 +13,7 @@ import { errorPage } from "./errorPage.ts"
 import { refused } from "./health.ts"
 import { backupFailure, readyToken } from "./ServerProcess.ts"
 import { frameStamp, shellStamp } from "./stamp.ts"
-import { badgeCount, boardUrlPath, isBrowsable, isWebUrl, RETRY_URL, SKIP_BACKUP_URL, windowsToReopen } from "./urls.ts"
+import { badgeCount, boardUrlPath, isBrowsable, isWebUrl, relaunchHeading, RETRY_URL, SKIP_BACKUP_URL, windowsToReopen } from "./urls.ts"
 
 // The main process's smaller parts: state.json as both writers keep it, the stamps, what the server prints, the
 // windows' address rules and the error page.
@@ -130,6 +130,12 @@ describe("the windows' addresses", () => {
     assert.deepStrictEqual(windowsToReopen(["/", "/profile/work", "https://evil.invalid/", 3]), ["/", "/profile/work"])
     assert.deepStrictEqual(windowsToReopen([]), ["/"])
     assert.deepStrictEqual(windowsToReopen(undefined), ["/"])
+    // Since HE-44 the file also says what the progress page is to say after the relaunch.
+    const saved = { windows: ["/settings/server", 4], heading: "Starting Huntaway 0.0.5" }
+    assert.deepStrictEqual(windowsToReopen(saved), ["/settings/server"])
+    assert.strictEqual(relaunchHeading(saved), "Starting Huntaway 0.0.5")
+    assert.strictEqual(relaunchHeading(["/"]), null)
+    assert.strictEqual(relaunchHeading({ windows: [], heading: " " }), null)
     assert.deepStrictEqual([badgeCount(3.7), badgeCount(-1), badgeCount("x"), badgeCount("4")], [3, 0, 0, 4])
   })
 

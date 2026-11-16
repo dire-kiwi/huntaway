@@ -85,6 +85,8 @@ export function RestartModal({
   const restarting = phase === "restarting"
   const { status: now, down } = useServerStatus(restarting ? localHost : null, "1 second")
   const back = !!now && now.boot_id !== boot
+  // The board's connection to this host: lost once the old process has gone.
+  const connected = useBoard((s) => s.connected)
   // In the desktop app, how far the new server has got as it starts.
   const serverStart = useServerStartProgress(restarting)
   useEffect(() => {
@@ -237,7 +239,7 @@ export function RestartModal({
                 job={job}
                 version={release === "update" ? version : null}
                 server={serverStart}
-                down={down}
+                down={down || !connected}
                 back={back}
               />
             )}

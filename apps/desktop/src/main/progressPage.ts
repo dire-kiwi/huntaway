@@ -64,7 +64,7 @@ const script = `
     bar.classList.toggle("moving", s.share === null)
     bar.firstElementChild.style.width = s.share === null ? "" : Math.round(Math.max(0, Math.min(1, s.share)) * 100) + "%"
     bar.setAttribute("aria-valuenow", s.share === null ? "" : String(Math.round(s.share * 100)))
-    $("lines").textContent = s.log.length + (s.log.length === 1 ? " line" : " lines")
+    $("lines").textContent = s.log.length === 0 ? "nothing yet" : s.log.length + (s.log.length === 1 ? " line" : " lines")
     const pre = $("log")
     const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4
     pre.textContent = s.log.length > 0 ? s.log.join("\\n") : "Nothing yet."

@@ -176,6 +176,8 @@ export const runWindows = Effect.gen(function* () {
   const showQuitting = (now: string) =>
     Effect.gen(function* () {
       yield* Ref.set(heading, now)
+      // Quitting then says it is stopping the server, if this app started one.
+      yield* servers.setStep({ step: "Restarting the app", detail: null, share: null })
       yield* Effect.forEach(openBoards(), showProgress, { concurrency: "unbounded", discard: true })
     })
 

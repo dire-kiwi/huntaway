@@ -13,8 +13,9 @@ export interface StartupView {
   readonly share: number | null
 }
 
-/** A number of bytes, for people. */
-export const bytesText = (n: number): string => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${Math.round(n / 1e6)} MB` : `${Math.round(n / 1e3)} KB`)
+/** A number of bytes, for people, in the unit `scale` would have ("0.4 GB of 1.6 GB"). */
+export const bytesText = (n: number, scale = n): string =>
+  scale >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : scale >= 1e6 ? `${Math.round(n / 1e6)} MB` : `${Math.round(n / 1e3)} KB`
 
 /** What the app says before the server says anything. */
 export const appStep = (step: string, detail: string | null = null): StartupView => ({ step, detail, share: null })
@@ -30,7 +31,7 @@ export const serverStep = (step: StartupStep, written: number | null = null): St
       const done = Math.min(written ?? step.done ?? 0, total)
       return {
         step: "Backing up the database",
-        detail: total > 0 ? `${bytesText(done)} of ${bytesText(total)}, so that it can go back if the new version is no good` : null,
+        detail: total > 0 ? `${bytesText(done, total)} of ${bytesText(total)}, so that it can go back if the new version is no good` : null,
         share: total > 0 ? done / total : null,
       }
     }
