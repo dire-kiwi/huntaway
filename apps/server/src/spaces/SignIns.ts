@@ -110,6 +110,7 @@ export class SignIns extends Context.Service<SignIns, SignInsShape>()("huntaway-
           origin: s.origin,
           username: s.username,
           password,
+          fresh: `huntaway-sign-in-${(yield* random.uuidV4()).slice(0, 8)}`,
           ...at.tab,
         })
         yield* repo.used(id, yield* nowTimestamp)

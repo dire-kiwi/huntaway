@@ -313,9 +313,9 @@ describe("the spaces server", () => {
             { ref: "p1:3", text: secret },
           ])
           assert.deepStrictEqual(spacesd.browser.clicked, ["p1:5"])
-          // On the agent's own MCP session, and in the server's own browser profile.
+          // On the agent's own MCP session, in a fresh browser of the server's own.
           const prepare = spacesd.calls.find((c) => c.tool === "browser_prepare")
-          assert.include(jsonOf(prepare?.args ?? null), '"profile":{"mode":"isolated_named","name":"huntaway-sign-in"}')
+          assert.include(jsonOf(prepare?.args ?? null), '"profile":{"mode":"isolated_new"}')
           const sessions = new Set(spacesd.calls.filter((c) => c.tool.startsWith("browser_")).map((c) => c.session))
           assert.strictEqual(sessions.size, 1)
 

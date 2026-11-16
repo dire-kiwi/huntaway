@@ -195,7 +195,7 @@ export const spacesTools = Effect.gen(function* () {
       const listed = saved.map((x) => `- ${x.id}: ${maskUsername(x.username)}${x.label === null ? "" : ` (${x.label})`}`).join("\n")
       if (saved.length === 0) {
         return text(
-          `The user has no sign-in saved for ${origin}. Ask them to add one (Settings → Profiles → Sign-ins), then call space_sign_in again; never ask them for the password itself.`,
+          `The user has no sign-in saved for ${origin}. Ask them to add one (Settings → Profiles → Site sign-ins), then call space_sign_in again; never ask them for the password itself.`,
           true,
         )
       }
@@ -210,7 +210,7 @@ export const spacesTools = Effect.gen(function* () {
       const tab = { session: a.session, target_id: a.target_id, tab_id: a.tab_id }
       const done = yield* signIns.signIn(s.id, caller.task.id, one.id, { url: a.url, tab })
       const next = done.submitted
-        ? "Check the page shows the signed-in state (get_browser_state with this target_id and tab_id, and session); a code the site asks for next is the user's to enter in the Space's viewer (space_view)."
+        ? "Check the page shows the signed-in state (get_browser_state with this session, target_id and tab_id); a code the site asks for next is the user's to enter in the Space's viewer (space_view)."
         : "No submit button was found: the fields are filled, so submit the form yourself (press Enter in the password field)."
       return text(`Signed in to ${origin} as ${done.username_hint} in ${s.name}.\n\n${pretty(done)}\n\n${next}`)
     })

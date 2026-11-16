@@ -47,6 +47,7 @@ const fill = (over: Partial<Fill> = {}): Fill => ({
   origin: "https://login.example.test",
   username: "ada@example.test",
   password: Redacted.make(SECRET),
+  fresh: "huntaway-sign-in-1",
   ...over,
 })
 
@@ -75,6 +76,7 @@ describe("the sign-in sequence", () => {
       const d = scripted("about:blank")
       const done = yield* fillSignIn(d.call, fill())
       assert.deepStrictEqual(d.tools().slice(0, 5), ["browser_prepare", "list_windows", "get_browser_state", "browser_navigate", "get_browser_state"])
+      assert.deepStrictEqual(d.calls[0]?.args, { session: "huntaway-sign-in-1", allow_launch: true, profile: { mode: "isolated_new" } })
       const typed = d.calls.filter((c) => c.tool === "browser_type").map((c) => [c.args["ref"], c.args["text"], c.args["replace"]])
       assert.deepStrictEqual(typed, [
         ["p1:1", "ada@example.test", false],
@@ -86,7 +88,7 @@ describe("the sign-in sequence", () => {
         username_hint: "a***@example.test",
         submitted: true,
         page_url: "https://login.example.test/home?pw=***",
-        session: "huntaway-sign-in",
+        session: "huntaway-sign-in-1",
         target_id: "bt-1",
         tab_id: "tab-1",
       })

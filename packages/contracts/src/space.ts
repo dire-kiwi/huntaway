@@ -91,7 +91,7 @@ export const SignIn = Schema.Struct({
 export interface SignIn extends Schema.Schema.Type<typeof SignIn> {}
 
 /** A password as it goes to the server: a plain string on the wire, `Redacted` once decoded (never logged or shown). */
-export const Password = Schema.RedactedFromValue(Schema.String, { label: "password" })
+export const Password = Schema.RedactedFromValue(Schema.String)
 
 /** What `signIns.create` takes: the site's address (its origin is kept), the username and the password. */
 export const NewSignIn = Schema.Struct({
@@ -121,7 +121,7 @@ export const SignedIn = Schema.Struct({
   submitted: Schema.Boolean,
   /** Where the tab went after (with the password taken out, if a form put it in the address). */
   page_url: Schema.String,
-  /** The browser tab it filled, as Cua Driver names it: the caller's, or one the server opened. */
+  /** The browser tab it filled, as Cua Driver names it: the caller's, or one the server opened (with a session label of its own). */
   session: Schema.String,
   target_id: Schema.String,
   tab_id: Schema.String,

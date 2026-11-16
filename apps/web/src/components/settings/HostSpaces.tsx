@@ -4,11 +4,12 @@ import { AgentConfigId, type Host, type Space, type SpaceView } from "@huntaway/
 import { clsx } from "clsx"
 import { type Effect, Exit } from "effect"
 import type { AtomRegistry } from "effect/reactivity"
-import { ExternalLink, Loader2, Monitor, Play, Plus, RefreshCw, Square, Trash2 } from "lucide-react"
+import { ExternalLink, KeyRound, Loader2, Monitor, Play, Plus, RefreshCw, Square, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../state/board"
 import { useAction } from "../../state/mutation"
 import { Button, Field, Input, Modal, ModalFooter, resultError, resultValue, timeAgo, Toggle, useConfirm } from "../ui"
+import { SpaceSignInModal } from "./SiteSignIns"
 
 /**
  * Spaces on a host (HE-35): Linux desktops in Docker, each with Cua's spacesd and Cua Driver, and Claude Code and Codex
@@ -22,6 +23,7 @@ export function HostSpaces({ host }: { host: Host }) {
   const st = resultValue(result) ?? null
   const [creating, setCreating] = useState(false)
   const [viewing, setViewing] = useState<{ readonly space: Space; readonly view: SpaceView } | null>(null)
+  const [signingIn, setSigningIn] = useState<Space | null>(null)
   const [doing, setDoing] = useState<string | null>(null)
   const [action, run] = useAction()
   const confirm = useConfirm()
@@ -83,6 +85,17 @@ export function HostSpaces({ host }: { host: Host }) {
                     {busy === `open:${s.id}` ? <Loader2 size={12} className="animate-spin" /> : <Monitor size={12} />} Open
                   </Button>
                 )}
+                {s.state === "running" && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title="Sign in to a website in this Space with a saved site sign-in"
+                    disabled={!!busy}
+                    onClick={() => setSigningIn(s)}
+                  >
+                    <KeyRound size={12} /> Sign in
+                  </Button>
+                )}
                 {s.state === "running" && (s.claude_config_id || s.codex_config_id) && (
                   <Button
                     size="sm"
@@ -138,6 +151,7 @@ export function HostSpaces({ host }: { host: Host }) {
       )}
       {err && <div className="mt-2 rounded bg-red-500/10 p-2 text-[12px] whitespace-pre-wrap text-red-300">{err}</div>}
       {creating && <NewSpaceModal hostId={hostId} onClose={() => setCreating(false)} />}
+      {signingIn && <SpaceSignInModal hostId={hostId} space={signingIn} onClose={() => setSigningIn(null)} />}
       {viewing && <SpaceViewer host={host} space={viewing.space} view={viewing.view} onClose={() => setViewing(null)} />}
       {confirm.dialog}
     </section>

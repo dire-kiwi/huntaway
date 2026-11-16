@@ -8,8 +8,7 @@ import type { DriverAnswer } from "./driverMcp.ts"
 // Driver browser tools, checked on Cua's image (cua-driver 0.49.1).
 //
 // 1. The tab: the caller's (`session`, `target_id`, `tab_id` from its own `get_browser_state`, on the same MCP session),
-//    or a Chromium the driver owns, on the profile `huntaway-sign-in` (kept on disk, so the session it signs in stays
-//    for the next `browser_prepare` of that profile), opened on the sign-in page (`browser_prepare`, `list_windows`,
+//    or a Chromium the driver owns, on a fresh profile and a driver session label of its own, opened on the sign-in page (`browser_prepare`, `list_windows`,
 //    `get_browser_state` with the window, `browser_navigate`).
 // 2. A snapshot (`get_browser_state`): the tab's URL must be on the sign-in's exact origin, or nothing is typed. This is
 //    what keeps a look-alike page from being given the password.
@@ -20,11 +19,6 @@ import type { DriverAnswer } from "./driverMcp.ts"
 //
 // The password is only ever the text of one `browser_type`. Nothing returned has it: the driver's messages and the
 // tab's URL after (a form sent by GET puts it in the address) are scrubbed of it.
-
-/** The driver-owned Chromium profile a sign-in opens when the caller names no tab. */
-export const SIGN_IN_PROFILE = "huntaway-sign-in"
-/** The driver's session label for that browser. */
-export const SIGN_IN_SESSION = "huntaway-sign-in"
 
 /** A site's origin, `scheme://host[:port]` (lowercase, the default port left out), for an http(s) address; null otherwise. */
 export const originOf = (url: string): string | null => {
@@ -104,6 +98,8 @@ export interface Fill {
   readonly origin: string
   readonly username: string
   readonly password: Redacted.Redacted
+  /** A new driver session label, for a fill in a browser of the server's own. */
+  readonly fresh: string
   /** The caller's tab, if it names one (`target_id` and `tab_id` both, or neither). */
   readonly session?: string | undefined
   readonly target_id?: string | undefined
@@ -136,7 +132,8 @@ export const fillSignIn = Effect.fn("signInFill.fillSignIn")(function* (call: Dr
   const secret = Redacted.value(fill.password)
 
   /** A tool's structured answer, or its refusal as `Unavailable`, scrubbed. */
-  const ok = (tool: string, args: Readonly<Record<string, unknown>>) =>
+  /** A tool's structured answer, or its refusal (its code, if it gives one, and its message, scrubbed). */
+  const reply = (tool: string, args: Readonly<Record<string, unknown>>) =>
     Effect.gen(function* () {
       const a = yield* call(tool, args).pipe(Effect.mapError((e) => (e._tag === "Unavailable" ? unavailable(scrub(e.reason, secret)) : e)))
       if ("error" in a) return yield* unavailable(scrub(a.error, secret))
@@ -148,38 +145,51 @@ export const fillSignIn = Effect.fn("signInFill.fillSignIn")(function* (call: Dr
           .filter(isText)
           .map((t) => t.text)
           .join("\n")
-        return yield* unavailable(scrub(`Cua Driver's ${tool} refused: ${said === "" ? "no reason given" : said}`, secret))
+        const message = scrub(`Cua Driver's ${tool} refused: ${said === "" ? "no reason given" : said}`, secret)
+        // The driver puts a refusal's code in `refusal` (browser_prepare) or `error` (the other browser tools).
+        return { refused: { code: str(field(sc, "refusal"), "code") ?? str(field(sc, "error"), "code"), message }, sc }
       }
-      return sc
+      return { refused: null, sc }
     })
+
+  /** A tool's structured answer, its refusal as `Unavailable`. */
+  const ok = (tool: string, args: Readonly<Record<string, unknown>>) =>
+    Effect.flatMap(reply(tool, args), (r) => (r.refused === null ? Effect.succeed(r.sc) : Effect.fail(unavailable(r.refused.message))))
 
   if ((fill.target_id === undefined) !== (fill.tab_id === undefined)) {
     return yield* new Invalid({ field: "tab_id", reason: "Name both the tab's target_id and tab_id, or neither." })
   }
-  const session = fill.session ?? SIGN_IN_SESSION
+  // The caller's session label, else a new one: the driver's browser tools need a label, and the driver ties a label to
+  // the MCP session that first used it, refusing it on any other ("session is not available to this transport"), such
+  // as the board's after a restart.
+  const label = fill.session ?? fill.fresh
+  const session = { session: label }
   let target = fill.target_id ?? ""
   let tab = fill.tab_id ?? ""
   if (fill.target_id === undefined) {
     // A Chromium of the driver's own, on the sign-in page.
-    const prepared = yield* ok("browser_prepare", { session, allow_launch: true, profile: { mode: "isolated_named", name: SIGN_IN_PROFILE } })
+    // A fresh throwaway profile: the driver lets only the MCP session that launched a named profile's browser use it,
+    // and counts each refusal toward a pause in launching any browser, so a profile shared between agents and the board
+    // (open on a session gone with a restart) would block sign-ins.
+    const prepared = yield* ok("browser_prepare", { ...session, allow_launch: true, profile: { mode: "isolated_new" } })
     const pid = int(prepared, "prepared_pid")
     if (pid === null) return yield* unavailable("Cua Driver's browser_prepare gave no browser")
     let window: number | null = null
     for (let i = 0; i < 40 && window === null; i++) {
       if (i > 0) yield* Effect.sleep("250 millis")
-      const ws = yield* ok("list_windows", { session })
+      const ws = yield* ok("list_windows", { ...session })
       window = list(ws, "windows").flatMap((w) => (int(w, "pid") === pid && int(w, "window_id") !== null ? [int(w, "window_id")] : []))[0] ?? null
     }
     if (window === null) return yield* unavailable("The browser Cua Driver opened never showed a window.")
-    const bound = yield* ok("get_browser_state", { session, pid, window_id: window })
+    const bound = yield* ok("get_browser_state", { ...session, pid, window_id: window })
     const tabs = list(bound, "tabs")
     const active = tabs.find((t) => field(t, "active") === true) ?? tabs[0]
     target = str(bound, "target_id") ?? ""
     tab = str(active, "tab_id") ?? ""
     if (target === "" || tab === "") return yield* unavailable("Cua Driver found no tab in the browser it opened.")
-    yield* ok("browser_navigate", { session, target_id: target, tab_id: tab, url: fill.url })
+    yield* ok("browser_navigate", { ...session, target_id: target, tab_id: tab, url: fill.url })
   }
-  const ids = { session, target_id: target, tab_id: tab }
+  const ids = { ...session, target_id: target, tab_id: tab }
 
   // The page must be on the sign-in's own origin, with a password field: a page still loading gets a few reads.
   let page: string | null = null
@@ -219,7 +229,9 @@ export const fillSignIn = Effect.fn("signInFill.fillSignIn")(function* (call: Dr
     username_hint: maskUsername(fill.username),
     submitted: submit !== null,
     page_url: scrub(after, secret),
-    ...ids,
+    session: label,
+    target_id: target,
+    tab_id: tab,
   }
   return done
 })

@@ -1,10 +1,11 @@
 import { canRunAgents, type HostProfile as Profile } from "@huntaway/client"
-import { Plus, Trash2 } from "lucide-react"
+import { KeyRound, Plus, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { defaultAgentHost, profileConfigLabel, profileNames } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
 import { Button, Modal, useConfirm } from "../../ui"
 import { PanelHeading } from "../parts"
+import { SiteSignInsModal } from "../SiteSignIns"
 import { ProfileForm, usesAsana } from "./ProfileForm"
 import { useMutation } from "../../../state/mutation"
 
@@ -18,6 +19,7 @@ export function ProfilesPanel() {
   const hosts = useBoard((s) => s.hosts)
   const claudeConfigs = useBoard((s) => s.claudeConfigs)
   const [editing, setEditing] = useState<{ host: string; profile?: Profile; name?: string } | null>(null)
+  const [signIns, setSignIns] = useState<Profile | null>(null)
   const names = useMemo(() => profileNames(profiles), [profiles])
   const hostName = (id: string): string => hosts.find((h) => h.id === id)?.name ?? id.slice(0, 8)
   const online = hosts.filter((h) => canRunAgents(h))
@@ -53,6 +55,9 @@ export function ProfilesPanel() {
                     {p.assistant_host ? ` · assistant on ${hostName(p.assistant_host)}` : ""}
                     {p.agent_access.length ? ` · agents from ${p.agent_access.includes("*") ? "every profile" : p.agent_access.join(", ")} can use it` : ""}
                   </div>
+                  <Button size="sm" variant="ghost" title="Usernames and passwords the board types into sites in a Space" onClick={() => setSignIns(p)}>
+                    <KeyRound size={12} /> Site sign-ins
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={() => setEditing({ host: p.host_id, profile: p })}>
                     Edit
                   </Button>
@@ -93,6 +98,7 @@ export function ProfilesPanel() {
           <ProfileForm hostId={editing.host} initial={editing.profile} name={editing.name} onDone={() => setEditing(null)} onCancel={() => setEditing(null)} />
         </Modal>
       )}
+      {signIns && <SiteSignInsModal profile={signIns} hostName={hostName(signIns.host_id)} onClose={() => setSignIns(null)} />}
       {confirm.dialog}
     </section>
   )
