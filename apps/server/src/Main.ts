@@ -2,7 +2,7 @@ import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
 import { Mac, SecureRandom } from "effect/crypto"
 // 6.8: Web Push's cryptography; 6.10: the SHA-256 of a Cua Driver download; 6.5: a signed webhook delivery's.
-import { Aead, Digest, Kdf, KeyAgreement, Signature } from "effect/crypto"
+import { Aead, Cipher, Digest, Kdf, KeyAgreement, Signature } from "effect/crypto"
 import { createSocket } from "node:dgram"
 import { networkInterfaces } from "node:os"
 import { FetchHttpClient, HttpRouter } from "effect/http"
@@ -33,6 +33,8 @@ import {
   DesktopRpcs,
   // HE-35
   SpacesRpcs,
+  // HE-49
+  TeleportRpcs,
   GitRpcs,
   HostRpcGroup,
   HubHostRpcs,
@@ -124,6 +126,8 @@ import { Docker } from "./spaces/Docker.ts"
 import { SignInRepo } from "./spaces/SignInRepo.ts"
 import { SignIns } from "./spaces/SignIns.ts"
 import { Spaces } from "./spaces/Spaces.ts"
+import { Teleport } from "./spaces/Teleport.ts"
+import { TeleportRepo } from "./spaces/TeleportRepo.ts"
 import { SpacesTools } from "./spaces/SpacesTools.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
@@ -247,6 +251,7 @@ import { CheckpointHandlers } from "./rpc/checkpoints.ts"
 // 6.10: computer use.
 import { DesktopHandlers } from "./rpc/desktop.ts"
 import { SpacesHandlers } from "./rpc/spaces.ts"
+import { TeleportHandlers } from "./rpc/teleport.ts"
 import { GitHandlers } from "./rpc/git.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { PenHandlers } from "./rpc/pens.ts"
@@ -331,8 +336,17 @@ const PlatformBase = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E, R>) =>
     Layer.provideMerge(DataDir.layer),
     Layer.provideMerge(Mac.layerWebCrypto),
     // 6.8: Web Push's cryptography; 6.10, 6.5 and 6.3: SHA-256 (a Cua Driver download, a signed webhook delivery, a
-    // document's image).
-    Layer.provideMerge(Layer.mergeAll(KeyAgreement.layerWebCrypto, Kdf.layerWebCrypto, Aead.layerWebCrypto, Signature.layerWebCrypto, Digest.layerWebCrypto)),
+    // document's image); HE-49: AES-128-CBC and PBKDF2 to decrypt a host browser's cookies for teleport.
+    Layer.provideMerge(
+      Layer.mergeAll(
+        KeyAgreement.layerWebCrypto,
+        Kdf.layerWebCrypto,
+        Aead.layerWebCrypto,
+        Cipher.layerWebCrypto,
+        Signature.layerWebCrypto,
+        Digest.layerWebCrypto,
+      ),
+    ),
     Layer.provideMerge(SecureRandom.layerWebCrypto),
   )
 
@@ -624,12 +638,15 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(
     // 6.10: computer use, over the MCP area it registers its server with.
     Layer.provideMerge(DesktopLive),
     // HE-35: Spaces, Linux desktops in Docker; HE-37: and the `spaces` MCP server's tools, over the MCP area.
-    // HE-48: and the profiles' sign-ins, typed into a Space's browser.
+    // HE-48: and the profiles' sign-ins, typed into a Space's browser; HE-49: teleport, which reads the host's browser and
+    // uploads its sign-ins to a Space.
     Layer.provideMerge(
       SpacesTools.pipe(
         Layer.provideMerge(SignIns.layer),
+        Layer.provideMerge(Teleport.layer),
         Layer.provideMerge(SignInRepo.layer),
         Layer.provideMerge(Spaces.layer),
+        Layer.provideMerge(TeleportRepo.layer),
         Layer.provideMerge(Docker.layer),
       ),
     ),
@@ -716,6 +733,8 @@ export const Served = PublicRpcs.merge(
   DesktopRpcs,
   // HE-35
   SpacesRpcs,
+  // HE-49
+  TeleportRpcs,
   // 6.4
   AgentToolsRpcs,
   // 6.9
@@ -766,6 +785,7 @@ export const HandlersLive = Layer.mergeAll(
   DesktopHandlers,
   // HE-35
   SpacesHandlers,
+  TeleportHandlers,
   // 6.4
   AgentToolsHandlers,
   // 6.9

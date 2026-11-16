@@ -54,6 +54,18 @@ export const deny = (message: string): Decision => ({ behavior: "deny", message 
 export const isQuestion = (tool: string): boolean => tool === ASK_USER || tool === CODEX_QUESTIONS
 
 /**
+ * Tool prompts only the user answers: Bypass doesn't allow them, and they can't be always allowed. HE-49's
+ * `space_request_sign_ins` sends the host browser's sign-ins into a Space, where the agent could read them.
+ */
+export const USER_ONLY: ReadonlySet<string> = new Set(["mcp__spaces__space_request_sign_ins"])
+
+/**
+ * Whether only the user answers a tool prompt: Bypass doesn't answer questions for the user, nor what an approval rule
+ * asks, nor `USER_ONLY`'s; and none of them can be always allowed.
+ */
+export const onlyTheUser = (tool: string, rule: string | null): boolean => isQuestion(tool) || rule !== null || USER_ONLY.has(tool)
+
+/**
  * Whether a prompt is skipped when the user sends the thread a message (`Permissions.skipFor`): a tool call or one of
  * the board's own approvals, not a question or a plan, which a message doesn't answer.
  */

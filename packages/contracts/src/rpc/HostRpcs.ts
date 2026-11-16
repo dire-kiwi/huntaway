@@ -13,6 +13,7 @@ import { CheckpointRpcs } from "./checkpoints.ts"
 // 6.10: computer use.
 import { DesktopRpcs } from "./desktop.ts"
 import { SpacesRpcs } from "./spaces.ts"
+import { TeleportRpcs } from "./teleport.ts"
 import { GitRpcs } from "./git.ts"
 import { HostRpcGroup } from "./host.ts"
 import { HubHostRpcs } from "./hub.ts"
@@ -69,6 +70,8 @@ export const HostRpcs = HostRpcGroup.merge(
   DesktopRpcs,
   // HE-35
   SpacesRpcs,
+  // HE-49: teleport sign-ins into a Space.
+  TeleportRpcs,
   AgentToolsRpcs,
   PushRpcs,
   TaskDocumentRpcs,

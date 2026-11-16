@@ -65,6 +65,7 @@ import { PermissionRepo } from "./PermissionRepo.ts"
 import type { ExpireScope, PromptRow, PromptStatus } from "./PermissionRepo.ts"
 import {
   EDIT_REFUSED,
+  onlyTheUser,
   allow,
   approvalQuestion,
   checkAnswers,
@@ -682,7 +683,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         const plan = row.tool_name === EXIT_PLAN && row.kind === "tool"
         const allowIt = a.decision !== "deny"
         // Each approval of the board's own and each question is answered on its own; what a rule asks is asked each time.
-        const always = a.decision === "allow_always" && row.kind === "tool" && !question && row.rule === null
+        const always = a.decision === "allow_always" && row.kind === "tool" && !onlyTheUser(row.tool_name, row.rule)
         // A question or plan the agent's run ended on can still be answered, by message.
         const late = row.status === "expired" && (question || plan)
         if (row.status !== "pending" && !late) return yield* new PromptNotPending({ id })
@@ -824,8 +825,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         const allowIt = decisionIn(yield* modeOf(task))
         if (allowIt === null) return
         const rows = (yield* repo.pending({ task: taskId })).filter((r) => r.kind === "tool")
-        // Bypass doesn't answer questions for the user, nor what an approval rule asks.
-        for (const r of rows.filter((x) => !(allowIt && (isQuestion(x.tool_name) || x.rule !== null)))) {
+        for (const r of rows.filter((x) => !(allowIt && onlyTheUser(x.tool_name, x.rule)))) {
           // Another client may have answered it in the meantime.
           yield* answer(r.id, allowIt ? { decision: "allow" } : { decision: "deny", message: DONT_ASK_DENIAL }, "mode").pipe(Effect.ignore)
         }

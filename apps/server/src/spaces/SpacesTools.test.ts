@@ -86,6 +86,7 @@ describe("the spaces server", () => {
               "space_call_tool",
               "space_view",
               "space_sign_in",
+              "space_request_sign_ins",
             ],
           )
           for (const t of tools) assert.strictEqual(t.annotations?.["readOnlyHint"], SPACES_READS.includes(t.name), t.name)

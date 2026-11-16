@@ -15,7 +15,22 @@ import type { DriverAnswer } from "./driverMcp.ts"
 import { SignIns } from "./SignIns.ts"
 import { maskUsername, originOf } from "./signInFill.ts"
 import { Spaces } from "./Spaces.ts"
-import { CreateSpace, DeleteSpace, ListSpaces, SpaceBash, SpaceCallTool, SpaceListTools, SpaceSignIn, SpaceView, StartSpace, StopSpace } from "./tools.ts"
+import { Teleport } from "./Teleport.ts"
+import { approvedSites, askInput, checkSites, pickProfile, REQUEST_TOOL } from "./teleport/request.ts"
+import type { Candidate } from "./teleport/request.ts"
+import {
+  CreateSpace,
+  DeleteSpace,
+  ListSpaces,
+  SpaceBash,
+  SpaceCallTool,
+  SpaceListTools,
+  SpaceRequestSignIns,
+  SpaceSignIn,
+  SpaceView,
+  StartSpace,
+  StopSpace,
+} from "./tools.ts"
 
 // The `spaces` server's handlers (HE-37): this host's Spaces for its agents, as Cua Spaces' MCP tools give them. What
 // the server adds to `Spaces`:
@@ -27,7 +42,8 @@ import { CreateSpace, DeleteSpace, ListSpaces, SpaceBash, SpaceCallTool, SpaceLi
 //   watches) and the driver's tools that say they only look. Checked per call, as the desktop's are.
 // - `delete_space` asks the user first, whatever the thread's mode (`McpHooks.askRule` with no rule), and so does
 //   `space_sign_in` (HE-48), which picks one of the task's profile's sign-ins for the page's site and has `SignIns` type
-//   it in. The agent is told the site, a masked username and where the tab went, never the password.
+//   it in. The agent is told the site, a masked username and where the tab went, never the password. So does
+//   `space_request_sign_ins` (HE-49), whose card lets the user trim the sites.
 // - `space_bash`'s output is capped; the driver's results reach the agent as `desktop`'s do (`forAgent`: text, images
 //   as MCP image content, and the structured fields as a line of JSON).
 //
@@ -73,6 +89,7 @@ const onlyLooks = (caller: LocalCaller, tool: string): string | null => {
 export const spacesTools = Effect.gen(function* () {
   const spaces = yield* Spaces
   const signIns = yield* SignIns
+  const teleport = yield* Teleport
   const hooks = yield* McpHooks
   const settings = yield* HostSettings
   const listening = yield* Listening
@@ -218,6 +235,49 @@ export const spacesTools = Effect.gen(function* () {
       return text(`Signed in to ${origin} as ${done.username_hint} in ${s.name}.\n\n${pretty(done)}\n\n${next}${leaked}`)
     })
 
+  /**
+   * Bring the user's own sign-ins for `sites` from the host's browser into the Space (HE-49). It asks the user itself,
+   * whatever the thread's mode (`McpHooks.askRule` with no rule; `USER_ONLY`: Bypass doesn't allow it, and it can't be
+   * always allowed), with a card that names the Space, the browser profile and the sites, which the user can trim. Only
+   * registrable domains the profile holds are offered, identity providers unticked; only what the user leaves ticked goes.
+   */
+  const requestSignIns = (caller: LocalCaller, ref: string, sites: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const s = yield* spaces.find(ref)
+      if (s.state !== "running") return text(`${s.name} isn't running: start it with start_space first.`, true)
+      const { valid, invalid } = checkSites(sites)
+      if (valid.length === 0) {
+        return text(`Give sites as registrable domains, like github.com or bbc.co.uk${invalid.length > 0 ? ` (not: ${invalid.join(", ")})` : ""}.`, true)
+      }
+      const candidates: Array<Candidate> = []
+      for (const src of yield* teleport.sources) {
+        for (const p of src.profiles) {
+          const listed = yield* teleport.sites(src.key, p.id).pipe(Effect.option)
+          if (Option.isSome(listed)) {
+            candidates.push({ browser: src.key, browserLabel: src.label, profile: p.id, profileLabel: p.label, sites: listed.value.sites })
+          }
+        }
+      }
+      const picked = pickProfile(candidates, valid)
+      if (picked === null) return text(`No browser profile on ${hostName} holds sign-ins for ${valid.join(", ")}.`, true)
+      const input = askInput(s, picked, valid)
+      const asked = yield* Effect.result(hooks.askRule(caller, REQUEST_TOOL, input, null))
+      if (asked._tag === "Failure") return text(`No sign-ins were brought into ${s.name}: ${asked.failure.message}`, true)
+      const chosen = approvedSites(
+        asked.success,
+        input.offered.map((o) => o.site),
+      )
+      if (chosen.length === 0) return text(`The user left no sites ticked, so nothing was brought into ${s.name}.`, true)
+      const r = yield* teleport.bring({ id: s.id, browser: picked.browser, profile: picked.profile, sites: chosen })
+      const out = [`Brought sign-ins for ${chosen.join(", ")} into ${s.name} from ${picked.browserLabel} (${picked.profileLabel}).`]
+      const left = valid.filter((v) => !chosen.includes(v))
+      if (left.length > 0) out.push(`Not brought: ${left.join(", ")}.`)
+      if (invalid.length > 0) out.push(`Not sites (a subdomain, or a public suffix such as com), so not offered: ${invalid.join(", ")}.`)
+      if (r.skipped.length > 0) out.push(`Skipped: ${r.skipped.join("; ")}.`)
+      out.push("The Space's browser starts out signed in to those sites the next time it opens.")
+      return text(out.join("\n"))
+    })
+
   const all: ReadonlyArray<RegisteredTool> = [
     localToolHandler(ListSpaces, () => answer(Effect.map(spaces.status, (st) => text(pretty(st.spaces.map(shown)))))),
     localToolHandler(CreateSpace, (a, caller) => acting(caller, CreateSpace.name, create(a.name, a.reuse ?? true))),
@@ -248,6 +308,7 @@ export const spacesTools = Effect.gen(function* () {
     localToolHandler(SpaceCallTool, (a, caller) => answer(call(caller, a.space, a.tool, a.args ?? {}))),
     localToolHandler(SpaceView, (a, caller) => answer(view(caller, a.space))),
     localToolHandler(SpaceSignIn, (a, caller) => acting(caller, SpaceSignIn.name, signIn(caller, a))),
+    localToolHandler(SpaceRequestSignIns, (a, caller) => acting(caller, SpaceRequestSignIns.name, requestSignIns(caller, a.space, a.sites))),
   ]
   return all
 })

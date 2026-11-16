@@ -18,10 +18,11 @@ export interface McpHooksShape {
   readonly callMade: (caller: LocalCaller) => Effect.Effect<void>
   /**
    * An approval rule asks about the call (`name` is the tool as the rule matched it, `mcp__huntaway__<tool>`), or
-   * (`rule` null) a tool asks for itself (`mcp__spaces__delete_space`): the user, or the thread's mode, decides. Fails
-   * with what the agent is told when it is denied.
+   * (`rule` null) a tool asks for itself (`mcp__spaces__delete_space`): the user, or the thread's mode, decides. The input
+   * as allowed (the user may have edited it on the card: HE-49's sign-ins, trimmed), or fails with what the agent is
+   * told when it is denied.
    */
-  readonly askRule: (caller: LocalCaller, name: string, input: unknown, rule: Rule | null) => Effect.Effect<void, ToolError>
+  readonly askRule: (caller: LocalCaller, name: string, input: unknown, rule: Rule | null) => Effect.Effect<unknown, ToolError>
   /** The agent gave up on call `call` of `run`: the prompt it raised expires and its wait ends (it is not answered). */
   readonly cancelled: (run: Run, call: CallId) => Effect.Effect<void>
 }
@@ -68,7 +69,7 @@ export const askRuleWith =
   (permissions: PermissionsShape): McpHooksShape["askRule"] =>
   (caller, name, input, rule) =>
     Effect.flatMap(permissions.askRule({ run: caller.run, call_id: caller.call_id }, name, input, rule), (decision) =>
-      decision.behavior === "allow" ? Effect.void : Effect.fail(ToolError.other(decision.message)),
+      decision.behavior === "allow" ? Effect.succeed(decision.updatedInput) : Effect.fail(ToolError.other(decision.message)),
     )
 
 /** `McpHooks.cancelled` by `Permissions`: the prompt the call raised expires. */
