@@ -1,9 +1,9 @@
 import { NodeServices, NodeWS } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, FileSystem, Layer, Option, Stream } from "effect"
-import { RpcClient, RpcSerialization } from "effect/rpc"
+import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
 import { Socket } from "effect/socket"
-import { HostRpcs, HubRpcs, LinkId, PublicRpcs } from "@huntaway/contracts"
+import { Auth, HostRpcs, HubRpcs, LinkId, PublicRpcs } from "@huntaway/contracts"
 import type { GlobalAgentTools, Host, HostId } from "@huntaway/contracts"
 import { httpRpcClientLayer } from "../../src/cli/rpc.ts"
 import { startServer } from "./launch.ts"
@@ -30,10 +30,13 @@ const relayedClient = (port: number, ticket: Effect.Effect<string>) =>
   Effect.gen(function* () {
     const url = Effect.map(ticket, (t) => `ws://127.0.0.1:${port}/api/relay/${t}`)
     const context = yield* Layer.build(
-      RpcClient.layerProtocolSocket().pipe(
-        Layer.provide(Layer.effect(Socket.Socket, Socket.makeWebSocket(url))),
-        Layer.provide(NodeWS.layerWebSocketConstructor),
-        Layer.provide(RpcSerialization.layerNdjson),
+      Layer.mergeAll(
+        RpcClient.layerProtocolSocket().pipe(
+          Layer.provide(Layer.effect(Socket.Socket, Socket.makeWebSocket(url))),
+          Layer.provide(NodeWS.layerWebSocketConstructor),
+          Layer.provide(RpcSerialization.layerNdjson),
+        ),
+        RpcMiddleware.layerClient(Auth, ({ next, request }) => next(request)),
       ),
     )
     return yield* RpcClient.make(HostRpcs, { flatten: true }).pipe(Effect.provideContext(context))
@@ -51,6 +54,9 @@ const until = <A, E>(stream: Stream.Stream<A, E>, ready: (a: A) => boolean, what
 
 /** `board`'s directory once `ready` holds for it. */
 const hostsWhen = (board: Board, ready: (hosts: ReadonlyArray<Host>) => boolean, what: string) => until(board("hub.hosts.watch", undefined), ready, what)
+
+/** A ticket for `host` through `board`'s relay. */
+const ticket = (board: Board, host: HostId) => Effect.map(board("hub.hosts.openRelay", { host_id: host }), (r) => r.ticket).pipe(Effect.orDie)
 
 const entry = (hosts: ReadonlyArray<Host>, id: HostId) => hosts.find((h) => h.id === id)
 
@@ -101,7 +107,6 @@ describe("the mesh, whole servers", () => {
         assert.deepStrictEqual(onA.map((h) => h.id).toSorted(), [aId, bId, cId].toSorted())
 
         // A client of C reaches B (which links C) and A (two hops away); a client of A reaches C.
-        const ticket = (board: Board, host: HostId) => Effect.map(board("hub.hosts.openRelay", { host_id: host }), (r) => r.ticket).pipe(Effect.orDie)
         const cToB = yield* relayedClient(cServer.port, ticket(c, bId))
         assert.strictEqual((yield* cToB("host.info", undefined)).host_id, bId)
         const cToA = yield* relayedClient(cServer.port, ticket(c, aId))

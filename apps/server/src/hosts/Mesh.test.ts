@@ -25,7 +25,7 @@ const host = (id: string, more: Partial<Host> = {}): Host => ({
   ...more,
 })
 
-const ids = (hosts: ReadonlyArray<Host>) => hosts.map((h) => [h.id, h.through, h.route])
+const ids = (hosts: ReadonlyArray<Host>): ReadonlyArray<ReadonlyArray<unknown>> => hosts.map((h) => [String(h.id), h.through ?? null, h.route?.map(String)])
 
 describe("the mesh's directory", () => {
   it("takes the hosts a neighbour reaches, through it, and leaves out itself, its own links and the neighbour", () => {

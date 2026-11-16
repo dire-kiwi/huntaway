@@ -472,11 +472,11 @@ describe("settings sync of the hosts' global skills and MCP servers (HE-46)", ()
       // Each host has its own before sync starts; the same skill on two of them with different text.
       const t = yield* board({ b: false }, (hub, a, b) =>
         Effect.gen(function* () {
-          yield* Effect.orDie(hub.tools.addSkill(null, { content: skill("review") }))
-          yield* Effect.orDie(a.tools.addSkill(null, { content: skill("release") }))
-          yield* Effect.orDie(b.tools.addSkill(null, { content: skill("release", "Theirs.") }))
-          yield* Effect.orDie(b.tools.addServer(null, { name: "local", config: { command: "local-mcp" } }))
-        }),
+          yield* hub.tools.addSkill(null, { content: skill("review") })
+          yield* a.tools.addSkill(null, { content: skill("release") })
+          yield* b.tools.addSkill(null, { content: skill("release", "Theirs.") })
+          yield* b.tools.addServer(null, { name: "local", config: { command: "local-mcp" } })
+        }).pipe(Effect.orDie),
       )
       yield* t.settle([t.hub, t.a])
       assert.deepStrictEqual(
