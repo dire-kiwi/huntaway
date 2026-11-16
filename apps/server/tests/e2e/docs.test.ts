@@ -1,19 +1,23 @@
 import { NodeServices } from "@effect/platform-node"
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem, Schema } from "effect"
+import { Effect, FileSystem, Option, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
 import { RpcClient } from "effect/rpc"
 import { SqlClient } from "effect/sql"
 import { createHmac } from "node:crypto"
 import { PluginId } from "@huntaway/contracts"
+import { makeLegacyBoard } from "@huntaway/testing"
+import { importLegacy } from "../../src/cli/importLegacy/run.ts"
 import { CliRpcs, httpRpcClientLayer } from "../../src/cli/rpc.ts"
-import { startServer } from "./launch.ts"
+import { seedParents } from "../importLegacy/importOld.ts"
+import { e2eDataDir, startServer } from "./launch.ts"
 
 // HE-42: the board's documents are the docs plugin's (`@dire-kiwi/docs-huntaway`, plugins/installed.ts), on a whole
 // server as it's built: a run publishes a document through the plugin's `docs` server, as its agent would, and the
 // plugin's page at the path the link it was given names shows it. The run is put straight into the server's database,
-// as mcp.test.ts does.
+// as mcp.test.ts does. And a switch over a board this build has run (`import-legacy --replace`, switch-board.sh) brings
+// the old board's documents to the plugin, which copied the replaced board's on its first start.
 
 const RUN = "e2e-docs-run"
 const AT = "2026-11-16T00:00:00.000Z"
@@ -84,6 +88,44 @@ describe("the docs plugin, on a whole server", () => {
       const page = yield* rpc["plugins.page"]({ plugin: PluginId.make("docs"), slot: "page", path: path.slice("/docs/".length), query: {}, task_id: null })
       assert.strictEqual(page.type, "html")
       assert.include(page.type === "html" ? page.html : "", "Ship it.")
+    }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, FetchHttpClient.layer])),
+  )
+
+  it.live("an import that replaces a board the plugin has run on shows the imported documents", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const dataDir = yield* e2eDataDir
+      // This build ran here first: the plugin made its database and copied the (empty) board's documents, once.
+      yield* Effect.scoped(startServer(["--no-agents"], {}, dataDir))
+      assert.isTrue(yield* fs.exists(`${dataDir}/plugins/docs/plugin.db`))
+
+      const old = `${yield* fs.makeTempDirectoryScoped()}/old`
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const board = yield* makeLegacyBoard(old)
+          yield* seedParents(board)
+          yield* board.insert("docs", { id: "d1", profile_id: "p1", slug: "plan", title: "The plan", created_at: AT, updated_at: AT, folder: "" })
+          yield* board.insert("doc_versions", { id: "v1", doc_id: "d1", number: 1, message: null, task_id: "t1", run_id: null, created_at: AT })
+          yield* board.insert("doc_pages", {
+            version_id: "v1",
+            path: "index",
+            title: "The plan",
+            format: "md",
+            source: "# The plan\n\nImported.\n",
+            position: 0,
+          })
+        }),
+      )
+      const imported = yield* importLegacy({ from: old, dataDir, check: false, force: false, rehearsal: false, database: Option.none(), replace: true })
+      assert.isNotNull(imported.replaced)
+      // The replaced board's plugin data went aside with it.
+      assert.isTrue(yield* fs.exists(`${imported.replaced ?? ""}/plugins/docs/plugin.db`))
+
+      const { port, token } = yield* startServer(["--no-agents"], {}, dataDir)
+      const rpc = yield* RpcClient.make(CliRpcs).pipe(Effect.provide(httpRpcClientLayer(`http://127.0.0.1:${port}`, token)))
+      const page = yield* rpc["plugins.page"]({ plugin: PluginId.make("docs"), slot: "page", path: "p1/d/plan/", query: {}, task_id: null })
+      assert.strictEqual(page.type, "html")
+      assert.include(page.type === "html" ? page.html : "", "Imported.")
     }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, FetchHttpClient.layer])),
   )
 })

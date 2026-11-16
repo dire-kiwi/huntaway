@@ -138,6 +138,8 @@ if [[ -n $pid ]] && [[ -r /proc/$pid/cmdline ]] && tr '\0' ' ' < "/proc/$pid/cmd
   kill -0 "$pid" 2>/dev/null && kill -KILL "$pid"
 fi
 rm -f "$dir"/board.db "$dir"/board.db-* "$dir"/import.json "$dir"/import-report.json
+# The plugins' data goes with the board it came from (HE-42): the docs plugin copies the imported documents on its next start.
+rm -rf "${dir:?}"/plugins
 # --force: a run the scrub marked exited is already so; one it could not see (a race with the snapshot) is interrupted.
 "${HUNTAWAY_TEST_BIN:-$root/apps/server/bin/huntaway}" import-legacy --from "$source_dir" --data-dir "$dir" --check --force ||
   echo "the import's check failed: see $dir/import-report.json (the server starts on what was imported)" >&2

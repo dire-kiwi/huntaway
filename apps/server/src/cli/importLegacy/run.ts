@@ -252,10 +252,12 @@ const dropDangling = Effect.fnUntraced(function* (sql: SqlClient.SqlClient, repo
 })
 
 /**
- * What `--replace` sets aside of the board already in the new folder: its database and import files, and every file an
- * import writes there (the identity, `ssh/`, attachments, skill sources and run folders), so the imported board starts
- * with none of the replaced one's and the replaced one can be put back as it was. Worktrees (`projects/`), profile
- * scratch folders and the tmux socket stay: worktrees are registered in their repositories by path.
+ * What `--replace` sets aside of the board already in the new folder: its database and import files, every file an
+ * import writes there (the identity, `ssh/`, attachments, skill sources and run folders), and its plugins' data
+ * (`plugins/`, HE-42: the docs plugin keeps the board's documents there, copied from `board.db` once, on its first start),
+ * so the imported board starts with none of the replaced one's, its plugins copy what was imported, and the replaced one
+ * can be put back as it was. Worktrees (`projects/`), profile scratch folders and the tmux socket stay: worktrees are
+ * registered in their repositories by path.
  */
 export const REPLACED_FILES: ReadonlyArray<string> = [
   "board.db",
@@ -270,6 +272,7 @@ export const REPLACED_FILES: ReadonlyArray<string> = [
   "attachments",
   "skill-sources",
   "runs",
+  "plugins",
 ]
 
 /** The folder `--replace` sets the board aside in: `replaced-<time>`, the time without colons. */

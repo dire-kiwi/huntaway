@@ -142,7 +142,10 @@ stays the board's:
 
 - **Its tables.** `docs*`/`doc_*` stay in the board's schema, written by the legacy import (`importLegacy`'s `docs`
   family), so a switch from the old server carries documents over: the plugin's first migration copies them
-  (`IMPORTABLE`). Nothing else reads or writes them.
+  (`IMPORTABLE`). Nothing else reads or writes them. That migration runs once per plugin database, so a plugin's data
+  (`plugins/`) is the board's it was copied from: `import-legacy --replace` and `scripts/switch-board.sh` set it aside
+  with `board.db` (`REPLACED_FILES`) and `--undo` puts it back, and `scripts/copy-live-board.sh` removes it with
+  `board.db`, so the plugin copies the imported tables on the next start (`tests/e2e/docs.test.ts`).
 - **The note.** A run whose launch serves a server named `docs` (`RunTold.docsServer`) is still told to publish
   write-ups there (`prompts/docsNote.ts`); the plugin's own instructions say how.
 - **Links.** A thread's links to `/docs/<profile id>/d/<slug>/` and a `publish_document` call's result open in the

@@ -46,7 +46,9 @@ check "into an empty folder: the old board" "$(profiles "$tmp/new")" "Board A"
 check "into an empty folder: the old identity" "$(cat "$tmp/new/host_id")" host-a
 check "into an empty folder: nothing set aside" "$(find "$tmp/new" -maxdepth 1 -name 'replaced-*' | wc -l)" 0
 
-mkdir -p "$tmp/new/projects/j1/worktrees/1-x" "$tmp/new/runs/r1"
+mkdir -p "$tmp/new/projects/j1/worktrees/1-x" "$tmp/new/runs/r1" "$tmp/new/plugins/docs"
+# The docs plugin's copy of board A's documents (HE-42): it goes with board A.
+echo a > "$tmp/new/plugins/docs/plugin.db"
 sleep 300 3<"$tmp/new/board.db" &
 holder=$!
 if switch --from "$tmp/b"; then got=switched; else got=refused; fi
@@ -68,6 +70,7 @@ check "over a board: the old identity" "$(cat "$tmp/new/host_id")" host-b
 check "over a board: worktrees stay" "$(test -d "$tmp/new/projects/j1/worktrees/1-x" && echo yes)" yes
 check "over a board: the board set aside" "$(profiles "$aside")" "Board A"
 check "over a board: its identity and runs set aside" "$(cat "$aside/host_id") $(test -d "$aside/runs/r1" && echo runs)" "host-a runs"
+check "over a board: its plugins' data set aside" "$(cat "$aside/plugins/docs/plugin.db") $(test -e "$tmp/new/plugins" && echo there || echo gone)" "a gone"
 
 # --undo takes only a replaced-* folder directly inside the data folder, and puts it back there.
 board_files="$(ls "$tmp/new" | sort | tr '\n' ' ')"
@@ -87,6 +90,7 @@ TMPDIR=$tmp HUNTAWAY_DATA_DIR=$tmp/elsewhere bash "$script" --undo "$aside" --ye
 check "--undo: the board back" "$(profiles "$tmp/new")" "Board A"
 check "--undo: its identity back" "$(cat "$tmp/new/host_id") $(cat "$tmp/new/auth_token")" "host-a token-host-a"
 check "--undo: its runs back" "$(test -d "$tmp/new/runs/r1" && echo yes)" yes
+check "--undo: its plugins' data back" "$(cat "$tmp/new/plugins/docs/plugin.db" 2>/dev/null)" a
 check "--undo: the folder set aside is gone" "$(test -e "$aside" && echo there || echo gone)" gone
 check "the old folders are as they were" "$(cat "$tmp/a/host_id") $(cat "$tmp/b/host_id")" "host-a host-b"
 
