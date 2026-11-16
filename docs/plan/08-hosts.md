@@ -48,6 +48,7 @@ that host's session.
 | `Relay`           | Tickets, and piping a client's socket to a host's                                                                                        |
 | `Uplink`          | Board tool calls from a host's agents up to a hub                                                                                        |
 | `Discovery`       | Finding hosts: mDNS for `_huntaway._tcp.local`, Tailscale peers, hosts that linked hosts know                                            |
+| `Mesh`            | The hosts the neighbours reach, by route (HE-46, [The mesh](#the-mesh))                                                                  |
 | `Ssh`             | The hub's key, the forced command, the port forward                                                                                      |
 | `SettingsSync`    | Settings shared between hosts, with version vectors                                                                                      |
 
@@ -261,6 +262,58 @@ closes the old gap where a linked host could not tell a phone from the board.
   linked host).
 - `hub.hosts.watch` streams the whole list on every change (a link's state, its heard time on each ping, the links
   themselves). `Host` gained `status` and `status_reason`, optional.
+
+## The mesh (HE-46)<a id="the-mesh"></a>
+
+A link used to go one way: the host that held it reached the other, never the other way back, and a host's directory
+listed only its own links (code.dire.nz showed omarchy, omarchy didn't show code.dire.nz). Now any hosts joined by links
+show as one board on every one of them.
+
+- **Both ways.** A link this host dials (`outbound`, `ssh`) with its **Mesh switch** on (`links.mesh`, on by default,
+  old links too) also holds `link.attach` open on its dialled connection, saying who it is. The host it dials takes that
+  as it takes a dial-in (`OpenStream` for each socket it wants, answered on its `/api/link/stream/<id>`, which now takes
+  its own board token as well as the hub token), and registers the link as `reverse`: the sealed session it attached
+  with shows that the other end holds its token, which is more than a dial-in shows. A host that dials in with the hub
+  token under the id of a `reverse` link is refused. A host that dialled in (`--hub`) asks its hub for a ticket on the
+  connection it attached on (`link.ticket { path, session }`), which the hub gives while its `inbound` link to that host
+  has the switch on; the host opens the hub's `/api/relay/<ticket>`, piped to the hub's own `path` with the session
+  sealed by the hub, and registers the hub as a `hub` link (a `links` row with its URL and no token) while its connection
+  lasts. Each of these is a `Live` like the others, so the relay, settings sync and discovery use them alike. The switch
+  turned off redials the link (or drops the host that dialled in, which dials again and gets no tickets).
+- **What it lets in.** With the switch on, the users of the other host can use this board as this host's users can use
+  theirs, and the hosts this one reaches. A host's agents still call board tools across hosts only as before: calls go
+  down only over `dialled` and `dial-in` connections, and up to a hub under its `uplink` switch (`Uplink.otherHosts`
+  leaves `reverse` and `hub` out).
+- **The directory** (`hosts/Mesh.ts`) is a path vector. Each connected neighbour with the `mesh` capability has its
+  `hub.hosts.watch` watched; every host it lists connected that this one doesn't link, isn't itself and isn't the
+  neighbour is taken as `mode: "mesh"`, with `through` (the neighbour) and `route` (the neighbour first, then that
+  entry's own route). An entry whose route already passes through this host is left out, so no route loops back and a
+  host that goes away leaves every directory as its neighbours' do. Of two routes the shorter is taken; none longer than
+  8. A host this one links itself is always its own entry, even while that link is down.
+- **The relay** to a mesh host asks the neighbour for a ticket (`hub.hosts.openRelay` with `as`: the client's kind,
+  scopes and device), and opens the neighbour's `/api/relay/<ticket>` over this host's way to it. A session of kind
+  `link` may now ask the relay, but only for a client of its own (`as`), never with more than its own scopes, never
+  `link`. A host answering `OpenStream` or a ticket may be asked for `/api/relay/<64 hex>` as well as `/api/rpc` and a
+  terminal (`STREAM_PATH`).
+- **Roles.** A host's `role` setting (`host_role`, not synced) is `projects` (the default) or `access`: a way in to the
+  board, like a public hub, which isn't offered for new projects (`holdsProjects` in the client: Add project's host
+  picker and the default host for new work). It is in `host.info`, `link.hello` and each `Host`; the web app reads each
+  host's own from its board (`hostSettings`), since a hello is only as new as the connection. Settings → Hosts sets it
+  on any host, through that host's session.
+- **Config sync across the mesh.** Settings sync's exchange runs over every connected `Live`, `reverse` and `hub` ones
+  included, and its merge is idempotent, commutative and associative, so a change crosses the mesh hop by hop. The
+  host's **global skills and MCP servers** sync as fields (`hosts/settingsSync/agentTools.ts`): `skill/<name>`
+  (`{ content, enabled }`) and `mcp_server/<name>` (`{ config, enabled, auto_allow }`), null when removed. The fields are
+  the host's own and those other hosts' entries name (`fields(known)`), so one added elsewhere is made here when it is
+  applied; one this host lacks and only an entry names makes no entry of its own (it isn't one it removed). A skill
+  whose text names another skill, one a skill source here has the name of, or a server whose config doesn't check is
+  kept and not applied. Skills from a skill source, projects' own skills and servers, and the profiles' switches stay
+  on their host. `AgentTools` emits `agent_tools_changed` after a change to a global skill, server or source, which the
+  observer and the exchange (here and on the hosts watching) take as a trigger, and the client's `agentTools.get`
+  reads again on.
+- Tested: `hosts/Mesh.test.ts` (the path vector), `hosts/SettingsSync.test.ts` (skills and servers), and
+  `tests/e2e/hosts-mesh.test.ts` (three servers in a chain by URL, a host dialled in to a hub, each switch turned off,
+  and skills and servers synced through a host that links neither end).
 
 ## Versions across a fleet
 

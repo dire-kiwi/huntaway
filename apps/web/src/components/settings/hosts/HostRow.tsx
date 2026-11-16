@@ -186,8 +186,8 @@ export function HostRow({ host }: { host: Host }) {
     void update({ id: LinkId.make(host.id), name: to })
   }
   const away = !host.local && host.status !== "connected" && host.status !== undefined
-  // A host this one reaches through another, or that links this one itself, is forgotten where its link is.
-  const own = host.mode === "outbound" || host.mode === "ssh" || host.mode === "inbound"
+  // A host this one reaches through another is forgotten where its link is; one that links this one (or that this one
+  // dials in to) comes back while that link is there.
   const through = useBoard((s) => (host.through ? (s.hosts.find((h) => h.id === host.through)?.name ?? null) : null))
   return (
     <div className="flex items-center gap-3 rounded-xl border border-line px-4 py-3" data-host={host.id}>
@@ -233,25 +233,23 @@ export function HostRow({ host }: { host: Host }) {
           <Button size="sm" variant="ghost" disabled={rename.busy} onClick={startRename}>
             {rename.busy && <Loader2 size={12} className="animate-spin" />} Rename
           </Button>
-          {own && (
-            <Button
-              size="sm"
-              variant="ghost"
-              title="Remove from this board (its data stays on the host)"
-              aria-label={`Remove ${host.name}`}
-              onClick={() =>
-                confirm.ask({
-                  title: `Remove ${host.name}`,
-                  body: `Remove ${host.name} from this board? Its projects and agents stay on that host.`,
-                  action: "Remove from board",
-                  danger: true,
-                  onConfirm: () => hubRpc("hub.hosts.remove", { id: LinkId.make(host.id) }),
-                })
-              }
-            >
-              <Trash2 size={13} />
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            title="Remove from this board (its data stays on the host)"
+            aria-label={`Remove ${host.name}`}
+            onClick={() =>
+              confirm.ask({
+                title: `Remove ${host.name}`,
+                body: `Remove ${host.name} from this board? Its projects and agents stay on that host.`,
+                action: "Remove from board",
+                danger: true,
+                onConfirm: () => hubRpc("hub.hosts.remove", { id: LinkId.make(host.id) }),
+              })
+            }
+          >
+            <Trash2 size={13} />
+          </Button>
         </>
       )}
       {confirm.dialog}
