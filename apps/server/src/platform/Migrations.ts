@@ -4,6 +4,7 @@ import { Backup } from "./Backup.ts"
 import { Db } from "./Db.ts"
 import type { Migration } from "./migration.ts"
 import { StartupError } from "./StartupError.ts"
+import { StartupProgress } from "./StartupProgress.ts"
 
 export interface NamedMigration extends Migration {
   readonly name: string
@@ -46,6 +47,7 @@ export const loadMigrations = Effect.gen(function* () {
 export const runMigrations = Effect.fn("Migrations.run")(function* (all: ReadonlyArray<NamedMigration>) {
   const db = yield* Db
   const backup = yield* Backup
+  const progress = yield* StartupProgress
   const sql = db.sql
   yield* sql`CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL) STRICT`.pipe(Effect.orDie)
   const appliedRows = yield* sql<{ readonly name: string }>`SELECT name FROM migrations ORDER BY name`.pipe(Effect.orDie)
@@ -63,7 +65,8 @@ export const runMigrations = Effect.fn("Migrations.run")(function* (all: Readonl
   if (first !== undefined && last !== undefined && applied.size > 0) {
     yield* backup.beforeMigrate([...applied].toSorted().at(-1) ?? "none", last.name)
   }
-  for (const m of pending) {
+  for (const [done, m] of pending.entries()) {
+    yield* progress({ step: "migrate", done, total: pending.length })
     if (m.foreignKeys === false) yield* sql`PRAGMA foreign_keys = OFF`.pipe(Effect.orDie)
     yield* db
       .tx(
@@ -94,6 +97,8 @@ export class Migrations extends Context.Service<Migrations, MigrationsShape>()("
     Effect.gen(function* () {
       const all = yield* loadMigrations
       const applied = yield* runMigrations(all)
+      // The database is ready; the rest of the server is built next.
+      yield* (yield* StartupProgress)({ step: "start" })
       return Migrations.of({ applied })
     }),
   )

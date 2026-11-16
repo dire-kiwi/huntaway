@@ -149,6 +149,29 @@ body {
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
+/* A progress bar whose share isn't known (HE-44): a stripe that runs along it. */
+@keyframes progress-slide {
+  from {
+    left: -40%;
+  }
+  to {
+    left: 100%;
+  }
+}
+.animate-progress-slide {
+  animation: progress-slide 1.4s ease-in-out infinite;
+}
+
+/* What shows while the board first loads, after a moment (so that a quick load shows nothing). */
+@keyframes fade-in-late {
+  from {
+    opacity: 0;
+  }
+}
+.animate-fade-in-late {
+  animation: fade-in-late 300ms ease-out 600ms backwards;
+}
+
 @keyframes slide-in-right {
   from {
     transform: translateX(100%);

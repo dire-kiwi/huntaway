@@ -2,6 +2,7 @@ import { Context, DateTime, Effect, FileSystem, Layer } from "effect"
 import { SqlClient } from "effect/sql"
 import { DataDir } from "./DataDir.ts"
 import { ServerConfig } from "./ServerConfig.ts"
+import { StartupProgress } from "./StartupProgress.ts"
 import { StartupError } from "./StartupError.ts"
 
 /** How many backups are kept besides the newest from before a version change. */
@@ -41,6 +42,11 @@ export class Backup extends Context.Service<Backup, BackupShape>()("huntaway-ser
         const target = `${dataDir.backups}/board-${fileName(from)}-to-${fileName(to)}-${stamp}Z.db`
         const made = yield* Effect.gen(function* () {
           yield* fs.makeDirectory(dataDir.backups, { recursive: true, mode: 0o700 })
+          // The copy holds this process's one thread, so the desktop app watches the file grow towards the pages in use.
+          const size = yield* sql<{
+            readonly n: number
+          }>`SELECT (page_count - freelist_count) * page_size AS n FROM pragma_page_count, pragma_freelist_count, pragma_page_size`
+          yield* (yield* StartupProgress)({ step: "backup", done: 0, total: size[0]?.n ?? 0, file: target })
           yield* sql`VACUUM INTO ${target}`
           yield* fs.chmod(target, 0o600)
           yield* prune

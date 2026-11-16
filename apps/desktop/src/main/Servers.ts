@@ -1,4 +1,5 @@
-import { Clock, Console, Context, Deferred, Effect, FileSystem, Layer, Option, Path, PubSub, Ref, Schema, SynchronizedRef } from "effect"
+import { Clock, Console, Context, Deferred, Effect, FileSystem, Layer, Option, Path, PubSub, Ref, Schema, SubscriptionRef, SynchronizedRef } from "effect"
+import type { StartupStep } from "@huntaway/contracts"
 import type { Digest } from "effect/crypto"
 import type { HttpClient } from "effect/http"
 import type { ChildProcessSpawner } from "effect/process"
@@ -8,7 +9,9 @@ import { Desktop } from "./Desktop.ts"
 import { BackupFailure, NoServer, StartFailed, startWithFallback } from "./fallback.ts"
 import { healthy } from "./health.ts"
 import { installKindOf, serverPath } from "./install.ts"
-import { spawnServer } from "./ServerProcess.ts"
+import { appStep, serverStep } from "./progress.ts"
+import type { StartupView } from "./progress.ts"
+import { protocolLine, spawnServer, startupStep } from "./ServerProcess.ts"
 import type { ServerHandle } from "./ServerProcess.ts"
 import { frameStamp } from "./stamp.ts"
 
@@ -33,10 +36,21 @@ export class ServerUnavailable extends Schema.TaggedError<ServerUnavailable, { r
 /** What the windows hear: a server is there now (windows on the error page load the board), or none, and why. */
 export type ServerNews = { readonly _tag: "Up" } | { readonly _tag: "Down"; readonly error: ServerUnavailable }
 
-/** The server's last lines of output kept for the error page. */
+/** The server's last lines of output kept for the progress and error pages. */
 export const LOG_LINES = 40
-/** How long a start waits for the ready line before it counts as slow. */
-export const READY_TIMEOUT = "15 seconds"
+/**
+ * How long a start waits for the ready line, from the last word of how far it has got (its `HUNTAWAY_PROGRESS` lines,
+ * and its backup's file growing), before it counts as slow.
+ */
+export const READY_TIMEOUT_MS = 15_000
+/** How often the backup's file is looked at while the server copies the database. */
+const BACKUP_WATCH = "250 millis"
+
+/** How far the server's start has got, for the progress page: the step, and the server's last lines of output. */
+export interface Startup extends StartupView {
+  /** The server's last lines (its log on stderr, and stdout but for its lines for the app) and the app's notes about its start. */
+  readonly log: ReadonlyArray<string>
+}
 /** A server started here that stops this many times in RESTART_WINDOW_MS is not started again by itself. */
 const MAX_RESTARTS = 5
 const RESTART_WINDOW_MS = 5 * 60_000
@@ -69,6 +83,8 @@ export class Servers extends Context.Service<
     readonly skipBackupOnce: Effect.Effect<void>
     /** The server's last lines of output and the shell's notes about its start. */
     readonly log: Effect.Effect<ReadonlyArray<string>>
+    /** How far the start of the server has got, and its output, as it changes. */
+    readonly startup: SubscriptionRef.SubscriptionRef<Startup>
     /** Whether a server started here is running, read at once: Electron's before-quit decides there and then. */
     readonly runningNow: () => boolean
     /**
@@ -92,7 +108,7 @@ export class Servers extends Context.Service<
       const server = yield* Ref.make<Option.Option<ServerHandle>>(Option.none())
       const stopping = yield* Ref.make(false)
       const failed = yield* Ref.make<ReadonlyArray<string>>([])
-      const log = yield* Ref.make<ReadonlyArray<string>>([])
+      const startup = yield* SubscriptionRef.make<Startup>({ ...appStep("Starting the server"), log: [] })
       const skipBackup = yield* Ref.make(false)
       const restarts = yield* Ref.make<ReadonlyArray<number>>([])
       const windows = yield* Ref.make(0)
@@ -108,7 +124,8 @@ export class Servers extends Context.Service<
           Effect.orElseSucceed(() => false),
         )
 
-      const keep = (line: string) => Ref.update(log, (lines) => [...lines, line].slice(-LOG_LINES))
+      const keep = (line: string) => SubscriptionRef.update(startup, (s) => ({ ...s, log: [...s.log, line].slice(-LOG_LINES) }))
+      const setStep = (view: StartupView) => SubscriptionRef.update(startup, (s) => ({ ...s, ...view }))
       /** A line about the server's start, in the app's log and the error page's server output. */
       const note = (line: string) => Console.error(line).pipe(Effect.andThen(keep(line)))
 
@@ -204,10 +221,44 @@ export class Servers extends Context.Service<
         Effect.gen(function* () {
           const what = choice.version === null ? (choice.bundled ? " bundled with the app" : "") : ` ${choice.version}`
           yield* Console.log(`starting the huntaway server${what}: ${choice.bin}`)
+          yield* setStep(appStep(`Starting the server${what}`))
           const env = yield* serverEnv
-          const handle = yield* spawnServer({ bin: choice.bin, args: serverArgs(), env }, (stream, line) =>
-            stream === "stdout" ? Console.log(line) : Console.error(line).pipe(Effect.andThen(line.trim() === "" ? Effect.void : keep(line))),
-          )
+          // When it last said how far it had got: the wait for its ready line runs from there.
+          const heard = yield* Ref.make(yield* Clock.currentTimeMillis)
+          const hear = Effect.flatMap(Clock.currentTimeMillis, (now) => Ref.set(heard, now))
+          const step = yield* Ref.make<StartupStep | null>(null)
+          const onLine = (stream: "stdout" | "stderr", line: string) =>
+            Effect.gen(function* () {
+              yield* stream === "stdout" ? Console.log(line) : Console.error(line)
+              if (line.trim() !== "" && !(stream === "stdout" && protocolLine(line))) yield* keep(line)
+              if (stream !== "stdout") return
+              if (line.includes("HUNTAWAY_READY ")) yield* setStep(appStep("Opening the board"))
+              const said = yield* startupStep(line)
+              if (Option.isNone(said)) return
+              yield* hear
+              yield* Ref.set(step, said.value)
+              yield* setStep(serverStep(said.value))
+              const file = said.value.file
+              if (said.value.step === "backup" && file !== undefined) yield* watchBackup(said.value, file).pipe(Effect.forkIn(layerScope))
+            })
+          /** The backup's file growing, until the server moves on: the copy holds its one thread, so it can't say. */
+          const watchBackup = (backup: StartupStep, file: string) =>
+            Effect.gen(function* () {
+              let last = -1
+              for (;;) {
+                yield* Effect.sleep(BACKUP_WATCH)
+                if ((yield* Ref.get(step)) !== backup) return
+                const size = yield* fs.stat(file).pipe(
+                  Effect.map((info) => Number(info.size)),
+                  Effect.orElseSucceed(() => 0),
+                )
+                if (size === last) continue
+                last = size
+                yield* hear
+                yield* setStep(serverStep(backup, size))
+              }
+            })
+          const handle = yield* spawnServer({ bin: choice.bin, args: serverArgs(), env }, onLine)
           yield* Ref.set(server, Option.some(handle))
           const timedOut = yield* Ref.make(false)
           const latest = Effect.map(Ref.get(server), (current) => Option.isSome(current) && current.value === handle)
@@ -215,6 +266,7 @@ export class Servers extends Context.Service<
           // What happens when it exits, whenever that is.
           yield* Effect.gen(function* () {
             const code = yield* Deferred.await(handle.exited)
+            yield* Ref.set(step, null)
             const wasLatest = yield* latest
             if (wasLatest) yield* Ref.set(server, Option.none())
             yield* Console.error(`huntaway server exited (${code ?? "signal"})`)
@@ -238,15 +290,22 @@ export class Servers extends Context.Service<
               backup === null ? `Server exited with ${code === null ? "a signal" : `code ${code}`}` : `It couldn't back up the database: ${backup.why}`
             return yield* new StartFailed({ message, early: true, backup })
           })
-          return yield* Effect.raceFirst(Deferred.await(handle.ready), exitedEarly).pipe(
-            Effect.timeoutOrElse({
-              duration: READY_TIMEOUT,
-              orElse: () =>
-                Ref.set(timedOut, true).pipe(
-                  Effect.andThen(Effect.fail(new StartFailed({ message: "Server did not start within 15s", early: false, backup: null }))),
-                ),
-            }),
-          )
+          // READY_TIMEOUT_MS with no word from it: a backup or a migration that goes on reporting is waited for.
+          const quiet = Effect.gen(function* () {
+            for (;;) {
+              const left = (yield* Ref.get(heard)) + READY_TIMEOUT_MS - (yield* Clock.currentTimeMillis)
+              if (left <= 0) break
+              yield* Effect.sleep(left)
+            }
+            yield* Ref.set(timedOut, true)
+            const doing = (yield* SubscriptionRef.get(startup)).step.toLowerCase()
+            return yield* new StartFailed({
+              message: `Server did not start: it said nothing for ${READY_TIMEOUT_MS / 1000}s while ${doing}`,
+              early: false,
+              backup: null,
+            })
+          })
+          return yield* Effect.raceFirst(Effect.raceFirst(Deferred.await(handle.ready), exitedEarly), quiet)
         }).pipe(
           Effect.tapError((error) =>
             Effect.gen(function* () {
@@ -262,7 +321,7 @@ export class Servers extends Context.Service<
        * comes up.
        */
       const startServer = Effect.gen(function* () {
-        yield* Ref.set(log, [])
+        yield* SubscriptionRef.update(startup, (s) => ({ ...s, log: [] }))
         if (desktop.resourcesDir !== null) {
           const trying = (yield* readAppState(appDir))["trying"]
           if (typeof trying === "string" && !(yield* Ref.get(failed)).includes(trying)) {
@@ -336,6 +395,7 @@ export class Servers extends Context.Service<
       /** The server to use: the one configured, one already running on the port, or one started here. */
       const resolveTarget = Effect.gen(function* () {
         if (desktop.file.serverUrl !== null) return { base: desktop.file.serverUrl.replace(/\/+$/, ""), token: desktop.file.token ?? "" }
+        yield* setStep(appStep("Looking for the server", `on port ${desktop.port}`))
         if (yield* healthy(base, desktop.port)) return { base, token: yield* readToken }
         return yield* startServer.pipe(
           Effect.map((token) => ({ base, token })),
@@ -375,6 +435,7 @@ export class Servers extends Context.Service<
           if (Option.isNone(current)) return false
           // Wait for it to exit, so that a relaunch (after an update) starts a new server rather than finding this one going down.
           if (!(yield* Ref.getAndSet(stopping, true))) {
+            yield* setStep(appStep("Stopping the server", "Agents keep running, and the next server picks them back up."))
             yield* current.value.stop.pipe(Effect.andThen(Ref.set(server, Option.none())), Effect.andThen(then), Effect.forkIn(layerScope))
           }
           return true
@@ -395,7 +456,8 @@ export class Servers extends Context.Service<
         news,
         setWindows: (count) => Ref.set(windows, count),
         skipBackupOnce: note("starting without a backup of the database, as asked").pipe(Effect.andThen(Ref.set(skipBackup, true))),
-        log: Ref.get(log),
+        log: Effect.map(SubscriptionRef.get(startup), (s) => s.log),
+        startup,
         runningNow: () => Option.isSome(Ref.getUnsafe(server)),
         quit: (then) => quit(then).pipe(Effect.provideContext(context)),
       })

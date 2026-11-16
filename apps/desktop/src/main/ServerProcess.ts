@@ -1,14 +1,16 @@
 import { Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Scope, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { StartupStep } from "@huntaway/contracts"
 import { BackupFailure, StartFailed } from "./fallback.ts"
 
 // One server started by the shell, through the launcher (`bin/huntaway serve …`, bundled or the checkout's): what it
-// says on stdout (`HUNTAWAY_READY {"port":…,"token":…}`, or `HUNTAWAY_BACKUP_FAILED {reason, why, dir}` before it
-// exits), the last lines of its output, and its exit. Stopping it is SIGTERM to the launcher, which stops node, and
+// says on stdout (`HUNTAWAY_PROGRESS {step, done, total, file}` as it starts, `HUNTAWAY_READY {"port":…,"token":…}`, or
+// `HUNTAWAY_BACKUP_FAILED {reason, why, dir}` before it exits), the last lines of its output, and its exit. Stopping it is SIGTERM to the launcher, which stops node, and
 // SIGKILL after 10 seconds. Only the launcher is signalled: agents run under ia-shim and outlive the server.
 
 const ReadyLine = Schema.fromJsonString(Schema.Struct({ port: Schema.Finite, token: Schema.NullOr(Schema.String) }))
 const BackupLine = Schema.fromJsonString(BackupFailure)
+const ProgressLine = Schema.fromJsonString(StartupStep)
 
 /** How long to wait for the last of a server's output after it exits (agents it started may hold its pipes). */
 const DRAIN = "500 millis"
@@ -48,6 +50,15 @@ export const backupFailure = (line: string): Effect.Effect<Option.Option<BackupF
   if (at < 0) return Effect.succeedNone
   return Schema.decodeEffect(BackupLine)(line.slice(at + "HUNTAWAY_BACKUP_FAILED ".length).trim()).pipe(Effect.option)
 }
+
+/** The step in a `HUNTAWAY_PROGRESS {…}` line (contracts' `StartupStep`), or none. */
+export const startupStep = (line: string): Effect.Effect<Option.Option<StartupStep>> => {
+  if (!line.startsWith("HUNTAWAY_PROGRESS ")) return Effect.succeedNone
+  return Schema.decodeEffect(ProgressLine)(line.slice("HUNTAWAY_PROGRESS ".length).trim()).pipe(Effect.option)
+}
+
+/** Whether a line of the server's stdout is one of its lines for the app (they aren't shown: the ready line has the token). */
+export const protocolLine = (line: string): boolean => line.includes("HUNTAWAY_READY ") || line.startsWith("HUNTAWAY_PROGRESS ")
 
 /**
  * Start `command`, reporting each line of its output to `onLine`. Fails (`early`) if it can't be run at all. The

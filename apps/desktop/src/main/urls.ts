@@ -1,3 +1,5 @@
+import { Predicate } from "effect"
+
 // The windows' rules about addresses, as plain functions (docs/plan/inventory/10-web-client.md §9.1, Navigation and the
 // browser pane).
 
@@ -26,11 +28,19 @@ export const boardUrlPath = (url: string, boardOrigin: string | null): string | 
   return u.pathname + u.search + u.hash
 }
 
-/** The windows a relaunch saved, from `relaunch-windows.json`'s contents: board paths, else one window on the home page. */
+/**
+ * The windows a relaunch saved, from `relaunch-windows.json`'s contents (`{windows, heading}`, or a list of paths as an
+ * app before HE-44 wrote it): board paths, else one window on the home page.
+ */
 export const windowsToReopen = (saved: unknown): ReadonlyArray<string> => {
-  const list = Array.isArray(saved) ? saved.filter((p): p is string => typeof p === "string" && p.startsWith("/")) : []
+  const paths = Predicate.hasProperty(saved, "windows") ? saved.windows : saved
+  const list = Array.isArray(paths) ? paths.filter((p): p is string => typeof p === "string" && p.startsWith("/")) : []
   return list.length > 0 ? list : ["/"]
 }
+
+/** What the progress page says after the relaunch ("Starting Huntaway 0.0.5"), from the same file; null for the usual. */
+export const relaunchHeading = (saved: unknown): string | null =>
+  Predicate.hasProperty(saved, "heading") && typeof saved.heading === "string" && saved.heading.trim() !== "" ? saved.heading.slice(0, 200) : null
 
 /** The number for the dock or taskbar badge, from whatever the page sent. */
 export const badgeCount = (n: unknown): number => Math.max(0, Math.floor(Number(n)) || 0)

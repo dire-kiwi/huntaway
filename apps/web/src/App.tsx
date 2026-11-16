@@ -1,6 +1,7 @@
 import { isAssistant, isGroupTask, isRoutine } from "@huntaway/client"
 import { clsx } from "clsx"
 import { lazy, Suspense, useEffect } from "react"
+import { Loader2 } from "lucide-react"
 import { activeProfile, loadActiveProfile } from "./activeProfile"
 import { Board, GroupBoard, ProfileBoard } from "./components/board/Board"
 import { profileNames, useProfileName } from "./components/boardHelpers"
@@ -83,10 +84,10 @@ export function App() {
   }, [drawerOpen])
 
   if (authed === false) return <TokenScreen />
-  if (authed === null) return null
+  if (authed === null) return <BoardLoading />
   // A board with none of its own can still link hosts that have some (Settings → Hosts, M7).
   if (profiles.length === 0) {
-    if (!loaded) return null
+    if (!loaded) return <BoardLoading />
     return route.name === "settings" ? <Settings tab={route.tab} /> : <Onboarding />
   }
 
@@ -137,6 +138,15 @@ export function App() {
         {modal !== null && <TaskModal key={modal} taskId={modal} />}
         <UnhandledErrors />
       </div>
+    </div>
+  )
+}
+
+/** While the board first loads (a big one takes a while after a restart): a word after a moment, rather than a blank page. */
+function BoardLoading() {
+  return (
+    <div className="animate-fade-in-late flex h-full items-center justify-center gap-2 text-[13px] text-muted" role="status">
+      <Loader2 size={14} className="animate-spin text-accent" /> Loading the board…
     </div>
   )
 }

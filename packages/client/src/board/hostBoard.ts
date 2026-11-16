@@ -36,6 +36,8 @@ export interface RestartState {
   readonly phase: string
   readonly error: string | null
   readonly log: ReadonlyArray<string>
+  /** The release download it follows, from the host's `release_download` events while it runs (HE-44). */
+  readonly download?: { readonly bytes: number; readonly total: number | null } | null | undefined
 }
 
 /** Everything one host's board stream has said so far. */
@@ -267,14 +269,31 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
       // A new job starts its log afresh.
       return {
         ...next,
-        restart: { phase: message.phase, error: message.error, log: message.phase === "starting" ? [] : (board.restart?.log ?? []) },
+        restart: {
+          phase: message.phase,
+          error: message.error,
+          log: message.phase === "starting" ? [] : (board.restart?.log ?? []),
+          download: message.phase === "starting" ? null : (board.restart?.download ?? null),
+        },
       }
     case "restart_log": {
       const log = [...(board.restart?.log ?? []), message.line]
-      return { ...next, restart: { phase: board.restart?.phase ?? "starting", error: board.restart?.error ?? null, log: log.slice(-500) } }
+      return {
+        ...next,
+        restart: {
+          phase: board.restart?.phase ?? "starting",
+          error: board.restart?.error ?? null,
+          log: log.slice(-500),
+          download: board.restart?.download ?? null,
+        },
+      }
     }
-    case "release_checked":
     case "release_download":
+      // A restart that follows the download (an Update to a release that isn't staged yet) shows how far it has got.
+      if (board.restart !== null && board.restart.phase !== "failed")
+        return { ...next, restart: { ...board.restart, download: message.download && { bytes: message.download.bytes, total: message.download.total } } }
+      return next
+    case "release_checked":
       // What a release check found is read where Settings shows it (`admin.status`).
       return next
     case "checkpoints":

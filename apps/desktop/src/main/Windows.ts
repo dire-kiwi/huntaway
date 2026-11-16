@@ -1,4 +1,4 @@
-import { Console, Effect, FiberSet, FileSystem, Option, Path, Predicate, Ref, Schema, Stream } from "effect"
+import { Console, Effect, Fiber, FiberSet, FileSystem, Option, Path, Predicate, Ref, Schema, Stream, SubscriptionRef } from "effect"
 import type { Digest } from "effect/crypto"
 import type { HttpClient } from "effect/http"
 import type { ChildProcessSpawner } from "effect/process"
@@ -9,16 +9,30 @@ import type { UpdateKind } from "../shared/versions.ts"
 import { Desktop, releaseUpdatesOff } from "./Desktop.ts"
 import { errorPage } from "./errorPage.ts"
 import { installKindOf } from "./install.ts"
+import { progressPage, progressScript } from "./progressPage.ts"
+import type { ProgressState } from "./progressPage.ts"
 import { Servers, ServerUnavailable } from "./Servers.ts"
 import { updateShell } from "./shellUpdate.ts"
 import type { Progress } from "./shellUpdate.ts"
 import { shellStamp } from "./stamp.ts"
-import { badgeCount, boardUrlPath, BROWSER_PERMISSIONS, isBrowsable, isWebUrl, originOf, RETRY_URL, SKIP_BACKUP_URL, windowsToReopen } from "./urls.ts"
+import {
+  badgeCount,
+  boardUrlPath,
+  BROWSER_PERMISSIONS,
+  isBrowsable,
+  isWebUrl,
+  originOf,
+  relaunchHeading,
+  RETRY_URL,
+  SKIP_BACKUP_URL,
+  windowsToReopen,
+} from "./urls.ts"
 
 // The board's windows (docs/plan/inventory/10-web-client.md §9.1, Windows; HA-298), their navigation rules, the browser
 // pane, the menu, the IPC the preload calls, relaunching and the app's own package update. Each window loads the board
 // from the server `Servers` finds (`<base><path>?token=<token>`); one that can't shows the error page and keeps where it
-// was, for when it loads the board again.
+// was, for when it loads the board again. While it waits for a server (and while the app quits to relaunch) it shows the
+// progress page (HE-44), which follows `Servers.startup`.
 
 /** The browser pane's pages' session: their cookies and storage are kept apart from the board's (and from the app's preload). */
 const BROWSER_PARTITION = "persist:huntaway-browser"
@@ -38,7 +52,11 @@ const bootView = (): { readonly running: string | null; readonly chosen: string 
   return { running: versionOf(Predicate.hasProperty(boot, "running") ? boot.running : null), chosen: versionOf(chosen) }
 }
 
-const onErrorPage = (win: BrowserWindow) => win.webContents.getURL().startsWith("data:")
+/** A window waiting this long for its server shows the progress page: one there already loads the board without it. */
+const PROGRESS_AFTER = "300 millis"
+
+/** What a window shows: the board, or one of the app's own pages. */
+type Showing = "board" | "progress" | "error"
 
 const loadUrl = (win: BrowserWindow, url: string) =>
   Effect.tryPromise({ try: () => win.loadURL(url), catch: String }).pipe(
@@ -59,6 +77,9 @@ export const runWindows = Effect.gen(function* () {
   /** Every board window, and the page each is to load (path and query: where it was, for one on the error page now). */
   const boards = new Set<BrowserWindow>()
   const wanted = new WeakMap<BrowserWindow, string>()
+  const showing = new WeakMap<BrowserWindow, Showing>()
+  /** What the progress page says the app is doing as a whole. */
+  const heading = yield* Ref.make("Starting Huntaway")
   /** The board's origin once it has loaded: the one navigation the windows take. */
   const boardOrigin = yield* Ref.make<string | null>(null)
   /** A relaunch is under way: each window's board reloads after an update, and only one relaunch is to start. */
@@ -72,6 +93,7 @@ export const runWindows = Effect.gen(function* () {
   const shellUpdateKind: UpdateKind | null = releaseUpdatesOff(desktop) ? null : updateKind(install)
 
   const openBoards = () => [...boards].filter((win) => !win.isDestroyed())
+  const onAppPage = (win: BrowserWindow) => showing.get(win) === "error" || showing.get(win) === "progress"
   const origin = () => Ref.getUnsafe(boardOrigin)
   const wantedPath = (win: BrowserWindow) => boardUrlPath(win.webContents.getURL(), origin()) ?? wanted.get(win) ?? "/"
 
@@ -80,14 +102,45 @@ export const runWindows = Effect.gen(function* () {
     Effect.gen(function* () {
       if (win.isDestroyed()) return
       wanted.set(win, wantedPath(win))
+      showing.set(win, "error")
       const page = errorPage({ message: error.message, title: error.title, backup: error.backup, log: yield* servers.log, configPath: desktop.configPath })
       yield* loadUrl(win, page).pipe(Effect.ignore)
+    })
+
+  const progressState = Effect.gen(function* () {
+    const startup = yield* SubscriptionRef.get(servers.startup)
+    return { heading: yield* Ref.get(heading), step: startup.step, detail: startup.detail, share: startup.share, log: startup.log } satisfies ProgressState
+  })
+
+  /** Shows `state` in `win`'s progress page, once it has loaded. */
+  const pushProgress = (win: BrowserWindow, state: ProgressState) =>
+    win.isDestroyed() || showing.get(win) !== "progress" || win.webContents.isLoading()
+      ? Effect.void
+      : progressScript(state).pipe(
+          Effect.flatMap((script) => Effect.tryPromise({ try: () => win.webContents.executeJavaScript(script), catch: String })),
+          Effect.ignore,
+        )
+
+  /** Shows the progress page in `win` (which follows the start from then on), keeping where it was on the board. */
+  const showProgress = (win: BrowserWindow) =>
+    Effect.gen(function* () {
+      if (win.isDestroyed()) return
+      if (showing.get(win) === "progress") {
+        yield* pushProgress(win, yield* progressState)
+        return
+      }
+      wanted.set(win, wantedPath(win))
+      showing.set(win, "progress")
+      yield* loadUrl(win, yield* progressPage(yield* progressState)).pipe(Effect.ignore)
     })
 
   /** Loads the board in `win`, from the server there is (found or started), or the error page. */
   const load = (win: BrowserWindow) =>
     Effect.gen(function* () {
+      // A server that takes a moment (one starting, or a start that waits on another) shows the progress page meanwhile.
+      const progress = yield* Effect.sleep(PROGRESS_AFTER).pipe(Effect.andThen(showProgress(win)), Effect.forkChild)
       const found = yield* Effect.result(servers.resolve)
+      yield* Fiber.interrupt(progress)
       if (found._tag === "Failure") {
         yield* showError(win, found.failure)
         return
@@ -103,23 +156,34 @@ export const runWindows = Effect.gen(function* () {
         return
       }
       if (found.success.token !== "") url.searchParams.set("token", found.success.token)
+      showing.set(win, "board")
       yield* loadUrl(win, url.href).pipe(Effect.ignore)
     })
 
-  /** Loads the board again in every window on the error page: the server is there now, or Retry was clicked. */
-  const reloadErrored = Effect.suspend(() => Effect.forEach(openBoards().filter(onErrorPage), load, { concurrency: "unbounded", discard: true }))
+  /** Loads the board again in every window on the error or progress page: the server is there now, or Retry was clicked. */
+  const reloadErrored = Effect.suspend(() => Effect.forEach(openBoards().filter(onAppPage), load, { concurrency: "unbounded", discard: true }))
 
-  const saveWindows = Effect.gen(function* () {
-    const text = yield* Schema.encodeEffect(Json)(openBoards().map(wantedPath)).pipe(Effect.orDie)
-    yield* fs
-      .writeFileString(windowsFile, text)
-      .pipe(Effect.catch((error) => Console.error(`couldn't save the windows to open after the relaunch: ${error.message}`)))
-  })
+  /** The windows to open after the relaunch, and what their progress page is to say. */
+  const saveWindows = (next: string) =>
+    Effect.gen(function* () {
+      const text = yield* Schema.encodeEffect(Json)({ windows: openBoards().map(wantedPath), heading: next }).pipe(Effect.orDie)
+      yield* fs
+        .writeFileString(windowsFile, text)
+        .pipe(Effect.catch((error) => Console.error(`couldn't save the windows to open after the relaunch: ${error.message}`)))
+    })
+
+  /** Every window shows the progress page, saying `now`: the app quits to relaunch, once its server has stopped. */
+  const showQuitting = (now: string) =>
+    Effect.gen(function* () {
+      yield* Ref.set(heading, now)
+      yield* Effect.forEach(openBoards(), showProgress, { concurrency: "unbounded", discard: true })
+    })
 
   /** Start the app again, as the package does it: through install.sh's launcher, the AppImage's file (its mount goes away on quitting), or itself. */
   const relaunch = Effect.gen(function* () {
     if (yield* Ref.getAndSet(relaunching, true)) return
-    yield* saveWindows
+    yield* saveWindows("Restarting Huntaway")
+    yield* showQuitting("Restarting Huntaway")
     if (desktop.launcher !== null) app.relaunch({ execPath: desktop.launcher, args: process.argv.slice(2) })
     else if (desktop.appimage !== null) app.relaunch({ execPath: desktop.appimage, args: process.argv.slice(1) })
     else app.relaunch()
@@ -210,8 +274,12 @@ export const runWindows = Effect.gen(function* () {
       // Should the preload miss a frame, WebRTC there sends no UDP (STUN, TURN over UDP) that isn't proxied (HA-269).
       win.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp")
       attachBrowser(win)
+      // The board's page loaded (a rebuild or an Update reloads it): its shell may have changed. The app's own pages
+      // don't count, so that reloading the progress page while a new version starts doesn't relaunch the app. The
+      // progress page, loaded (or reloaded), shows where the start is now.
       win.webContents.on("did-finish-load", () => {
-        run(checkShell)
+        if (showing.get(win) === "progress") run(Effect.flatMap(progressState, (state) => pushProgress(win, state)))
+        else if (!onAppPage(win)) run(checkShell)
       })
       // A page of the board opened in a new tab opens in a window of the app. Other links open in the browser, web links
       // only: a plan or artifact is a page an agent wrote, so file:, custom schemes and the like stay out of the OS handlers.
@@ -276,7 +344,8 @@ export const runWindows = Effect.gen(function* () {
       yield* Console.log(`installed the desktop app v${version}; relaunching`)
       yield* progress({ phase: "restarting", version })
       yield* Ref.set(relaunching, true)
-      yield* saveWindows
+      yield* saveWindows(`Starting Huntaway ${version}`)
+      yield* showQuitting(`Installing Huntaway ${version}`)
       // The AppImage's new file is at the same path, and so is the package's app in /opt.
       if (shellUpdateKind === "appimage" && desktop.appimage !== null) app.relaunch({ execPath: desktop.appimage, args: process.argv.slice(1) })
       else app.relaunch()
@@ -348,6 +417,32 @@ export const runWindows = Effect.gen(function* () {
     run(servers.quit(Effect.sync(() => app.quit())))
   })
 
+  // The progress pages follow the start, its output too.
+  yield* SubscriptionRef.changes(servers.startup).pipe(
+    Stream.runForEach(() =>
+      Effect.flatMap(progressState, (state) =>
+        Effect.forEach(
+          openBoards().filter((win) => showing.get(win) === "progress"),
+          (win) => pushProgress(win, state),
+          { concurrency: "unbounded", discard: true },
+        ),
+      ),
+    ),
+    Effect.forkScoped,
+  )
+  // The board's restart dialog hears each step of a server that starts again in place (a Restart or an Update), so
+  // that it can say how far it has got while the server can't.
+  yield* SubscriptionRef.changes(servers.startup).pipe(
+    Stream.map(({ step, detail, share }) => ({ step, detail, share })),
+    Stream.changesWith((a, b) => a.step === b.step && a.detail === b.detail && a.share === b.share),
+    Stream.runForEach((view) =>
+      Effect.sync(() => {
+        for (const win of openBoards()) if (showing.get(win) === "board" && !win.webContents.isLoading()) win.webContents.send("huntaway:server-progress", view)
+      }),
+    ),
+    Effect.forkScoped,
+  )
+
   // The windows hear about the server: one there now loads the board where the error page is; none shows why, everywhere.
   yield* Stream.fromPubSub(servers.news).pipe(
     Stream.runForEach((news) =>
@@ -360,7 +455,9 @@ export const runWindows = Effect.gen(function* () {
   // the others are made, so that only it starts the server.
   const saved = yield* fs.readFileString(windowsFile).pipe(Effect.option)
   if (Option.isSome(saved)) yield* fs.remove(windowsFile, { force: true }).pipe(Effect.ignore)
-  const reopen = windowsToReopen(Option.isSome(saved) ? Option.getOrUndefined(yield* Schema.decodeEffect(Json)(saved.value).pipe(Effect.option)) : undefined)
+  const savedValue = Option.isSome(saved) ? Option.getOrUndefined(yield* Schema.decodeEffect(Json)(saved.value).pipe(Effect.option)) : undefined
+  const reopen = windowsToReopen(savedValue)
+  yield* Ref.set(heading, relaunchHeading(savedValue) ?? "Starting Huntaway")
   const [first = "/", ...more] = reopen
   yield* createWindow(first)
   yield* Effect.forEach(more, (at) => createWindow(at), { concurrency: 1, discard: true })

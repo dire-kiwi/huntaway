@@ -7,7 +7,7 @@ import type { IpcRendererEvent } from "electron"
 // (RTCPeerConnection, which Chromium doesn't hold to their Content-Security-Policy), so that a page can't send data to a
 // STUN or TURN server of its choosing (HA-269). Taken away in each frame, including the srcdoc frames a page makes
 // itself, it can't be got back from another. The main process checks the sender's origin for the members that act on
-// the board (openWindow, updateShell). The six members are the old shell's, unchanged.
+// the board (openWindow, updateShell). The six members are the old shell's, unchanged; `onServerProgress` is new (HE-44).
 
 /** What `updateShell` reports as it goes. */
 interface Progress {
@@ -47,6 +47,19 @@ if (process.isMainFrame) {
           return result
         })
         .finally(() => ipcRenderer.removeListener("huntaway:update-shell-progress", listener))
+    },
+    /**
+     * How far the server this app started has got as it starts again (a Restart or an Update runs it in place): the
+     * restart dialog's wait. `onProgress` gets {step, detail, share} as it changes; the function returned stops that.
+     */
+    onServerProgress: (onProgress: (progress: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, progress: unknown) => {
+        if (typeof onProgress === "function") onProgress(progress)
+      }
+      ipcRenderer.on("huntaway:server-progress", listener)
+      return () => {
+        ipcRenderer.removeListener("huntaway:server-progress", listener)
+      }
     },
   })
 } else {
