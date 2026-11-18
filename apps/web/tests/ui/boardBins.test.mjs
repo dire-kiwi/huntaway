@@ -81,14 +81,14 @@ test("Ready for merge is a label that takes dropped tasks and shows the queue", 
 test("Reminders keeps tasks waiting on a reminder out of their columns", async () => {
   const later = new Date(Date.now() + 3 * 86400_000).toISOString()
   const past = new Date(Date.now() - 60_000).toISOString()
-  const make = async (title, patch = {}) => {
+  const plain = async (title, patch = {}) => {
     const t = await server.rpc("tasks.create", { task: { project_id: project.id, title } })
     return Object.keys(patch).length ? server.rpc("tasks.update", { id: t.id, patch }) : t
   }
   const [waiting, due, free] = [
-    await make("Ring the miller", { remind_at: later }),
-    await make("Pay the miller", { remind_at: past }),
-    await make("Oil the wheel"),
+    await plain("Ring the miller", { remind_at: later }),
+    await plain("Pay the miller", { remind_at: past }),
+    await plain("Oil the wheel"),
   ]
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
