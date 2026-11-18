@@ -246,7 +246,9 @@ two tool-call test cases.
   one up through a `setUp` the caller gives), `branches`, `github`/`pushRemote`/`pushRepo` (the old `remote.ts`, `ssh -G`
   through `Proc` for SSH aliases; 4.5 builds pull requests on them), `taskBase`/`stackedBase` (`merges_into` and
   `start_from` followed through merged tasks, 16 deep), `remoteBase`, `unstack`, `changesDir`, `changesBase`,
-  `workScope` (4.6's reviews), `keepStarts`, `diff` (`git.taskDiff`), `hasWorkToMerge`, `forgetStart`; `startRef(id)`.
+  `workScope` (4.6's reviews), `keepStarts`, `diff` (`git.taskDiff`), `hasWorkToMerge`, `mergeWork` (HE-51,
+  `git.mergeWork`: the same count of commits not on the base branch, and of uncommitted files, with a branch or worktree
+  that's gone said rather than failed), `forgetStart`; `startRef(id)`.
   `unmerged` is 4.5's (it needs the pull request's state).
 - **`Worktrees`** (`git/Worktrees.ts`): `setup`, `teardown`, `removeIfMerged`, `removeMerged`, `agentInWorktree` (its
   `running` column or a review thread's), `forDeletion`, `deleteProject`, `deleteProfile`, `recover`, `withLock`. One at a time per task
@@ -279,10 +281,15 @@ two tool-call test cases.
   there, else `none`. The old server left both as they were.
 - **RPCs**: `git.setupWorktree` (`Conflict` `agent_running`; `Invalid` `worktree` with the reason, the old 400),
   `git.teardownWorktree {force?, delete_branch?}` (`Conflict` with the new reason `worktree_kept`, the old 409),
-  `git.taskDiff` (`read`); `projects.branches` (`read`), `projects.removeMergedWorktrees`, `projects.setupThread
+  `git.taskDiff`, `git.mergeWork` (HE-51) (`read`); `projects.branches` (`read`), `projects.removeMergedWorktrees`, `projects.setupThread
   {message?}` (`runs/SetupThread`; the instructions are `prompts/setupThread.ts`). Arrays are returned as they are, not
   in the old `{branches}`/`{results}` objects.
-- **Web**: the Details panel's Set up and Tear down… (the old `TeardownModal`) are back. The board's setup thread for a
+- **Web**: the Details panel's Set up and Tear down… (the old `TeardownModal`) are back. HE-51: a task in review is
+  marked on its card (and list row) with what it has to merge, from `git.mergeWork` (`board/MergeWork.tsx`): the
+  commits not on its base branch and the uncommitted files in the merge colour, "nothing to merge", or "branch gone" /
+  a worktree that's gone; its key items and Details say it in words. One query per task, read again as its run, worktree,
+  branch or column changes, after a Changes tab action, every minute while the page is visible and on focus: no git on
+  a render. The board's setup thread for a
   folder that isn't ready (the old `task/WorktreeSetup`) is not: its RPC is there.
 - **Not here**: relocation's hold on the project's folder during a setup and its fingerprint (`Relocation`);
   terminals killed at teardown (M6, marked in `teardown`); checkpoints dropped at teardown and at a project's deletion

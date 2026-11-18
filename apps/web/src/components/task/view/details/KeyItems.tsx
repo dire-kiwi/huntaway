@@ -6,6 +6,8 @@ import { Dependencies } from "../../../board/Dependencies"
 import { IncomingSection, MergesIntoSection, useIncoming } from "../../../board/MergesInto"
 import { levelsTitle, stackedBelowId, stackedOnTitle, useLevels } from "../../../board/StackedOn"
 import { LevelsSection, StackedOnSection } from "../../../board/stackSections"
+// HE-51
+import { MergeWorkLine } from "../../../board/MergeWork"
 import { ActivityTime, BranchIcon, cost, PrIcon, PreviewDot, ResolutionBadge, RunningDot, StatusIcon } from "../../../ui"
 import { FailedChecks } from "./FailedChecks"
 // HE-34
@@ -130,6 +132,7 @@ export function KeyItems({ task, className }: { task: Task; className: string })
               <span className="min-w-0 break-all">{task.branch}</span>
             </div>
           )}
+          <MergeWorkLine task={task} className="mt-1.5" />
           {(worktreeBusy || task.worktree_state === "error") && (
             <div className={clsx("mt-1.5 text-[12px]", worktreeBusy ? "text-st-progress" : "text-red-300")}>
               Worktree {task.worktree_state.replace("_", " ")}

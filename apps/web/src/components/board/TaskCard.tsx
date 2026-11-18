@@ -22,6 +22,8 @@ import { withKeys } from "./ConfirmTodos"
 import { DependencyBadge } from "./Dependencies"
 import { FanoutBadge } from "./Fanout"
 import { IncomingBadge, MergesIntoBadge } from "./MergesInto"
+// HE-51
+import { MergeWorkMark } from "./MergeWork"
 import { LevelsBadge, StackedOnBadge, useStackWait } from "./StackedOn"
 import { TaskMarks } from "../task/Reminders"
 import { TaskTypeBadge } from "../task/documentInfo"
@@ -324,6 +326,7 @@ export const TaskCard = memo(function TaskCard({
           {task.branch && <BranchIcon branch={task.branch} className={task.worktree_state === "ready" ? "text-muted" : ""} />}
           {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
           <ChecksMark task={task} />
+          <MergeWorkMark task={task} />
           {task.external_links.map((l) => (
             <ExternalLinkIcon key={l.id} link={l} />
           ))}
@@ -395,6 +398,7 @@ export const TaskRow = memo(function TaskRow({
         {task.branch && <BranchIcon branch={task.branch} className={task.worktree_state === "ready" ? "text-muted" : ""} />}
         {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
         <ChecksMark task={task} />
+        <MergeWorkMark task={task} />
         {task.external_links.map((l) => (
           <ExternalLinkIcon key={l.id} link={l} />
         ))}
