@@ -96,7 +96,7 @@ export function useSubmit(p: {
       attach.clear()
       setLinks(theirs.links ?? [])
       setPending(theirs.fanout ?? null)
-      if (attach.enabled) attach.restore(theirs.files)
+      attach.restore(theirs.files)
       setCreated(made)
     }
   })
