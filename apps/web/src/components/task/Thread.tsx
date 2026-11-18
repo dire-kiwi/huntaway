@@ -15,12 +15,15 @@ import { Composer, rewound } from "./thread/Composer"
 import { RewindDialog } from "./Rewind"
 import { useTurns } from "./turns"
 import { BackgroundBanner } from "./thread/Background"
+import { SummaryBar } from "./Review"
 
 type ThreadProps = {
   task: Task
   cwd?: string | null | undefined
   placeholder?: string | undefined
   empty?: ReactNode
+  /** Show the summaries of the task's changes, folded, over the composer (HE-55). */
+  summaries?: boolean | undefined
 }
 
 /**
@@ -89,6 +92,7 @@ function ThreadView({
   cwd,
   placeholder,
   empty,
+  summaries,
   model,
   paging,
   notice,
@@ -282,6 +286,7 @@ function ThreadView({
             )}
           </div>
         </div>
+        {summaries && <SummaryBar task={task} />}
         {/* What the agent left going (a dev server), and the servers its processes listen on. */}
         <BackgroundBanner task={task} />
         {/* A fresh draft per task: its attachments are on this task's host. */}
