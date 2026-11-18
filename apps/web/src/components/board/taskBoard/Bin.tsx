@@ -1,5 +1,6 @@
 import { clsx } from "clsx"
 import { useEffect, useId, useLayoutEffect, useRef, useState, type DragEvent, type ReactNode } from "react"
+import { after } from "../../../state/timers"
 
 /** How far a bin's popover stays from the window's edges. */
 const EDGE = 8
@@ -93,15 +94,18 @@ export function Bin({
   }, [shown])
 
   // A drag ends with a drop anywhere, or none: the popover it opened closes. A card dropped in a column may be gone
-  // from the popover by the time its drag ends, so the end isn't heard from the card.
+  // from the popover by the time its drag ends, so the end isn't heard from the card. It closes once the drop has been
+  // handled: this hears it first (capture), and closed now (React draws it before handing the drop on) a drop in the
+  // popover would find it gone. Not put off by a change to `over` meanwhile (the label's drop clears it).
   useEffect(() => {
     if (!over && !carrying) return undefined
-    const end = () => {
+    const reset = () => {
       setOver(false)
       setCarrying(false)
       // The pointer that was on the label when a card was picked up from its popover is elsewhere now.
       if (carrying) setShown((s) => (s === "hover" ? null : s))
     }
+    const end = () => void after(0, reset)
     window.addEventListener("drop", end, true)
     window.addEventListener("dragend", end, true)
     return () => {

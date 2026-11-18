@@ -34,6 +34,29 @@ const merging = (id) =>
     assert.ok(t.status === "ready_for_merge" || t.merging, JSON.stringify({ status: t.status, merging: t.merging }))
   }, 10_000)
 
+/**
+ * Drags `source` over `label` (which opens its popover) and on to `target()` in the popover (`dy` from its top) with
+ * the mouse, as dragTo can't go by way of the label. Nothing is clicked: the popover isn't pinned.
+ */
+const viaLabel = async (page, source, label, target, dy) => {
+  const at = async (loc, y) => {
+    const b = await loc.boundingBox()
+    return [b.x + 30, y === undefined ? b.y + b.height / 2 : b.y + y]
+  }
+  const [x, y] = await at(source)
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x + 10, y + 10, { steps: 3 })
+  const [lx, ly] = await at(label)
+  await page.mouse.move(lx, ly, { steps: 8 })
+  await target().waitFor()
+  // Straight down from the label into the popover, then across to the target: a slant would leave both on the way.
+  const [tx, ty] = await at(target(), dy)
+  await page.mouse.move(lx, ty, { steps: 8 })
+  await page.mouse.move(tx, ty, { steps: 8 })
+  await page.mouse.up()
+}
+
 // In the headless shell and in the full Chromium, which cancels a drag whose card is hidden as it starts.
 for (const fullBrowser of [false, true]) {
   const n = fullBrowser ? " (full)" : ""
@@ -86,6 +109,34 @@ for (const fullBrowser of [false, true]) {
       assert.equal(await queue.locator(`[data-task="${c.id}"]`).count(), 0)
       await page.keyboard.press("Escape")
       await queue.waitFor({ state: "hidden" })
+
+      // Not pinned (opened by dragging over the label), a drop in the queue lands there: above its first card, first.
+      await page.mouse.move(5, 600)
+      await label.hover()
+      await queue.waitFor()
+      const top = await queue.locator("[data-task]").first().getAttribute("data-task")
+      await page.mouse.move(5, 600)
+      await queue.waitFor({ state: "hidden" })
+      await viaLabel(page, card(c), label, () => queue.locator(`[data-task="${top}"]`), 4)
+      await eventually(async () => {
+        const [tc, tt] = [await task(c.id), await task(top)]
+        assert.equal(tc.status, "ready_for_merge")
+        assert.ok(tc.position < tt.position, JSON.stringify([tt.position, tc.position]))
+      }, 10_000)
+      await page.mouse.move(5, 600)
+      await queue.waitFor({ state: "hidden" })
+      // Opened by hovering, the queue reorders: its last card dragged above its first goes first.
+      await label.hover()
+      await queue.waitFor()
+      const ids = await queue.locator("[data-task]").evaluateAll((els) => els.map((e) => e.dataset.task))
+      assert.ok(ids.length >= 2, JSON.stringify(ids))
+      const [head, last] = [ids[0], ids.at(-1)]
+      await queue.locator(`[data-task="${last}"]`).dragTo(queue.locator(`[data-task="${head}"]`), { targetPosition: { x: 30, y: 4 } })
+      await eventually(async () => {
+        const [th, tl] = [await task(head), await task(last)]
+        assert.equal(tl.status, "ready_for_merge")
+        assert.ok(tl.position < th.position, JSON.stringify([th.position, tl.position]))
+      }, 10_000)
     })
     // Out of the queue, for the next run's.
     for (const t of [a, b, c]) await server.rpc("tasks.update", { id: t.id, patch: { status: "done", resolution: "wont_fix" } })
@@ -101,6 +152,7 @@ for (const fullBrowser of [false, true]) {
       const t = await server.rpc("tasks.create", { task: { project_id: project.id, title } })
       return Object.keys(patch).length ? server.rpc("tasks.update", { id: t.id, patch }) : t
     }
+    const other = await plain(`Mill the corn${n}`)
     const [waiting, due, free] = [
       await plain(`Ring the miller${n}`, { remind_at: later }),
       await plain(`Pay the miller${n}`, { remind_at: past }),
@@ -126,6 +178,11 @@ for (const fullBrowser of [false, true]) {
       await ui.run(["click Remind me tomorrow at 9:00"])
       await eventually(async () => assert.ok((await task(free.id)).remind_at))
       await todo.locator(`[data-task="${free.id}"]`).waitFor({ state: "detached" })
+      // Dragged over the label and dropped in the popover it opens (not pinned), a task is asked too.
+      await viaLabel(page, todo.locator(`[data-task="${other.id}"]`), label, () => bin, 30)
+      await ui.run(["wait Remind me tomorrow at 9:00", "press Escape", "gone Remind me tomorrow at 9:00"])
+      await page.mouse.move(5, 600)
+      await bin.waitFor({ state: "hidden" })
       // Dragged out of the bin into a column, it goes there without its reminder.
       await label.click()
       await bin.locator(`[data-task="${waiting.id}"]`).dragTo(page.locator("section[data-status=in_progress]"))
