@@ -46,7 +46,7 @@ export function ReviewTab({ form, set }: { form: ProjectForm; set: SetField }) {
               checked={form.auto_summary}
               onChange={(v) => set("auto_summary", v)}
               label="Summarise each task's changes once its review passes"
-              help="An agent writes a summary of what changed in its own thread, which the task opens on while it waits in In review. Summarise now, in the task's Summary tab, writes one at any time."
+              help="An agent writes a summary of what changed in its own thread, which shows folded at the bottom of the task's thread. Summarise now, in that summary, writes one at any time."
             />
             <ProjectSummarizer project={form} onChange={(v) => set("summarizers", v)} />
           </Group>
@@ -160,7 +160,7 @@ function WorkflowsNote({ project }: { project: ProjectForm }) {
             : "None that's on has agent steps in In review: start one from Review and summarise, or From the Review tab."}
         </p>
         <Help label="Reviews with workflows">
-          Its tasks don&apos;t have the board&apos;s own Review and Summary tabs either: a workflow&apos;s agent steps show their output in tabs of their own (a
+          Its tasks don&apos;t have the board&apos;s own Review tab or summary either: a workflow&apos;s agent steps show their output in tabs of their own (a
           step with the tab Review gives tasks a Review tab). They all come back if the project stops using workflows, in its Workflows tab.
         </Help>
       </div>

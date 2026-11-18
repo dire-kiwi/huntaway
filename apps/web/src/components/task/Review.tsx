@@ -313,9 +313,69 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
   )
 }
 
+/** A summary's first line of text, as plain words, to read on the folded bar. */
+const firstLine = (text: string | null | undefined): string =>
+  (text ?? "")
+    .split("\n")
+    .map((l) =>
+      l
+        .replace(/^\s*(#+|[-*>]|\d+\.)\s*/, "")
+        .replace(/[*_`]/g, "")
+        .trim(),
+    )
+    .find((l) => l.length > 0) ?? ""
+
 /**
- * A task's summary tab: the summaries of its changes written once its review passed, one from each summarizer, and a
- * way to write them. With `threadId`, just that summarizer's.
+ * HE-55: the summaries of a task's changes at the bottom of its thread, over the composer. Folded, one line says how
+ * they're going (and the start of the first one written); opened, they show in full with ChangeSummaryView.
+ */
+export function SummaryBar({ task }: { task: Task }) {
+  const [open, setOpen] = useState(false)
+  const all = task.summaries
+  const running = all.some((s) => s.state === "running")
+  const done = all.find((s) => s.state === "done" && s.text)
+  const stale = !!done?.head && !!task.review?.head && done.head !== task.review.head
+  const label = running
+    ? "Summarising the changes…"
+    : done
+      ? all.length > 1
+        ? `${all.length} summaries of the changes`
+        : "Summary of the changes"
+      : all.some((s) => s.state === "failed")
+        ? "Summary failed"
+        : all.length > 0
+          ? "Summary stopped"
+          : "No summary yet"
+  const preview = running ? "" : firstLine(done?.text)
+  return (
+    <div className="shrink-0 px-5 pb-2 narrow:px-2" data-summary-bar={open ? "open" : "folded"}>
+      <div className="mx-auto w-full max-w-3xl rounded-xl border border-line bg-panel-2/60 text-[12px]">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          className="flex w-full min-w-0 items-center gap-1.5 px-3 py-1.5 text-left"
+          title={open ? "Fold the summary" : "Show the summary of the changes"}
+        >
+          {open ? <ChevronDown size={12} className="shrink-0 text-faint" /> : <ChevronRight size={12} className="shrink-0 text-faint" />}
+          {running ? <Loader2 size={12} className="shrink-0 animate-spin text-st-review" /> : <FileText size={12} className="shrink-0 text-muted" />}
+          <span className={clsx("shrink-0", running ? "text-st-review" : done ? "text-fg" : "text-muted")}>{label}</span>
+          {stale && <span className="shrink-0 text-st-attention">· out of date</span>}
+          {!open && preview && <span className="min-w-0 truncate text-faint">· {preview}</span>}
+        </button>
+        {open && (
+          <div className="max-h-[45vh] overflow-y-auto border-t border-line px-3 py-2.5">
+            <ChangeSummaryView task={task} />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The summaries of a task's changes written once its review passed, one from each summarizer, and a way to write them:
+ * in the bar at the bottom of its thread (SummaryBar). With `threadId`, just that summarizer's.
  */
 export function ChangeSummaryView({ task, threadId }: { task: Task; threadId?: string | undefined }) {
   const all = task.summaries
