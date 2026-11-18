@@ -53,10 +53,23 @@ away and shows as a bubble beside the text it quotes. **Send** sends the unsent 
 published the document; agents also read them with the docs server's `get_feedback`. A task's thread links each
 document it published to its page here, and a task's page lists them; Settings has a Docs section.
 
-**Connect to hosted docs**, on the Docs page, connects the profile to a hosted docs site (https://docs.nest.dire.nz by
-default) with the OAuth device sign-in or a pasted personal access token, kept and renewed on the host. A document's
-**Publish** then publishes the version shown there; it asks first if a document of yours already has that slug, and
-publishing again adds a version to the same document there. The plugin's README in dire-kiwi/docs says more.
+**Connect to hosted docs**, on the Docs page, connects the profile to a hosted docs site with the OAuth device sign-in
+or a pasted personal access token, kept and renewed on the host. Each profile connects on its own (its tab on the Docs
+page), and on each host. To connect:
+
+1. **Docs** in the menu, then open **Connect to hosted docs, to publish documents there to share and collect
+   comments**.
+2. **Site** is the docs site, https://docs.nest.dire.nz by default: type another site's
+   address (`https://docs.dire.nz`) to use that one. The board's server reaches the site, not the browser, and a site
+   that doesn't answer with OAuth metadata at `/.well-known/oauth-authorization-server` is refused with "doesn't look
+   like a docs site".
+3. **Sign in** shows a code and a link: open it, sign in there, check that it shows the same code, and choose
+   **Allow**. The panel then says "Publishing to … as …". Or paste a personal access token from the site's **Access**
+   page and choose **Connect**.
+
+A document's **Publish to …** then publishes the version shown there; it asks first if a document of yours already has
+that slug, and publishing again adds a version to the same document there. **Disconnect** on the Docs page forgets the
+sign-in. The plugin's README in dire-kiwi/docs says more.
 
 The documents of a board from before the plugin (its `docs*`/`doc_*` tables, with their images, comments and hosted
 sign-ins) are copied into the plugin's own database the first time it runs on the host.
