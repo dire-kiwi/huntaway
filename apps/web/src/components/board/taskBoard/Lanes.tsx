@@ -1,12 +1,13 @@
 import { clsx } from "clsx"
 import { ChevronLeft, ChevronRight, Fence, Plus } from "lucide-react"
+import type { Status } from "@huntaway/contracts"
 import { PEN_COLORS } from "@huntaway/client"
 import { inTab, type PenLanes, type PenTab } from "../penModel"
 import { IconButton, StatusIcon } from "../../ui"
 import { TaskRow } from "../TaskCard"
 import { Cards, type CardsProps } from "./Cards"
 import { DropColumn } from "./DropColumn"
-import { CAN_ADD } from "./model"
+import { asStrip, CAN_ADD, stripAction } from "./model"
 
 /** What the rows of pens are drawn from, with the cards'. */
 export type LanesProps = CardsProps & { lanes: PenLanes; canAdd: boolean }
@@ -100,19 +101,14 @@ export function KanbanLanes(props: LanesProps) {
   const { dropTarget, laneDrops } = drops
   // How many of the tasks shown on the board (not archived ones) are in a pen's row.
   const laneCount = (lane: PenTab) => shownStatuses.reduce((n, s) => n + shown[s.id].filter((t) => inTab(lane, t)).length, 0)
+  // A closed backlog, and the columns that collapse while they're empty, are a strip down every row.
+  const strip = (status: Status) => asStrip(status, shown[status].length, backlogOpen)
   return (
     <div className="w-max min-w-full px-4 pb-4">
       <div className="sticky top-0 z-10 flex gap-3 bg-bg pt-4 pb-1">
         {shownStatuses.map((s) =>
-          s.id === "backlog" && !backlogOpen ? (
-            <button
-              key={s.id}
-              title={`Show the backlog (${shown[s.id].length})`}
-              onClick={toggleBacklog}
-              className="flex h-9 w-10 min-w-10 shrink-0 items-center justify-center rounded-xl border border-line/70 bg-panel/50 text-muted transition-colors hover:bg-raised/40 hover:text-fg"
-            >
-              <StatusIcon status={s.id} />
-            </button>
+          strip(s.id) ? (
+            <StripHeader key={s.id} status={s.id} action={stripAction(s, shown[s.id].length, canAdd, toggleBacklog, menus.newTaskIn)} />
           ) : (
             <div key={s.id} className="flex h-9 w-[240px] min-w-[240px] flex-1 items-center gap-2 rounded-xl border border-line/70 bg-panel/50 px-3">
               <StatusIcon status={s.id} />
@@ -143,12 +139,12 @@ export function KanbanLanes(props: LanesProps) {
             <div className="mt-1.5 flex gap-3">
               {shownStatuses.map((s) => {
                 const here = dropTarget?.status === s.id && dropTarget.lane === lane.key
-                return s.id === "backlog" && !backlogOpen ? (
+                return strip(s.id) ? (
                   <DropColumn
                     key={s.id}
                     status={s.id}
                     drops={laneDrops(lane)}
-                    title={`In the backlog: ${shown[s.id].filter((t) => inTab(lane, t)).length}`}
+                    title={`In ${s.label}: ${shown[s.id].filter((t) => inTab(lane, t)).length}`}
                     className={clsx(
                       "flex w-10 min-w-10 shrink-0 justify-center rounded-xl border bg-panel/50 pt-2 text-[12px] text-faint transition-colors",
                       here ? "border-accent/40 bg-accent/[0.03]" : "border-line/70",
@@ -174,6 +170,20 @@ export function KanbanLanes(props: LanesProps) {
           )}
         </section>
       ))}
+    </div>
+  )
+}
+
+/** A strip column's header above the rows of pens: its icon, and what clicking it does (`stripAction`). */
+function StripHeader({ status, action }: { status: Status; action: ReturnType<typeof stripAction> }) {
+  const className = "flex h-9 w-10 min-w-10 shrink-0 items-center justify-center rounded-xl border border-line/70 bg-panel/50 text-muted transition-colors"
+  return action.onClick ? (
+    <button title={action.title} onClick={action.onClick} className={clsx(className, "hover:bg-raised/40 hover:text-fg")}>
+      <StatusIcon status={status} />
+    </button>
+  ) : (
+    <div title={action.title} className={className}>
+      <StatusIcon status={status} />
     </div>
   )
 }
