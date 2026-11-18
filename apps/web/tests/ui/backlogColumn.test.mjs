@@ -63,17 +63,18 @@ test("the backlog is first and starts collapsed in the board and list views", as
   })
 })
 
+// Each column's width, by status.
+const widths = (page) =>
+  page.evaluate(() =>
+    Object.fromEntries([...document.querySelectorAll("section[data-status]")].map((e) => [e.dataset.status, e.getBoundingClientRect().width])),
+  )
+
 // HE-53: To do, Backlog and Needs attention are a strip while nothing is in them. A drop on one moves the task there
 // and opens the column; clicking an empty To do (or Backlog) starts a new task in it.
 test("empty To do, Backlog and Needs attention columns collapse to strips", async () => {
   const profile = await makeProfile(server, "quiet")
   const project = await makeProject(server, profile, "Quiet", "QUI")
   await makeTask(server, project, { title: "Being looked at", status: "in_review" })
-  // Each column's width, by status.
-  const widths = (page) =>
-    page.evaluate(() =>
-      Object.fromEntries([...document.querySelectorAll("section[data-status]")].map((e) => [e.dataset.status, e.getBoundingClientRect().width])),
-    )
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     await ui.run([`goto /p/${project.id}`, "wait Being looked at", "wait To do is empty. New task in To do"])
