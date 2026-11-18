@@ -64,8 +64,11 @@ page), and on each host. To connect:
    that doesn't answer with OAuth metadata at `/.well-known/oauth-authorization-server` is refused with "doesn't look
    like a docs site".
 3. **Sign in** shows a code and a link: open it, sign in there, check that it shows the same code, and choose
-   **Allow**. The panel then says "Publishing to … as …". Or paste a personal access token from the site's **Access**
-   page and choose **Connect**.
+   **Allow**. The panel then says "Publishing to … as …".
+
+Or paste a personal access token from the site's **Access** page and choose **Connect**. That form doesn't read
+**Site**: it sends the token to the site the panel opened with (the default, or until the server restarts the one the
+profile was last connected to), so for another site use **Sign in**.
 
 A document's **Publish to …** then publishes the version shown there; it asks first if a document of yours already has
 that slug, and publishing again adds a version to the same document there. **Disconnect** on the Docs page forgets the
