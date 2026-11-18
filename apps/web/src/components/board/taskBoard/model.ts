@@ -10,6 +10,27 @@ const isFlag = (f: string): f is TaskFlag => TASK_FLAGS.some((x) => x.id === f)
 
 // Columns that get a "new task" button. New work starts in To do or Backlog.
 export const CAN_ADD: ReadonlySet<Status> = new Set<Status>(["todo", "backlog"])
+// Columns the kanban board draws as a narrow strip while nothing is in them, out of the way of those with work (HE-53).
+export const COLLAPSE_EMPTY: ReadonlySet<Status> = new Set<Status>(["todo", "backlog", "needs_attention"])
+/** Whether the kanban board draws column `status`, with `count` tasks shown in it, as a strip rather than a column. */
+export const asStrip = (status: Status, count: number, backlogOpen: boolean) =>
+  (status === "backlog" && !backlogOpen) || (count === 0 && COLLAPSE_EMPTY.has(status))
+
+/**
+ * What clicking a column's strip does: a closed backlog with tasks in it opens; an empty column that takes new work
+ * starts a new task in it; any other empty one does nothing.
+ */
+export function stripAction(
+  s: { id: Status; label: string },
+  count: number,
+  canAdd: boolean,
+  toggleBacklog: () => void,
+  newTaskIn: (status: Status) => void,
+): { title: string; onClick?: (() => void) | undefined; adds?: boolean } {
+  if (count > 0) return { title: `Show the backlog (${count})`, onClick: toggleBacklog }
+  if (canAdd && CAN_ADD.has(s.id)) return { title: `${s.label} is empty. New task in ${s.label}`, onClick: () => newTaskIn(s.id), adds: true }
+  return { title: `${s.label}: nothing here` }
+}
 
 // Board and List show the tasks by status; the others are other ways of looking at the same tasks (HA-5).
 export const VIEWS = [

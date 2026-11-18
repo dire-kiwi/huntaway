@@ -42,7 +42,7 @@ test("filters leave out columns and cards, and come off one by one", async () =>
     assert.equal(await page.locator("section").count(), 1)
     // Taking the status off brings the columns back, with only the plans and diagrams in them.
     await page.locator("span:has(> button[title='Remove this filter'])", { hasText: "In review" }).getByTitle("Remove this filter").click()
-    await ui.run(["wait 2 of 10 tasks", "wait Show the backlog (0)", "gone Something being worked on"])
+    await ui.run(["wait 2 of 10 tasks", "wait Backlog is empty. New task in Backlog", "gone Something being worked on"])
     await ui.run(["click Clear all", "wait Something being worked on", "gone of 10 tasks"])
   })
 })
