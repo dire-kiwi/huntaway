@@ -90,4 +90,43 @@ describe.skipIf(shim === null)("a Claude run on a whole server", () => {
       assert.include(mcp, `"http://127.0.0.1:${port}/api/mcp/`)
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
+
+  it.live(
+    "a turn that ends with only a dev server listening moves the task to In review, with the server left up for its Stop (HE-56)",
+    () =>
+      Effect.gen(function* () {
+        const { port, token } = yield* startServer(["--claude-bin", FAKE_CLAUDE])
+        const http = yield* RpcClient.make(CliRpcs).pipe(Effect.provide(httpRpcClientLayer(`http://127.0.0.1:${port}`, token)))
+        const profile = yield* http["profiles.create"]({ profile: { name: "me" } })
+        const task = yield* http["tasks.create"]({ task: { profile_id: profile.id, title: "Serve" } })
+        yield* Effect.gen(function* () {
+          const socket = yield* RpcClient.make(CliRpcs)
+          const events = socket["board.watch"]({}).pipe(Stream.filter((m) => isTaskEvent(m) && m.task.id === task.id))
+          // The agent starts a dev server and ends its turn; the board ends its run, and the server is found by its port.
+          const reviewed = yield* events.pipe(
+            Stream.filter((m) => isTaskEvent(m) && m.task.status === "in_review" && !m.task.running && m.task.servers.length > 0),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild({ startImmediately: true }),
+          )
+          yield* http["tasks.send"]({ id: task.id, text: "start it: fake-dev-server" })
+          const [seen] = [...(yield* Fiber.join(reviewed).pipe(Effect.timeout("60 seconds")))]
+          const server = seen !== undefined && isTaskEvent(seen) ? seen.task.servers[0] : undefined
+          assert.isDefined(server)
+          assert.strictEqual(server?.detached, true)
+          // The banner's Stop ends it.
+          const gone = yield* events.pipe(
+            Stream.filter((m) => isTaskEvent(m) && m.task.servers.length === 0),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkChild({ startImmediately: true }),
+          )
+          yield* http["tasks.stopServer"]({ id: task.id, port: server?.port ?? 0 })
+          yield* Fiber.join(gone).pipe(Effect.timeout("30 seconds"))
+        }).pipe(Effect.scoped, Effect.provide(socketRpcClientLayer(port, token)))
+        const after = yield* http["tasks.get"]({ id: task.id })
+        assert.deepStrictEqual([after.status, after.attention_reason], ["in_review", null])
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    120_000,
+  )
 })

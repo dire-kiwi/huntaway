@@ -27,12 +27,14 @@ const firstLine = (s: string): string | null => (s === "" ? null : (s.split("\n"
 /**
  * How a run ended (the old `on_exit`), the last turn's result deciding: a stop is cancelled; a last result that failed
  * is a failure with its error; exit 0 after a result is ok; anything else failed, with how it exited and the end of its
- * `err.log`.
+ * `err.log`. A run the board ended at its turn's end, leaving its dev servers running (`detached`, HA-409: see
+ * `RunInput`), is ok too, however it was killed.
  */
-export const outcomeOf = (run: Pick<Run, "stop" | "result_error" | "saw_result">, exit: RunExitStatus, errorTail: string): Outcome => {
+export const outcomeOf = (run: Pick<Run, "stop" | "result_error" | "saw_result">, exit: RunExitStatus, errorTail: string, detached = false): Outcome => {
   if (run.stop !== "none") return Outcome.cancelled
   if (run.result_error !== null) return Outcome.failed(run.result_error)
   if (exit.code === 0 && run.saw_result) return Outcome.ok
+  if (detached && run.saw_result) return Outcome.ok
   const how =
     exit.error ??
     (exit.code !== null
@@ -55,9 +57,9 @@ export const todoReason = (items: ReadonlyArray<Todo>): string => cut(`Todo list
 export const nudged = (last: { readonly text: string; readonly auto?: boolean } | null): boolean => last?.auto === true && last.text.startsWith(TODO_NUDGE)
 
 /** A thread that is the profile's own (the assistant, its routines, the pens threads): never held, never reviewed. */
-type Lasting = "assistant" | "pens" | "routine" | null
+export type Lasting = "assistant" | "pens" | "routine" | null
 
-const lastingOf = (task: Pick<Task, "kind" | "task_type" | "project_id">): Lasting => {
+export const lastingOf = (task: Pick<Task, "kind" | "task_type" | "project_id">): Lasting => {
   if (task.kind !== "task" || task.project_id !== null) return null
   if (task.task_type === "assistant") return "assistant"
   if (task.task_type === "pens" || task.task_type === "pen") return "pens"

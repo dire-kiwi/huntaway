@@ -62,6 +62,11 @@ export interface ShimShape {
    * is nothing to signal: it has exited, has no pid, or the machine rebooted since it started.
    */
   readonly kill: (run: RunId) => Effect.Effect<boolean>
+  /**
+   * Kill the agent's process group at once (SIGKILL, not SIGTERM), so Claude Code doesn't stop its background shells as
+   * it exits: they run in sessions of their own, which outlive it (HA-409, `RunInput`'s dev servers). False as `kill`.
+   */
+  readonly killAgentOnly: (run: RunId) => Effect.Effect<boolean>
   /** Whether a pid names a live process. */
   readonly isAlive: (pid: number) => Effect.Effect<boolean>
   /** The run's shim is gone without writing `exit`: its pid is dead, or from before a reboot. */
@@ -192,6 +197,13 @@ export class Shim extends Context.Service<Shim, ShimShape>()("huntaway-server/ru
         return true
       })
 
+      const killAgentOnly = Effect.fn("Shim.killAgentOnly")(function* (run: RunId) {
+        if ((yield* dir.exit(run)) !== null || (yield* dir.rebooted(run))) return false
+        const { agent } = yield* dir.pids(run)
+        if (agent === null || agent <= 1) return false
+        return yield* signal(-agent, "SIGKILL")
+      })
+
       const vanished = (run: RunId) =>
         Effect.gen(function* () {
           const { shim } = yield* dir.pids(run)
@@ -265,7 +277,7 @@ export class Shim extends Context.Service<Shim, ShimShape>()("huntaway-server/ru
         yield* FiberSet.run(escalations, watchReap(run))
       })
 
-      return Shim.of({ binary, spawn, kill, isAlive: alive, vanished, stopOrphan, watchOrphan, reap, watchReap, resumeMarked })
+      return Shim.of({ binary, spawn, kill, killAgentOnly, isAlive: alive, vanished, stopOrphan, watchOrphan, reap, watchReap, resumeMarked })
     }),
   )
 }

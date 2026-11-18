@@ -1135,6 +1135,15 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   id, background_id? } → { stopping }`) sends `stop_task` requests (`bgstop-…`), the run's stop if one can't be sent,
   is refused, or the shells are still there 10 s later. "Asks on its output" is now "takes input" (every Claude run of
   this board; Codex's is M5). A run's kill and reap keep what was going as `background-killed` first.
+- **Dev servers left running (HE-56, the old HA-409)**: `RunInput.turnEnded` with only background tasks that
+  `detachable` allows (Bash shells not waited on whose commands `looksLikeServer`), of a task `lastingOf` says goes to
+  review, on Linux, arms a `detach` fiber: after `DETACH_AFTER` (1.5 s), and once `DevServers.shellsListen` sees each
+  of the agent's shell sessions listening on a port (again every `DETACH_RETRY`, up to `DETACH_FOR_MS`), it writes
+  `background-detached` and `Shim.killAgentOnly` (SIGKILL to the agent's group). `outcomeOf(…, detached)` makes the
+  killed run's end Ok; `BackgroundWork.runEnded` notes them as left running (`LostBackground.running`), and the next
+  prompt says so. A steer, a stop or a new turn meanwhile leaves the run be. `DevServers.stopLeft(task, why)` (the old
+  `stop_task_processes`) stops what a task's agents left running, from the reactor once the task is done with no agent
+  left, or deleted. The banner's Stop buttons call `tasks.stopBackground` and `tasks.stopServer`.
 - **Also**: `tasks.waitForLimit { id }` (`Runs.waitForReset`, the old `wait_for_reset`); `Runs.created(task, input)`,
   which `tasks.create` calls: `start` starts the agent, and a task with only a description gets its title written
   first (`Titles.generateLater`, starting it after if asked); `tasks.create` can then fail as `tasks.send` does

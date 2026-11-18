@@ -104,8 +104,9 @@ export const BackgroundWait = Tool.make("background_wait", {
     "Say that you're waiting on a command you started in the background (the Bash tool's run_in_background), such as a long build or test run, " +
     "so the board keeps showing your task as working while it runs. Pass its task ID, the one the Bash tool gave back when it started it. " +
     "Not for something you leave running, such as a dev server or a watcher: once your turn ends, those leave the task shown as idle, with " +
-    "a banner of what's running, and the user's messages reach you at once. waiting=false clears it. It doesn't stop the command or wait for it: " +
-    "you're told when it ends, as usual.",
+    "a banner of what's running, and the user's messages reach you at once. A dev server you don't wait on (one listening on a port) also " +
+    "ends your run with your turn, so the task moves on to review: it's left running for the user, the board stops it once the task is done, " +
+    "and you're no longer told when it ends. waiting=false clears it. It doesn't stop the command or wait for it: you're told when it ends, as usual.",
   parameters: Schema.Struct({
     task_id: Schema.String.annotate({ description: "The background task's ID, as the Bash tool gave it back (e.g. b5o2nmhr9)" }),
     waiting: Schema.optionalKey(Schema.Boolean.annotate({ description: "false to say you no longer wait on it (default true)" })),

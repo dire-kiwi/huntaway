@@ -60,6 +60,15 @@ and the 5-hour-window restarter.
 - `background_wait` board tool: the agent declares it waits on a shell.
 - Tell the agent, once, what background work its last run's end killed (`Task.lost_background` → note).
 - Scan `/proc` every 4 s for listening TCP sockets of processes whose environ has `HUNTAWAY_TASK_ID=<task>`; show `Task.servers`; stop one by port.
+- A turn that ends with only dev servers left (HA-409, after this inventory was taken; HE-56 on this board): Bash
+  shells, not waited on, whose commands look like servers' (`looks_like_server`: `pnpm dev`, `astro dev`, `vite`, not
+  a test, build, check or wait), each with a process in its session listening on a port (looked at 1.5 s after the
+  turn's end, then every 5 s for up to 2 minutes), of a task that goes to review (not the assistant's, pens' or a
+  routine's thread), on Linux: the agent's process group gets SIGKILL (Claude Code stops its shells on a TERM; they're
+  in sessions of their own), `background-detached` keeps them, and the run ends Ok (not Failed) as a turn's end does.
+  The next prompt's note says they were left running (`lost_background` items with `running`). What a task's agents
+  left running (environ naming it, never the board, a board's server, a shim or anything under them) is stopped once
+  it's done with no agent left, or deleted (`stop_task_processes`).
 
 ### Merge queue (`runner/merge.ts`, `db/tasks/merges.ts`)
 - One merge at a time per *lane*; start the next waiting task's merge run; ask for merge-approval summaries; whole-stack runs hold a lane; step-out/rejoin (`remerge`).
@@ -159,6 +168,7 @@ Settings keys read: `default_model`, `default_effort`, `default_permission_mode`
 | `background` | server | JSON `BackgroundTask[]` `{id,type,description,since,command,tool}` + `\n`; legacy: list of ids, or a bare count |
 | `background-waited` | server | JSON string[] of shell ids the agent waits on |
 | `background-killed` | server | JSON `BackgroundTask[]` the board stopped |
+| `background-detached` | server | JSON `BackgroundTask[]` the board left running as it ended the run (HA-409) |
 | `background-ended` | server | `{ended:(string\|null)[], taken:string[]}`; legacy empty file = `{ended:[null],taken:[]}` |
 | `background-calls` | server | `{<tool_use_id>:{tool,command}}`, latest 20 |
 | `reap`, `orphan` | server | empty markers: a kill in progress to resume after a restart |

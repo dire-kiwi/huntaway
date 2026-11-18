@@ -1,4 +1,4 @@
-import { Context, Effect, Fiber, FiberMap, Layer, Option, Schema } from "effect"
+import { Clock, Context, Effect, Fiber, FiberMap, FileSystem, Layer, Option, Schema } from "effect"
 import type { Duration } from "effect"
 import { SecureRandom } from "effect/crypto"
 import type { RunId, TaskId } from "@huntaway/contracts"
@@ -10,8 +10,10 @@ import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { fromAgent, TaskRepo } from "../tasks/TaskRepo.ts"
 import { Threads } from "../threads/Threads.ts"
-import { kindOf, listed, notTakenIn } from "./background.ts"
+import { detachable, kindOf, listed, notTakenIn } from "./background.ts"
 import { BackgroundWork } from "./BackgroundWork.ts"
+import { shellsListen, SUPPORTED } from "./DevServers.ts"
+import { lastingOf } from "./finish.ts"
 import type { Run } from "./Run.ts"
 import { RunDir } from "./RunDir.ts"
 import { RunRepo } from "./RunRepo.ts"
@@ -24,6 +26,11 @@ import { Shim } from "./Shim.ts"
 // compaction takes input, so its agent never exits by itself: **the server closes the input, or the run never ends**.
 // It does so when a turn ends with nothing waiting; with messages waiting, it gives them `STEER_GRACE` to start the next
 // turn. A stop interrupts the turn and gives it `STOP_GRACE` to end before the process is stopped.
+//
+// A turn that ends with only dev servers left (HA-409) ends its run all the same: Claude Code doesn't exit while it has
+// background tasks, so the task would sit in "In progress" with its work done. Once each of them listens on a port, the
+// agent is killed outright, which leaves its shells running (they're in sessions of their own), and the run ends as a
+// turn's end does: the task moves on to "In review" with its dev server still up, listed as outliving its run.
 //
 // The timers are fibers here, one of each kind per run (a `FiberMap` keyed by run id: arming one again replaces it),
 // each checking the run's row when it fires, so they can be armed again from the row after a restart (`rearm`).
@@ -41,6 +48,12 @@ export const BACKGROUND_GRACE = "120 seconds"
 export const FOLLOW_UP_GRACE = "15 seconds"
 /** How long Claude Code has to stop a background shell (`stop_task`) before the run is stopped instead. */
 export const BACKGROUND_STOP_GRACE = "10 seconds"
+/** How long after a turn ends with only dev servers left the board first looks whether they listen (for Claude Code to write its session out). */
+export const DETACH_AFTER = "1500 millis"
+/** How often it looks again while one doesn't listen yet (a server slow to start)… */
+export const DETACH_RETRY = "5 seconds"
+/** …until this long after the turn's end, when it leaves the run be. */
+export const DETACH_FOR_MS = 120_000
 /** The request id prefix of a `stop_task` the board sends. */
 const BACKGROUND_STOP = "bgstop-"
 
@@ -103,7 +116,7 @@ export interface RunInputShape {
   /** After a restart (2.6's `Runs.reattach`): the stop's grace and the end of a turn that had ended, armed again from the run's row. */
   readonly rearm: (run: Run) => Effect.Effect<void>
   /** Waits until the run's stop (or steer) grace has done what it does (tests, after moving the clock past it). */
-  readonly settled: (run: RunId, timer: "stop" | "steer" | "grace" | "shells") => Effect.Effect<void>
+  readonly settled: (run: RunId, timer: "stop" | "steer" | "grace" | "shells" | "detach") => Effect.Effect<void>
 }
 
 export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaway-server/runs/RunInput") {
@@ -121,6 +134,8 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
       const background = yield* BackgroundWork
       const changes = yield* Changes
       const random = yield* SecureRandom.SecureRandom
+      const fs = yield* FileSystem.FileSystem
+      const detachTimers = yield* FiberMap.make<RunId>()
       const stopTimers = yield* FiberMap.make<RunId>()
       const steerTimers = yield* FiberMap.make<RunId>()
       const graceTimers = yield* FiberMap.make<RunId>()
@@ -223,6 +238,8 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
         if ((yield* background.tasks(run.id)).length > 0) {
           yield* background.setEnded(run.id, null)
           if (yield* stopping(run.id)) yield* closeAndKill(run.id)
+          // Only dev servers it doesn't wait on: the run ends, and leaves them running (HA-409).
+          else yield* detachLater(run)
           return
         }
         // Background tasks ended during the turn: Claude Code takes another on those it didn't give the agent the
@@ -236,6 +253,54 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
           }
         }
         yield* closeInput(run.id)
+      })
+
+      /** Whether the run is between turns with only dev servers left that it doesn't wait on, and nothing sent to it. */
+      const onlyServers = Effect.fnUntraced(function* (id: RunId) {
+        const row = yield* repo.get(id)
+        if (Option.isNone(row) || !row.value.isLive || !row.value.between_turns || row.value.stop !== "none" || row.value.kind === "compact") return null
+        // A message sent meanwhile starts its next turn, whose end looks again.
+        if ((yield* tasks.steers(row.value.task_id, id)).length > 0) return null
+        if (!detachable(yield* background.tasks(id), yield* background.waited(id))) return null
+        return row.value
+      })
+
+      /**
+       * The agent's turn ended with only shells left that look like dev servers it doesn't wait on, of a task that goes
+       * to review, on a host that finds them again (Linux): once `DETACH_AFTER` has passed and each of them listens on a
+       * port (looked at again every `DETACH_RETRY`, up to `DETACH_FOR_MS` after, for a server slow to start), its agent
+       * is killed outright, leaving them running, and its run ends as a turn's end without them would (HA-409). Anything
+       * else keeps the run, as before: the agent hears when it ends.
+       */
+      const detachLater = Effect.fnUntraced(function* (run: Run) {
+        if (!SUPPORTED || run.kind === "compact") return
+        const task = yield* tasks.get(run.task_id)
+        if (task === null || task.kind !== "task" || lastingOf(task) !== null) return
+        if ((yield* onlyServers(run.id)) === null) return
+        yield* FiberMap.run(
+          detachTimers,
+          run.id,
+          Effect.gen(function* () {
+            yield* Effect.sleep(DETACH_AFTER)
+            const until = (yield* Clock.currentTimeMillis) + DETACH_FOR_MS
+            while (true) {
+              const now = yield* onlyServers(run.id)
+              if (now === null) return
+              const { agent } = yield* dir.pids(run.id)
+              if (agent !== null && (yield* shellsListen(fs, agent))) break
+              if ((yield* Clock.currentTimeMillis) >= until) return
+              yield* Effect.sleep(DETACH_RETRY)
+            }
+            const left = yield* background.tasks(run.id)
+            yield* background.setDetached(run.id, left)
+            if (yield* shim.killAgentOnly(run.id)) {
+              yield* Effect.logInfo(
+                `run=${run.id} its turn ended with only servers left in the background; ending it, and leaving ${left.map((t) => t.id).join(", ")} running`,
+              )
+            } else yield* background.setDetached(run.id, [])
+          }),
+          { onlyIfMissing: true },
+        )
       })
 
       /**
@@ -429,7 +494,10 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
         stopBackground,
         onStopResponse,
         settled: (run, timer) =>
-          FiberMap.get(timer === "stop" ? stopTimers : timer === "steer" ? steerTimers : timer === "grace" ? graceTimers : shellTimers, run).pipe(
+          FiberMap.get(
+            timer === "stop" ? stopTimers : timer === "steer" ? steerTimers : timer === "grace" ? graceTimers : timer === "detach" ? detachTimers : shellTimers,
+            run,
+          ).pipe(
             Effect.flatMap((found) => (Option.isSome(found) ? Fiber.await(found.value) : Effect.void)),
             Effect.asVoid,
           ),

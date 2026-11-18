@@ -51,7 +51,11 @@
 // Code runs as a `local_agent` subagent), whose child's Bash call is asked for as above before it goes on. A prompt
 // containing "fake-until-interrupted" keeps its turn going until an `interrupt` (which the
 // sleep before a reply doesn't heed), then ends it as Claude Code does: "[Request interrupted by user]" and an
-// error_during_execution result.
+// error_during_execution result. A prompt containing "fake-dev-server" starts a dev server as Claude Code's Bash tool does
+// with run_in_background (a `pnpm dev` call, `background_tasks_changed` and `task_started`): a Node server listening on a
+// free port on 127.0.0.1, in a session of its own, which outlives the fake if it's killed outright. As Claude Code does,
+// the fake doesn't exit while it has one, even once its input ends; a `stop_task` stops one, and a SIGTERM stops them
+// all before it exits (HE-56).
 //
 // Reviews (plan task 4.6). A reviewer's run (its prompt starts "Review the work on task", and it quotes the task's
 // description) calls `submit_review` through the in-process server before it replies: `pass`, unless the description
@@ -73,7 +77,7 @@
 //           never runs the machine's gh
 //   refuse  it doesn't merge, and replies so (the board then says it finished without merging)
 // Without it, a merge request is answered like any other prompt.
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
@@ -678,6 +682,57 @@ const skillFork = async () => {
   toolResult(skill, 'Skill "code-review" completed (forked execution).\n\nResult:\nNo runtime bugs found.')
 }
 
+/** The background shells it has going (`fake-dev-server`), by task id: their pids, each leading a session. */
+const shells = new Map<string, number>()
+
+const shellsChanged = () =>
+  emit({
+    type: "system",
+    subtype: "background_tasks_changed",
+    tasks: [...shells.keys()].map((id) => ({ task_id: id, task_type: "local_bash", description: "Start the dev server" })),
+    session_id: session,
+  })
+
+const devServer = () => {
+  const call = `toolu_${hex(12)}`
+  const id = `b${hex(8)}`
+  say([{ type: "tool_use", id: call, name: "Bash", input: { command: "pnpm dev", description: "Start the dev server", run_in_background: true } }])
+  const server = "require('node:net').createServer().listen(0, '127.0.0.1'); setInterval(() => {}, 1e9)"
+  const child = spawn(process.execPath, ["-e", server], { detached: true, stdio: "ignore" })
+  if (child.pid !== undefined) shells.set(id, child.pid)
+  child.unref()
+  shellsChanged()
+  emit({
+    type: "system",
+    subtype: "task_started",
+    task_id: id,
+    tool_use_id: call,
+    task_type: "local_bash",
+    description: "Start the dev server",
+    session_id: session,
+  })
+  toolResult(call, `Command running in background with ID: ${id}.`)
+}
+
+/** Stop a background shell's session (its process group: setsid made it lead one). */
+const stopShell = (id: string) => {
+  const pid = shells.get(id)
+  if (pid === undefined) return false
+  try {
+    process.kill(-pid, "SIGTERM")
+  } catch {
+    // Gone already.
+  }
+  shells.delete(id)
+  return true
+}
+
+// Claude Code stops its background shells as it exits on a TERM.
+process.on("SIGTERM", () => {
+  for (const id of shells.keys()) stopShell(id)
+  process.exit(143)
+})
+
 const now = () => Date.now() / 1000
 
 /** "6:30pm", as Claude Code says when a limit resets. */
@@ -698,6 +753,7 @@ const turn = async (text: string) => {
     emit({ type: "system", subtype: "compact_boundary", session_id: session, compact_metadata: { trigger: "manual", pre_tokens: 1234 } })
   }
   if (text.includes("fake-subagent")) subagent()
+  if (text.includes("fake-dev-server")) devServer()
   if (text.includes("fake-skill-fork")) await skillFork()
   if (text.includes("fake-until-interrupted")) {
     // A turn that goes on until it's interrupted (by one that came during the sleep too), as a long one of Claude
@@ -897,8 +953,16 @@ if (streamInput) {
       emit({ ...m, isReplay: true, session_id: session })
       await turn(textOf(m))
     } else if (m.type === "control_request") {
+      const id = field(m.request, "subtype") === "stop_task" ? str(field(m.request, "task_id")) : ""
+      if (id !== "" && !stopShell(id)) {
+        emit({ type: "control_response", response: { subtype: "error", request_id: m.request_id, error: `No task ${id}` } })
+        continue
+      }
       emit({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: {} } })
+      if (id !== "") shellsChanged()
     }
   }
+  // As Claude Code: it doesn't exit while it has background shells going.
+  if (shells.size > 0) await new Promise<never>(() => setInterval(() => {}, 1e9))
 }
 await exit(code)
