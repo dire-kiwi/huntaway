@@ -71,7 +71,9 @@ test("empty To do, Backlog and Needs attention columns collapse to strips", asyn
   await makeTask(server, project, { title: "Being looked at", status: "in_review" })
   // Each column's width, by status.
   const widths = (page) =>
-    page.evaluate(() => Object.fromEntries([...document.querySelectorAll("section[data-status]")].map((e) => [e.dataset.status, e.getBoundingClientRect().width])))
+    page.evaluate(() =>
+      Object.fromEntries([...document.querySelectorAll("section[data-status]")].map((e) => [e.dataset.status, e.getBoundingClientRect().width])),
+    )
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     await ui.run([`goto /p/${project.id}`, "wait Being looked at", "wait To do is empty. New task in To do"])
