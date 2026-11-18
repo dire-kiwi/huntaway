@@ -33,8 +33,8 @@ const splitNul = (s: string) => {
 }
 
 /** The object id git would give file `path` (relative to `wt`), read through `--stdin-paths`. */
-const hashObject = Effect.fnUntraced(function* (g: GitShape, wt: string, path: string) {
-  const out = yield* g.run(wt, ["hash-object", "--stdin-paths"], { stdin: `${path}\n` }).pipe(Effect.mapError(fromGit))
+const hashObject = Effect.fnUntraced(function* (g: GitShape, wt: string, path: string, noLocks: boolean) {
+  const out = yield* g.run(wt, ["hash-object", "--stdin-paths"], { stdin: `${path}\n`, noLocks }).pipe(Effect.mapError(fromGit))
   if (!out.ok) return yield* fail(`git hash-object -- ${path} failed: ${out.stderr.trim()}`)
   return out.stdout.trim()
 })
@@ -42,18 +42,20 @@ const hashObject = Effect.fnUntraced(function* (g: GitShape, wt: string, path: s
 /**
  * What in worktree `wt` isn't committed (`git status --porcelain`, trimmed), whatever the repository's settings hide:
  * every untracked file, every submodule change, and changes to tracked files marked assume-unchanged or skip-worktree.
- * Ignored files don't count. "" when nothing.
+ * Ignored files don't count. "" when nothing. `noLocks` for a read that polls (HE-51's mark): git then doesn't take the
+ * worktree's index lock, nor write the index back with fresher stat info, so a git command run there meanwhile isn't refused.
  */
-export const uncommitted = Effect.fnUntraced(function* (g: GitShape, fs: FileSystem.FileSystem, wt: string) {
-  const status = yield* g.ok(wt, ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]).pipe(Effect.mapError(fromGit))
+export const uncommitted = Effect.fnUntraced(function* (g: GitShape, fs: FileSystem.FileSystem, wt: string, options: { readonly noLocks?: boolean } = {}) {
+  const noLocks = options.noLocks ?? false
+  const status = yield* g.ok(wt, ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], { noLocks }).pipe(Effect.mapError(fromGit))
   const out = status
     .split("\n")
     .filter((l) => l.trim() !== "")
     .map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l))
   // git status skips marked files, so they're compared with the index here: content and, with core.fileMode (git's
   // default), the executable bit. One that isn't on disk (left out of a sparse checkout, say) has nothing to lose.
-  const index = yield* g.ok(wt, ["ls-files", "-v", "-s", "-z"]).pipe(Effect.mapError(fromGit))
-  const fileMode = yield* g.run(wt, ["config", "--type=bool", "core.fileMode"]).pipe(
+  const index = yield* g.ok(wt, ["ls-files", "-v", "-s", "-z"], { noLocks }).pipe(Effect.mapError(fromGit))
+  const fileMode = yield* g.run(wt, ["config", "--type=bool", "core.fileMode"], { noLocks }).pipe(
     Effect.map((o) => o.stdout.trim() !== "false"),
     Effect.orElseSucceed(() => true),
   )
@@ -77,7 +79,7 @@ export const uncommitted = Effect.fnUntraced(function* (g: GitShape, fs: FileSys
       file.type === "File" &&
       ["100644", "100755"].includes(mode) &&
       (!fileMode || executable === (mode === "100755")) &&
-      (yield* hashObject(g, wt, path)) === object
+      (yield* hashObject(g, wt, path, noLocks)) === object
     if (!same) out.push(` M ${path} (marked ${assumed ? "assume-unchanged" : "skip-worktree"})`)
   }
   return out.join("\n")

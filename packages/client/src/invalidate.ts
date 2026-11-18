@@ -77,6 +77,8 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   },
   // A task's diff against its base: also its column and branch (the old compare view read it again on them).
   "git.taskDiff": (board, p) => taskBranch(board, p.id),
+  // HE-51: what a task in review has to merge, as its agent stops, its worktree or branch changes or it moves.
+  "git.mergeWork": (board, p) => taskBranch(board, p.id),
   // A file's diffs too: its content can change while its state in the status doesn't (the old tab read them with it).
   "git.diff": (board, p) => taskState(board, p.id),
   // The compare view's facts, as one of the prompt's tasks moves, starts or stops, or its worktree changes.

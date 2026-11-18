@@ -30,6 +30,25 @@ export const DiffResult = Schema.Struct({
 export interface DiffResult extends Schema.Schema.Type<typeof DiffResult> {}
 
 /**
+ * HE-51: what a task has to merge, for the board's mark on a task in review: the commits on its branch that the branch
+ * its work goes to (and that branch's upstream, as last fetched) doesn't have, and the files in its worktree with
+ * uncommitted changes. Read from git as asked, without fetching.
+ */
+export const MergeWork = Schema.Struct({
+  /** The branch its work goes to (`TaskBase.taskBase`), if any. */
+  base: Schema.NullOr(Schema.String),
+  /** Its branch: there (`ok`), `none` of its own (or no git repository), or `gone` (deleted, the task still naming it). */
+  branch: Schema.Literals(["ok", "none", "gone"]),
+  /** Its worktree: there (`ok`), `none` (not set up, or removed by the board), or `gone` (ready on the board, its folder deleted). */
+  worktree: Schema.Literals(["ok", "none", "gone"]),
+  /** The commits on its branch that `base` doesn't have; null when they can't be counted (no branch, no base). */
+  commits: Schema.NullOr(Schema.Int),
+  /** The files in its worktree with uncommitted changes, untracked ones too; null with no worktree to look in. */
+  uncommitted: Schema.NullOr(Schema.Int),
+})
+export interface MergeWork extends Schema.Schema.Type<typeof MergeWork> {}
+
+/**
  * A file with changes, as `git status --short` shows it: its index (`x`) and working tree (`y`) state, each one of `M`,
  * `A`, `D`, `R`, `C`, `T`, a space for none, `?` for untracked, and the two sides of a conflict (`UU`, `AA`, …).
  */
@@ -166,6 +185,8 @@ export class GitRpcs extends RpcGroup.make(
   }).annotate(RequiredScope, "git"),
   /** The task's own work: commits, uncommitted and untracked changes, against where it starts. */
   Rpc.make("git.taskDiff", { payload: { id: TaskId }, success: DiffResult, error: NotFound }).annotate(RequiredScope, "read"),
+  /** HE-51: the commits and uncommitted files the task has to merge, for the board's mark on a task in review. */
+  Rpc.make("git.mergeWork", { payload: { id: TaskId }, success: MergeWork, error: NotFound }).annotate(RequiredScope, "read"),
   /** The Changes tab's view: files, branch, commits, stashes. */
   Rpc.make("git.status", { payload: { id: TaskId }, success: GitStatus, error: ChangesErrors }).annotate(RequiredScope, "read"),
   /** A file's (or folder's) unstaged changes, its `staged` ones, or an `untracked` file as if added; without rename detection. */

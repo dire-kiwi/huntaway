@@ -94,6 +94,8 @@ const changedFiles = (id: TaskId) =>
       .map((l) => l.slice("+++ b/".length)),
   )
 const hasWork = (task: Task) => Effect.flatMap(TaskBase, (b) => b.hasWorkToMerge(task))
+/** What the board's mark on the task counts (HE-51), as the task is now. */
+const mergeWork = (id: TaskId) => Effect.flatMap(getTask(id), (t) => Effect.flatMap(TaskBase, (b) => b.mergeWork(t)))
 
 /** A repository (on master, ignoring target/) with a task whose worktree has a commit. */
 const taskWithWork = Effect.gen(function* () {
@@ -301,6 +303,41 @@ describe("a task's diff", () => {
         assert.isTrue(yield* hasWork(t))
         yield* git(repo, ["merge", "-q", "--no-ff", "-m", "merge", t.branch ?? ""])
         assert.isFalse(yield* hasWork(t))
+      }),
+    ),
+  )
+
+  // HE-51: the board's mark on a task in review counts what it has to merge, and says what's gone rather than failing.
+  it.live("counts the commits and uncommitted files to merge, and says when the worktree or branch is gone", () =>
+    run(
+      Effect.gen(function* () {
+        const { repo, task, wt, branch } = yield* taskWithWork
+        assert.deepStrictEqual(yield* mergeWork(task.id), { base: "master", branch: "ok", worktree: "ok", commits: 1, uncommitted: 0 })
+        // It's polled: a tracked file's stat info gone stale (touched, not changed) isn't written back to the index, which
+        // would take the index lock a git command run there meanwhile wants.
+        const fs = yield* FileSystem.FileSystem
+        const indexFile = yield* git(wt, ["rev-parse", "--path-format=absolute", "--git-path", "index"])
+        const before = yield* fs.readFile(indexFile).pipe(Effect.orDie)
+        yield* sh("touch", ["-d", "1 minute", `${wt}/a`])
+        assert.deepStrictEqual(yield* mergeWork(task.id), { base: "master", branch: "ok", worktree: "ok", commits: 1, uncommitted: 0 })
+        assert.deepStrictEqual(yield* fs.readFile(indexFile).pipe(Effect.orDie), before, "the index is left as it was")
+        yield* commitFile(wt, "b")
+        yield* write(`${wt}/c`, "draft")
+        yield* write(`${wt}/a`, "changed")
+        assert.deepStrictEqual(yield* mergeWork(task.id), { base: "master", branch: "ok", worktree: "ok", commits: 2, uncommitted: 2 })
+        // Merged, and the changes thrown away: nothing to merge.
+        yield* git(wt, ["checkout", "-q", "--", "a"])
+        yield* sh("rm", [`${wt}/c`])
+        yield* git(repo, ["merge", "-q", "--no-ff", "-m", "merge", branch])
+        assert.deepStrictEqual(yield* mergeWork(task.id), { base: "master", branch: "ok", worktree: "ok", commits: 0, uncommitted: 0 })
+        // The worktree deleted behind the board's back, its branch kept (FLO-12): its commits are still counted.
+        yield* commitFile(wt, "d")
+        yield* sh("rm", ["-rf", wt])
+        assert.deepStrictEqual(yield* mergeWork(task.id), { base: "master", branch: "ok", worktree: "gone", commits: 1, uncommitted: null })
+        // And then its branch.
+        yield* git(repo, ["worktree", "prune"])
+        yield* git(repo, ["branch", "-qD", branch])
+        assert.deepStrictEqual(yield* mergeWork(task.id), { base: "master", branch: "gone", worktree: "gone", commits: null, uncommitted: null })
       }),
     ),
   )

@@ -210,6 +210,8 @@ export function fakeHost(b: Board): FakeHost {
     // 4.5: a preview the fake can't reach, and work that is merged (a check gives its own).
     .on("board.previewStatus", () => ({ up: false, status: null }))
     .on("tasks.unmerged", () => ({ unmerged: false }))
+    // HE-51: nothing to merge (a check gives its own).
+    .on("git.mergeWork", () => ({ base: "main", branch: "ok" as const, worktree: "ok" as const, commits: 0, uncommitted: 0 }))
   installed.current = host
   return host
 }

@@ -4,6 +4,7 @@ import { ChangesTab } from "../git/ChangesTab.ts"
 import type { ChangesError } from "../git/ChangesTab.ts"
 import { TaskBase } from "../git/TaskBase.ts"
 import { Worktrees } from "../git/Worktrees.ts"
+import { Tasks } from "../tasks/Tasks.ts"
 
 const notFound = (e: { readonly id: string }) => Effect.fail(new NotFound({ what: "task", id: e.id }))
 const busy = (e: { readonly message: string }) => Effect.fail(new Conflict({ reason: "agent_running", detail: e.message }))
@@ -24,6 +25,7 @@ export const GitHandlers = GitRpcs.toLayer(
     const worktrees = yield* Worktrees
     const base = yield* TaskBase
     const tab = yield* ChangesTab
+    const tasks = yield* Tasks
     return GitRpcs.of({
       // A setup that fails was the old 400.
       "git.setupWorktree": ({ id }) =>
@@ -44,6 +46,7 @@ export const GitHandlers = GitRpcs.toLayer(
           }),
         ),
       "git.taskDiff": ({ id }) => base.diff(id).pipe(Effect.catchTag("TaskNotFound", notFound)),
+      "git.mergeWork": ({ id }) => tasks.get(id).pipe(Effect.flatMap(base.mergeWork), Effect.catchTag("TaskNotFound", notFound)),
       "git.status": ({ id }) => changes(tab.status(id)),
       "git.diff": ({ id, path, staged, untracked }) => changes(tab.diff(id, path, { staged: staged ?? false, untracked: untracked ?? false })),
       "git.show": ({ id, rev, stash }) => changes(tab.show(id, rev, stash ?? false)),

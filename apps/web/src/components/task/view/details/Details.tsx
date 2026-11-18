@@ -10,6 +10,8 @@ import { Dependencies } from "../../../board/Dependencies"
 import { IncomingSection, MergesIntoSection, useIncoming } from "../../../board/MergesInto"
 import { levelsTitle, stackedBelowId, stackedOnTitle, useLevels } from "../../../board/StackedOn"
 import { LevelsSection, StackedOnSection } from "../../../board/stackSections"
+// HE-51
+import { marksMergeWork, MergeWorkLine } from "../../../board/MergeWork"
 import { Button, PrIcon, PreviewDot, showsPreview, Toggle } from "../../../ui"
 import { LinkedTasks, usesAsana } from "../../ExternalLinks"
 import { TitleSection } from "../Title"
@@ -272,6 +274,11 @@ function DetailsRest({ task, mode }: { task: Task; mode: Mode }) {
                     <GitBranch size={11} className="mr-1 inline align-[-1px]" />
                     {task.branch}
                   </span>
+                </Row>
+              )}
+              {marksMergeWork(task) && (
+                <Row label="To merge">
+                  <MergeWorkLine task={task} />
                 </Row>
               )}
               {task.base_branch && (

@@ -1,5 +1,5 @@
 import { Context, Effect, FileSystem, Layer, Option, Ref } from "effect"
-import type { Branch, DiffResult, Project, StartFrom, Task, TaskId } from "@huntaway/contracts"
+import type { Branch, DiffResult, MergeWork, Project, StartFrom, Task, TaskId } from "@huntaway/contracts"
 import { Proc } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
@@ -104,6 +104,11 @@ export interface TaskBaseShape {
    * where its agent works, or tasks merging into it. When it can't tell, yes, so its agent sorts the merge out.
    */
   readonly hasWorkToMerge: (task: Task) => Effect.Effect<boolean>
+  /**
+   * HE-51: what the task has to merge, counted for the board: the commits on its branch that its base branch (or its
+   * upstream) doesn't have, and the files its worktree has uncommitted changes to; a branch or worktree that's gone says so.
+   */
+  readonly mergeWork: (task: Task) => Effect.Effect<MergeWork>
   /** Drop a deleted task's start ref from `repo`. */
   readonly forgetStart: (repo: string, task: TaskId) => Effect.Effect<void>
   /**
@@ -282,6 +287,23 @@ export class TaskBase extends Context.Service<TaskBase, TaskBaseShape>()("huntaw
           )
         })
 
+        /**
+         * How many commits `branch` has that base branch `base` and its upstream (as last fetched) don't, in `dir`; null
+         * when neither is there or git fails.
+         */
+        const ahead = Effect.fnUntraced(function* (dir: string, branch: string, base: string) {
+          // It may have started from the base branch's upstream, ahead of the local branch (or with no local branch).
+          const bases = [`refs/heads/${base}`]
+          const up = yield* upstream(g, dir, base)
+          if (up !== null) bases.push(up.tracking)
+          const args = ["rev-list", "--count", `refs/heads/${branch}`]
+          for (const b of bases) if ((yield* g.commit(dir, b)) !== null) args.push(`^${b}`)
+          if (args.length === 3) return null
+          const o = yield* g.run(dir, args).pipe(Effect.orElseSucceed(() => null))
+          const n = o?.ok === true ? o.stdout.trim() : ""
+          return /^\d+$/.test(n) ? Number(n) : null
+        })
+
         const hasWorkToMerge = Effect.fn("TaskBase.hasWorkToMerge")(function* (task: Task) {
           const project = yield* projectOf(task)
           if (project === null) return false
@@ -304,17 +326,35 @@ export class TaskBase extends Context.Service<TaskBase, TaskBaseShape>()("huntaw
             return base === null || (yield* g.currentBranch(dir)) !== base || (yield* dirty(dir))
           }
           if (base === null) return true
-          // It may have started from the base branch's upstream, ahead of the local branch (or with no local branch).
-          const bases = [`refs/heads/${base}`]
-          const up = yield* upstream(g, dir, base)
-          if (up !== null) bases.push(up.tracking)
-          const args = ["rev-list", "--count", `refs/heads/${branch}`]
-          for (const b of bases) if ((yield* g.commit(dir, b)) !== null) args.push(`^${b}`)
-          if (args.length === 3) return true
-          const o = yield* g.run(dir, args).pipe(Effect.orElseSucceed(() => null))
-          if (o === null || !(o.ok && o.stdout.trim() === "0")) return true
+          if ((yield* ahead(dir, branch, base)) !== 0) return true
           if (task.worktree_path !== null && task.worktree_state === "ready") return yield* dirty(task.worktree_path)
           return false
+        })
+
+        const mergeWork = Effect.fn("TaskBase.mergeWork")(function* (task: Task) {
+          const project = yield* projectOf(task)
+          const nothing: MergeWork = { base: null, branch: "none", worktree: "none", commits: null, uncommitted: null }
+          if (project === null) return nothing
+          const dir = repoOf(project)
+          if (!(yield* g.isRepo(dir))) return nothing
+          const base = yield* taskBase(get, task, project)
+          // A worktree the board has ready may have been deleted behind its back, its branch kept.
+          const wt = task.worktree_path !== null && task.worktree_state === "ready" ? task.worktree_path : null
+          const worktree: MergeWork["worktree"] = wt === null ? "none" : (yield* exists(wt)) ? "ok" : "gone"
+          const uncommittedFiles =
+            wt !== null && worktree === "ok"
+              ? // Polled for every task in review: it mustn't take the index lock a git command there may want.
+                yield* uncommitted(g, fs, wt, { noLocks: true }).pipe(
+                  Effect.map((s) => lines(s).length),
+                  Effect.orElseSucceed(() => null),
+                )
+              : null
+          const branch = task.branch
+          if (branch === null) return { base, branch: "none", worktree, commits: null, uncommitted: uncommittedFiles } satisfies MergeWork
+          if ((yield* g.commit(dir, `refs/heads/${branch}`)) === null)
+            return { base, branch: "gone", worktree, commits: null, uncommitted: uncommittedFiles } satisfies MergeWork
+          const commits = base === null ? null : yield* ahead(dir, branch, base)
+          return { base, branch: "ok", worktree, commits, uncommitted: uncommittedFiles } satisfies MergeWork
         })
 
         return TaskBase.of({
@@ -339,6 +379,7 @@ export class TaskBase extends Context.Service<TaskBase, TaskBaseShape>()("huntaw
           keepStarts,
           diff,
           hasWorkToMerge,
+          mergeWork,
           forgetStart: (dir, task) => forgetStart(g, dir, task),
           followBase: Effect.fn("TaskBase.followBase")(function* (task: Task) {
             const project = yield* projectOf(task)
