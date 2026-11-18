@@ -124,8 +124,12 @@ export function Bin({
         onLeave?.()
       }}
       // A card picked up from the popover keeps it drawn (hidden once the drag leaves it) until the drag ends: a drag
-      // whose card is taken out of the page goes nowhere.
-      onDragStart={() => setCarrying(true)}
+      // whose card is taken out of the page goes nowhere. It starts over the popover, which stays shown meanwhile (to
+      // reorder in it); hidden at once, the drop would land in the column under it, or Chrome would cancel the drag.
+      onDragStart={() => {
+        setCarrying(true)
+        setOver(true)
+      }}
     >
       <button
         ref={label}
