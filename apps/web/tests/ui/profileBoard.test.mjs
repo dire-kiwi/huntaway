@@ -30,7 +30,13 @@ test("a profile's board has its tasks from every project, and its bar leaves out
     assert.deepEqual(await bar(page, "Default"), { in_progress: 1, needs_attention: 1, in_review: 2 })
     assert.deepEqual(await bar(page, "work"), { ready_for_merge: 1 })
 
-    await ui.run(["click css=nav[aria-label=Profiles] >> text=work", "wait Ship the site", "gone Finished work to look over"])
+    // Its one task is in Ready for merge, whose queue the label shows (HE-52).
+    await ui.run([
+      "click css=nav[aria-label=Profiles] >> text=work",
+      "gone Finished work to look over",
+      "click button[data-status=ready_for_merge]",
+      "wait Ship the site",
+    ])
     assert.equal(new URL(page.url()).pathname, "/profile/work")
   })
 })

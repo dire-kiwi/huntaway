@@ -5,11 +5,12 @@ import type { Resolution, Status } from "@huntaway/contracts"
 import type { TaskUpdateOptions } from "../ConfirmTodos"
 import { attempt, inTab, moveToPen, type PenTab } from "../penModel"
 
-import { isoOf } from "../../ui"
+import { errorText, isoOf } from "../../ui"
+import { saveMarks } from "../../task/Reminders"
 import type { SortKey } from "../boardQuery"
 import { dropPosition } from "../taskOrder"
 import type { Drops } from "./DropColumn"
-import type { DropTarget } from "./model"
+import { FROM_REMINDERS, type DropTarget } from "./model"
 import type { BoardStacks } from "./useBoardStacks"
 import { moveTaskEffect } from "../../boardHelpers"
 import { board } from "../../../state/board"
@@ -78,6 +79,9 @@ export function useBoardDrops({
     if (!task) return
     // Into the row's pen first, which shows at once, so the move to the column keeps it.
     if (lane && !inTab(lane, task)) attempt(moveToPen([task], lane.name), setDropErr)
+    // Taken out of the Reminders bin (HE-52), it no longer waits on its reminder, which would keep it out of the column.
+    if (e.dataTransfer.types.includes(FROM_REMINDERS) && task.remind_at)
+      saveMarks(task, { remind_at: null }).catch((err: unknown) => setDropErr(errorText(err)))
     void dropTask(board.get().tasks[id] ?? task, status, target?.before ?? null)
   }
   const drops: Drops = { onDragOver, onDrop, onLeave: () => setDropTarget(null) }

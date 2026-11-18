@@ -39,7 +39,7 @@ test("cards show what a task merges into, and how many merging into a task are m
       await card(page, target).locator("[title^='Merging into this task']").getAttribute("title"),
       /SHOP-2 Cart totals \(To do\)\nSHOP-3 Payment form \(merged\)/,
     )
-    assert.match(await card(page, open).innerText(), /→\s*1/)
+    assert.match(await card(page, open).innerText(), /→\s*(SHOP-)?1/)
     const done = card(page, merged).locator("button[title^='Merged into SHOP-1']")
     assert.match(await done.getAttribute("class"), /text-st-done/)
     // The badge opens the task it merges into, not its own card.

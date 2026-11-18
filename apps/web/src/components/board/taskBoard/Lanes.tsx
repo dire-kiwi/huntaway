@@ -7,7 +7,7 @@ import { IconButton, StatusIcon } from "../../ui"
 import { TaskRow } from "../TaskCard"
 import { Cards, type CardsProps } from "./Cards"
 import { DropColumn } from "./DropColumn"
-import { asStrip, CAN_ADD, stripAction } from "./model"
+import { asStrip, CAN_ADD, QUEUE, stripAction } from "./model"
 
 /** What the rows of pens are drawn from, with the cards'. */
 export type LanesProps = CardsProps & { lanes: PenLanes; canAdd: boolean }
@@ -93,10 +93,14 @@ export function ListLanes(props: LanesProps) {
   )
 }
 
-/** The board in rows of pens: the columns' headers, then a row for each pen with a cell in each column. */
+/**
+ * The board in rows of pens: the columns' headers, then a row for each pen with a cell in each column. Ready for merge
+ * is a label in the board's header (MergeQueue), as on the board without rows.
+ */
 export function KanbanLanes(props: LanesProps) {
   const { lanes, board, q, drops, menus, canAdd } = props
-  const { shownStatuses, shown } = board
+  const { shown } = board
+  const shownStatuses = board.shownStatuses.filter((s) => s.id !== QUEUE)
   const { backlogOpen, toggleBacklog } = q
   const { dropTarget, laneDrops } = drops
   // How many of the tasks shown on the board (not archived ones) are in a pen's row.
