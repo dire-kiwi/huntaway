@@ -1,5 +1,6 @@
 import { type HostProfile as Profile, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
 import type { Status } from "@huntaway/contracts"
+import { DraftAttachments } from "../task/Attachments"
 import { asanaLink, AsanaPicker } from "../task/ExternalLinks"
 import { Modal } from "../ui"
 import { submitBlocks } from "./newTask/blocks"
@@ -101,6 +102,7 @@ export function NewTaskModal({
         }}
       >
         <Editor ed={ed} completion={completion} layout={layout} where={place} tok={tok} attach={attach} />
+        <DraftAttachments draft={attach} hostId={target.host_id} />
         <ReadsAs opened={opened} origin={origin} where={place} agent={agent} tok={tok} />
         <Legend completion={completion} />
         <OptionsRow where={place} tok={tok} options={options} agent={agent} kept={kept} />

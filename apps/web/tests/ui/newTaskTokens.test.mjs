@@ -12,9 +12,7 @@
 //   folder was ready, and looked again every 3 s (on a clock 10 times as fast). Here the setup page (task/WorktreeSetup)
 //   asks again with `projects.get` every 3 s and the server reads a not-ready folder again as often
 //   (`Projects.gitSweeper`), on the real clock, so the check waits for the page to go.
-// - The two cases with another host checked that a draft's uploaded files stay on the host its `in:` sends it to.
-//   Attachments in New task are a cut on this board (docs/plan/13-milestones.md), so they check where the draft goes
-//   and its text, without files. They share one linked host rather than starting one each.
+// - The two cases with another host share one linked host rather than starting one each.
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { mkdirSync } from "node:fs"
@@ -333,6 +331,9 @@ test("a repository that becomes git's after the board loads gets worktrees", asy
 
 /** The draft kept for Shopfront's dialog. */
 const drafted = (page) => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "null"), `ia.newTask.draft.${shopfront.id}`)
+/** Attaches a text file with the dialog's Attach files, uploaded to the host it goes on. */
+const attachFile = (page) =>
+  page.locator("[data-modal] input[type=file]").setInputFiles({ name: "saved.txt", mimeType: "text/plain", buffer: Buffer.from("notes") })
 /** The profile's board, its dialog starting in `start`, once both hosts' projects are there (a dialog opened before then starts in no project). */
 const profileBoard = (start) => [
   "goto /profile/Default",
@@ -364,10 +365,9 @@ describe("with another host", () => {
   })
   afterAll(() => remote?.stop())
 
-  // IA-220 review: a draft brought back by Add another keeps where its `in:` sends it, on another host than the task just
-  // created. (The old check's point was that its files, uploaded on that host, are kept: attachments in New task are a
-  // cut on this server, docs/plan/13-milestones.md, so it checks the draft's text and where it goes.)
-  test("a draft brought back by Add another keeps the host its in: sends it to", async () => {
+  // IA-220 review: a draft brought back by Add another keeps its files when its `in:` sends it to another host than the
+  // task just created: they're on that host, so moving there mustn't drop them.
+  test("a draft brought back by Add another keeps its files on the host its in: sends it to", async () => {
     await withBrowser(server, { timeout: 20000 }, async (ui) => {
       const { page } = ui
       // A draft in Shopfront's dialog that goes to the other host's project.
@@ -380,7 +380,12 @@ describe("with another host", () => {
         "wait New task in Demo (remote)",
         "type Saved remote notes",
       ])
-      await eventually(async () => assert.equal((await drafted(page))?.description, "in:DEMO.remote Saved remote notes"))
+      await attachFile(page)
+      await eventually(async () => {
+        const saved = await drafted(page)
+        assert.equal(saved?.description, "in:DEMO.remote Saved remote notes")
+        assert.equal(saved?.files.length, 1)
+      })
       // Then Add another from Shop's dialog creates a task in Shopfront, which brings that draft back.
       await ui.run([
         "press Escape",
@@ -396,16 +401,17 @@ describe("with another host", () => {
         "wait Created",
         `assert ${value} === 'in:DEMO.remote Saved remote notes'`,
         "wait New task in Demo (remote)",
+        "wait saved.txt",
         // The note of the task just made stays, with its own key.
         "wait Created SHOPF-",
       ])
+      assert.equal((await drafted(page))?.files.length, 1)
     })
   })
 
   // IA-220 review: moving the caret into an `in:` already taken (REM, the start of REMOTE) doesn't move the task back to
-  // where the dialog started while it's there. (The old check's point was the files uploaded where the `in:` sends it,
-  // which that would drop: attachments in New task are a cut on this server, so it checks where the task goes.)
-  test("moving the caret into and out of an in: keeps where the task goes", async () => {
+  // where the dialog started while it's there, which would drop the files uploaded where the `in:` sends it.
+  test("moving the caret into and out of an in: keeps where the task goes and its files", async () => {
     await withBrowser(server, { timeout: 20000 }, async (ui) => {
       const { page } = ui
       await ui.run([
@@ -418,13 +424,16 @@ describe("with another host", () => {
         "wait New task in Remnant",
         "type Saved remote notes",
       ])
+      await attachFile(page)
+      await eventually(async () => assert.equal((await drafted(page))?.files.length, 1))
       // Into the token (its list opens, offering REMOTE too), and out again.
       for (const [keys, list] of [
         [["Control+Home", "ArrowRight", "ArrowRight", "ArrowRight", "ArrowRight", "ArrowRight", "ArrowRight"], "wait role=option[name=/Faraway/]"],
         [["Control+End"], "gone role=listbox"],
       ]) {
-        await ui.run(["eval document.querySelector('textarea').focus()", ...keys.map((k) => `press ${k}`), list, "wait New task in Remnant"])
+        await ui.run(["eval document.querySelector('textarea').focus()", ...keys.map((k) => `press ${k}`), list, "wait New task in Remnant", "wait saved.txt"])
         assert.equal(await page.locator("text=New task in Shopfront").count(), 0)
+        assert.equal((await drafted(page))?.files.length, 1)
       }
       await ui.run([`assert ${value} === 'in:REM Saved remote notes'`])
     })
