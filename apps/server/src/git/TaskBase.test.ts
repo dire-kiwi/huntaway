@@ -313,6 +313,14 @@ describe("a task's diff", () => {
       Effect.gen(function* () {
         const { repo, task, wt, branch } = yield* taskWithWork
         assert.deepStrictEqual(yield* mergeWork(task.id), { base: "master", branch: "ok", worktree: "ok", commits: 1, uncommitted: 0 })
+        // It's polled: a tracked file's stat info gone stale (touched, not changed) isn't written back to the index, which
+        // would take the index lock a git command run there meanwhile wants.
+        const fs = yield* FileSystem.FileSystem
+        const indexFile = yield* git(wt, ["rev-parse", "--path-format=absolute", "--git-path", "index"])
+        const before = yield* fs.readFile(indexFile).pipe(Effect.orDie)
+        yield* sh("touch", ["-d", "1 minute", `${wt}/a`])
+        assert.deepStrictEqual(yield* mergeWork(task.id), { base: "master", branch: "ok", worktree: "ok", commits: 1, uncommitted: 0 })
+        assert.deepStrictEqual(yield* fs.readFile(indexFile).pipe(Effect.orDie), before, "the index is left as it was")
         yield* commitFile(wt, "b")
         yield* write(`${wt}/c`, "draft")
         yield* write(`${wt}/a`, "changed")

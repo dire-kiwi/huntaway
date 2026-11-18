@@ -343,7 +343,8 @@ export class TaskBase extends Context.Service<TaskBase, TaskBaseShape>()("huntaw
           const worktree: MergeWork["worktree"] = wt === null ? "none" : (yield* exists(wt)) ? "ok" : "gone"
           const uncommittedFiles =
             wt !== null && worktree === "ok"
-              ? yield* uncommitted(g, fs, wt).pipe(
+              ? // Polled for every task in review: it mustn't take the index lock a git command there may want.
+                yield* uncommitted(g, fs, wt, { noLocks: true }).pipe(
                   Effect.map((s) => lines(s).length),
                   Effect.orElseSucceed(() => null),
                 )
