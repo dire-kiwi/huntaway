@@ -1,4 +1,6 @@
 import type { TaskServer } from "@huntaway/contracts"
+import { serverWords, shimOf } from "../../tasks/Leftovers.ts"
+import type { LeftoverProc } from "../../tasks/Leftovers.ts"
 
 // What `/proc` says, read as text (huntaway's agent/servers.ts): the listening sockets of `/proc/net/tcp` and `tcp6`,
 // the task a process's environment names, and a process's parent and group. Plain functions, tested on their own;
@@ -64,13 +66,34 @@ export const taskOf = (environ: string): string | null => {
   return null
 }
 
-/** What `/proc/<pid>/stat` says of a process: its parent and process group. */
-export const parseStat = (text: string): { readonly ppid: number; readonly pgid: number } | null => {
+/** What `/proc/<pid>/stat` says of a process: its parent, process group and session. */
+export const parseStat = (text: string): { readonly ppid: number; readonly pgid: number; readonly sid: number } | null => {
   // The command (field 2) is in parentheses and may hold spaces.
   const f = text.slice(text.lastIndexOf(")") + 2).split(" ")
   const ppid = Number(f[1])
   const pgid = Number(f[2])
-  return Number.isInteger(ppid) && Number.isInteger(pgid) ? { ppid, pgid } : null
+  const sid = Number(f[3])
+  return Number.isInteger(ppid) && Number.isInteger(pgid) && Number.isInteger(sid) ? { ppid, pgid, sid } : null
+}
+
+/** A process as `shellsServe` sees it: its parent, its session, and the socket inodes it has open. */
+export interface SessionProc {
+  readonly pid: number
+  readonly ppid: number
+  readonly sid: number
+  readonly sockets: ReadonlyArray<string>
+}
+
+/**
+ * Whether every background shell of the agent `agent` is a server (HA-409): Claude Code starts each in a session of its
+ * own, a child of the agent that leads it, and a server is one whose session has a process listening on a TCP port (one
+ * of `listening`'s inodes). The agent's other children (its MCP servers) are in its own session. False with none.
+ */
+export const shellsServe = (procs: ReadonlyArray<SessionProc>, listening: ReadonlySet<string>, agent: number): boolean => {
+  const shells = new Set(procs.filter((p) => p.ppid === agent && p.sid === p.pid).map((p) => p.pid))
+  if (shells.size === 0) return false
+  const serving = new Set(procs.filter((p) => shells.has(p.sid) && p.sockets.some((i) => listening.has(i))).map((p) => p.sid))
+  return serving.size === shells.size
 }
 
 /** A process's command line from `/proc/<pid>/cmdline`, its arguments joined, cut to 200 characters. */
@@ -106,4 +129,33 @@ export const shown = (before: ReadonlyArray<TaskServer>, found: ReadonlyArray<Ta
     .filter((f, i, all) => all.findIndex((g) => g.port === f.port) === i)
     .toSorted((a, b) => a.port - b.port)
   return list.length === before.length && list.every((s, i) => same(s, before[i])) ? null : list
+}
+
+/**
+ * Of `procs`, those a done or deleted task's agents left running (HA-409, `DevServers.stopLeft`): whose environment names
+ * `task` (`taskOf`, by pid), but never the board (`self`), what it descends from or what it started; nor a board's
+ * server or an ia-shim, or anything under one (a live agent and its shells, of this board or another; a test server the
+ * agent started is `Leftovers`'), nor `own` (the task's live runs' agents and shims).
+ */
+export const leftRunning = (
+  procs: ReadonlyArray<LeftoverProc>,
+  taskOfPid: ReadonlyMap<number, string | null>,
+  task: string,
+  self: number,
+  own: ReadonlySet<number>,
+): ReadonlyArray<LeftoverProc> => {
+  const byPid = new Map(procs.map((p) => [p.pid, p] as const))
+  const mine = new Set<number>()
+  for (let p = self, i = 0; p > 1 && i < 64; i++) {
+    mine.add(p)
+    p = byPid.get(p)?.ppid ?? 0
+  }
+  const guarded = new Set(procs.filter((p) => serverWords(p) !== null || shimOf(p) !== null).map((p) => p.pid))
+  guarded.add(self)
+  /** Whether `p` or one of its ancestors is guarded. */
+  const under = (p: LeftoverProc) => {
+    for (let q: LeftoverProc | undefined = p, i = 0; q !== undefined && q.pid > 1 && i < 64; q = byPid.get(q.ppid), i++) if (guarded.has(q.pid)) return true
+    return false
+  }
+  return procs.filter((p) => taskOfPid.get(p.pid) === task && !mine.has(p.pid) && !own.has(p.pid) && !under(p))
 }

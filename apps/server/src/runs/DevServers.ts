@@ -3,11 +3,12 @@ import { SqlClient } from "effect/sql"
 import { Conflict, Invalid, NotFound, TaskId, Timestamp } from "@huntaway/contracts"
 import type { Task, TaskServer } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
+import { Leftovers } from "../tasks/Leftovers.ts"
 import { Events } from "../platform/Events.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
-import { commandLine, parseStat, parseTcp, shown, socketInode, taskOf } from "./devServers/proc.ts"
-import type { Listening } from "./devServers/proc.ts"
+import { commandLine, leftRunning, parseStat, parseTcp, shellsServe, shown, socketInode, taskOf } from "./devServers/proc.ts"
+import type { Listening, SessionProc } from "./devServers/proc.ts"
 import { RunDir } from "./RunDir.ts"
 import { RunRepo } from "./RunRepo.ts"
 
@@ -24,6 +25,10 @@ import { RunRepo } from "./RunRepo.ts"
 // Stop signals the server's process group (TERM, then KILL a few seconds later), never the agent's, its shim's or the
 // board's: a server in one of those has just its own process tree signalled. Linux only: elsewhere (macOS has no
 // /proc) nothing is found, and tasks list no servers.
+//
+// Once a task is done with no agent left in it, or as it's deleted, what its agents left running is stopped
+// (`stopLeft`, HA-409): the dev servers a run's end left running (see `RunInput`), and anything else whose environment
+// names it.
 
 /** How often the board looks. */
 export const SCAN_EVERY = "4 seconds"
@@ -48,9 +53,52 @@ export interface DevServersShape {
    * not list, `Conflict` when its process no longer names the task or no longer listens there. Returns the task.
    */
   readonly stop: (task: TaskId, port: number) => Effect.Effect<Task, TaskNotFound | NotFound | Conflict | Invalid>
+  /**
+   * In the background, stop every process whose environment names the task (TERM, then KILL), never the board itself,
+   * what it descends from or what it started, nor a live run's agent or shim: once the task is done, or as it's
+   * deleted. `why` is for the log.
+   */
+  readonly stopLeft: (task: TaskId, why: string) => Effect.Effect<void>
 }
 
 type Signal = "SIGTERM" | "SIGKILL"
+
+/**
+ * Whether every background shell the agent `agent` has going listens on a TCP port, as `/proc` says now (HA-409, see
+ * `shellsServe`): the dev servers `RunInput` may leave running as it ends the run. False off Linux.
+ */
+export const shellsListen = (fs: FileSystem.FileSystem, agent: number): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    if (!SUPPORTED || agent <= 1) return false
+    const readText = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => null))
+    const pids = (yield* fs.readDirectory("/proc").pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((n) => /^\d+$/.test(n)).map(Number)
+    const stats = new Map<number, { readonly ppid: number; readonly sid: number }>()
+    for (const pid of pids) {
+      const text = yield* readText(`/proc/${pid}/stat`)
+      const st = text === null ? null : parseStat(text)
+      if (st !== null) stats.set(pid, st)
+    }
+    const shells = new Set([...stats].filter(([pid, st]) => st.ppid === agent && st.sid === pid).map(([pid]) => pid))
+    if (shells.size === 0) return false
+    const listening = new Set<string>()
+    for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+      const text = yield* readText(file)
+      if (text !== null) for (const l of parseTcp(text)) listening.add(l.inode)
+    }
+    // Only the shells' sessions' processes' sockets are read.
+    const procs: Array<SessionProc> = []
+    for (const [pid, st] of stats) {
+      if (!shells.has(st.sid)) continue
+      const dir = `/proc/${pid}/fd`
+      const sockets: Array<string> = []
+      for (const fd of yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))) {
+        const inode = socketInode(yield* fs.readLink(`${dir}/${fd}`).pipe(Effect.orElseSucceed(() => "")))
+        if (inode !== null) sockets.push(inode)
+      }
+      procs.push({ pid, ppid: st.ppid, sid: st.sid, sockets })
+    }
+    return shellsServe(procs, listening, agent)
+  })
 
 /** `kill(2)`, ignoring failures. */
 const signal = (target: number, sig: Signal) =>
@@ -73,6 +121,7 @@ export class DevServers extends Context.Service<DevServers, DevServersShape>()("
       const tasks = yield* TaskRepo
       const runs = yield* RunRepo
       const dirs = yield* RunDir
+      const leftovers = yield* Leftovers
       // When each task's last run ended, while the board still looks for what it left.
       const ended = yield* Ref.make<ReadonlyMap<TaskId, number>>(new Map())
       // Per pid, the task its environment names, read once (a process's environment as it started doesn't change).
@@ -260,7 +309,31 @@ export class DevServers extends Context.Service<DevServers, DevServersShape>()("
         return row
       })
 
-      return DevServers.of({ notifyRunEnded, scan, stop })
+      const stopLeftNow = Effect.fnUntraced(function* (task: TaskId, why: string) {
+        const all = yield* leftovers.list
+        if (all === null) return
+        // Read afresh, not from `envCache`: a pid may be another process's since.
+        const named = new Map<number, string | null>()
+        for (const p of all) {
+          const environ = yield* readText(`/proc/${p.pid}/environ`)
+          named.set(p.pid, environ === null ? null : taskOf(environ))
+        }
+        const found = leftRunning(all, named, task, process.pid, new Set(yield* runPids(task)))
+        if (found.length === 0) return
+        for (const p of found) yield* Effect.logInfo(`task ${task}: ${why}; stopping pid ${p.pid}, which its agent left running: ${p.cmd.slice(0, 300)}`)
+        yield* leftovers.stop(found)
+        yield* scanLogged
+      })
+
+      const stopLeft = Effect.fn("DevServers.stopLeft")(function* (task: TaskId, why: string) {
+        if (!SUPPORTED) return
+        yield* FiberSet.run(
+          later,
+          stopLeftNow(task, why).pipe(Effect.catchCause((cause) => Effect.logWarning(`task ${task}: stopping what its agents left running`, cause))),
+        )
+      })
+
+      return DevServers.of({ notifyRunEnded, scan, stop, stopLeft })
     }).pipe(Effect.annotateLogs({ module: "servers" })),
   )
 

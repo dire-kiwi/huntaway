@@ -18,6 +18,7 @@ import { Reviews } from "../review/Reviews.ts"
 import { RunEnds } from "../runs/RunEnds.ts"
 import { Routines } from "../automations/Routines.ts"
 import { Runs } from "../runs/Runs.ts"
+import { DevServers } from "../runs/DevServers.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
 // 6.1
 import { Terminals } from "../terminal/Terminals.ts"
@@ -43,6 +44,7 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const runs = yield* Runs
       const runEnds = yield* RunEnds
       const taskTmp = yield* TaskTmp
+      const devServers = yield* DevServers
       const titles = yield* Titles
       const stackTitles = yield* StackTitles
       const permissions = yield* Permissions
@@ -139,6 +141,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           yield* taskTmp.deleted(task.id)
           // 6.1: its terminals end with it.
           yield* terminals.killAll(task.id)
+          // What its agents left running, such as a dev server its run's end left (HA-409), in the background.
+          if (task.kind === "task") yield* devServers.stopLeft(task.id, "it's being deleted")
           yield* permissions.expireFor({ _tag: "Task", task: task.id })
           yield* permissions.expireFor({ _tag: "DeletionsOf", task: task.id })
         } else {
@@ -165,6 +169,9 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           }
           // Done with no agent left in it, its temp folder goes (in the background); it may be a review thread's run ending.
           if (moved || change.before?.running !== change.after.running) yield* taskTmp.changed(change.after)
+          // Done with no agent left in it, what its agents left running stops, such as the dev servers its runs' ends left (HA-409).
+          const doneNow = change.after.kind === "task" && change.after.status === "done" && !change.after.running
+          if (doneNow && (moved || change.before?.running === true)) yield* devServers.stopLeft(change.after.id, "it's done")
           // 4.6: a task that entered In review (or whose run ended there) is reviewed, if a review is due.
           const ended = change.before?.running === true && !change.after.running
           if (change.after.kind === "task" && change.after.status === "in_review" && (moved || ended)) yield* reviews.reconcile(change.after.id)

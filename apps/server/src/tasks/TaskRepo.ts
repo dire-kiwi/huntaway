@@ -368,12 +368,16 @@ export interface TaskRepoShape {
   readonly setLostBackground: (task: TaskId, lost: ReadonlyArray<LostBackground>) => Effect.Effect<void>
 }
 
-/** A piece of background work a run's end stopped: what it was, and a line about it. */
+/**
+ * A piece of background work a run's end stopped: what it was, and a line about it; `running` for a dev server the board
+ * left running as it ended the run at its turn's end (HA-409).
+ */
 export interface LostBackground {
   readonly kind: string
   readonly label: string
+  readonly running?: boolean | undefined
 }
-const LostRows = JsonColumn(Schema.Array(Schema.Struct({ kind: Schema.String, label: Schema.String })), [])
+const LostRows = JsonColumn(Schema.Array(Schema.Struct({ kind: Schema.String, label: Schema.String, running: Schema.optional(Schema.Boolean) })), [])
 
 // Each row schema's reader, its decoder made once.
 const projectRows = rowsOf(ProjectRow)

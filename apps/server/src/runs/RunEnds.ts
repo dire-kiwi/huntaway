@@ -91,7 +91,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       })
 
       /** Part one, under the lock: the outcome, the run ended, its steers queued again, the decision and its notices. */
-      const recordEnd = (change: RunExited, planOnly: boolean) =>
+      const recordEnd = (change: RunExited, planOnly: boolean, detached: boolean) =>
         db.tx(
           Effect.gen(function* () {
             const found = yield* repo.get(change.run)
@@ -115,7 +115,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
             const mergesToDone = task.kind === "task" && task.merging ? (yield* workflowFacts.mergeFinish(task)) !== null : false
             const config = task.claude_config_id === null ? null : Option.getOrNull(yield* configs.get(task.claude_config_id))
             const decision = decideFinish({
-              outcome: outcomeOf(run, change.exit, change.errorTail),
+              outcome: outcomeOf(run, change.exit, change.errorTail, detached),
               run,
               task,
               limitAhead: isAhead(task.limit_reset_at, at),
@@ -197,7 +197,9 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         // 6.2: what a stopped or failed run had written of its documents, kept as its turn's (before the plan rule reads them).
         yield* turnHooks.turnEnded(change.task)
         const planOnly = yield* turnCheckpoints(change)
-        const first = yield* locks.withLock(["task", change.task])(recordEnd(change, planOnly))
+        // HA-409: the board ended it at its turn's end, leaving its dev servers running.
+        const detached = (yield* background.detached(change.run)).length > 0
+        const first = yield* locks.withLock(["task", change.task])(recordEnd(change, planOnly, detached))
         if (first === null) return
         const { run, decision, later } = first
         // What the run had going goes with it: its wait is over (the old `wait.ended`), its tokens are counted, its
