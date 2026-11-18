@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem, Schema } from "effect"
+import { spawn } from "node:child_process"
+import { Deferred, Effect, Exit, FileSystem, Schema } from "effect"
 import type { Scope } from "effect"
 import type { SecureRandom } from "effect/crypto"
 import { SqlClient } from "effect/sql"
@@ -9,8 +10,11 @@ import { fakeAgent, TestBoard } from "@huntaway/testing"
 import type { FakeAgent } from "@huntaway/testing"
 import { Prompts } from "../agents/Prompts.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
-import { labelOf, parseBackground } from "./background.ts"
+import { detachable, labelOf, looksLikeServer, parseBackground } from "./background.ts"
+import type { BackgroundTask } from "./background.ts"
 import { BackgroundWork } from "./BackgroundWork.ts"
+import { TASK_ENV } from "./devServers/proc.ts"
+import { SUPPORTED } from "./DevServers.ts"
 import type { RunDir } from "./RunDir.ts"
 import { RunEnds } from "./RunEnds.ts"
 import { RunInput } from "./RunInput.ts"
@@ -93,6 +97,24 @@ const stopTasks = (agent: FakeAgent) =>
         : []
     }),
   )
+
+/** A shell the Bash tool started in the background. */
+const shell = (id: string, command: string, tool = "Bash"): BackgroundTask => ({ id, type: "local_bash", description: null, since: null, command, tool })
+
+/** SIGKILL, ignoring a process that is gone. */
+const kill = (pid: number) => {
+  try {
+    process.kill(pid, "SIGKILL")
+  } catch {
+    // Gone already.
+  }
+}
+
+/** A server on a free port, which says where it listens and its pid. */
+const SERVER_SCRIPT =
+  "const s = require('node:net').createServer(); s.listen(0, '127.0.0.1', () => console.log('port ' + s.address().port + ' pid ' + process.pid))"
+/** An agent that starts `SERVER_SCRIPT` in a session of its own, as Claude Code's Bash tool does, and waits. */
+const AGENT_SCRIPT = `require('node:child_process').spawn(process.execPath, ['-e', "${SERVER_SCRIPT}"], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); setInterval(() => {}, 1e9)`
 
 describe("background work", () => {
   it.effect("a turn that leaves only a shell going leaves the task idle; a message goes straight in (HA-187)", () =>
@@ -318,6 +340,155 @@ describe("background work", () => {
           result,
         ])
         assert.isTrue(yield* told.agent.inputClosed)
+      }),
+    ),
+  )
+
+  it.effect("only shells the Bash tool started that look like servers, and that the agent doesn't wait on, can be left running (HA-409)", () =>
+    Effect.sync(() => {
+      for (const c of [
+        "astro dev --port 4331",
+        "cd /home/me/worktrees/22-dex/frontend && npx astro dev --port 4331 > $TMPDIR/astro.log 2>&1",
+        "npx vite",
+        "pnpm preview",
+        "rm -rf .preview && pnpm preview",
+        "npm run dev -- --port 5199 --strictPort",
+        "pnpm dev > /tmp/dev.log 2>&1",
+        "pnpm dev:web",
+        "PORT=4000 npm start",
+        "pnpm run start",
+        "python3 -m http.server 0 --bind 127.0.0.1",
+        "bundle exec rails server",
+        "pnpm run storybook",
+      ]) {
+        assert.isTrue(looksLikeServer(c), c)
+      }
+      for (const c of [
+        "timeout 1200 pnpm test > $TMPDIR/test.log 2>&1",
+        "cd apps/server && timeout 900 pnpm test > $TMPDIR/test.log 2>&1",
+        "cd apps/server && pnpm test > $TMPDIR/test.log 2>&1",
+        "pnpm test:ui 2>/dev/null | tail -40",
+        "cd server && cargo test > /tmp/x.log 2>&1",
+        "cargo test --features dev-tools",
+        "pnpm --filter server build",
+        "make test-rust; make test-go",
+        "vite build",
+        "pytest -x tests/",
+        'until grep -q "test exit" $TMPDIR/test.log 2>/dev/null; do sleep 5; done',
+        "for i in 1 2 3; do pnpm exec vp test --project browser 2>/dev/null; done",
+        "cd /home/me/worktrees/405-background-work-and-dev-servers && pnpm install",
+        "node scripts/build.mjs",
+        "tail -f /var/log/dev.log",
+        ". $TMPDIR/ia330-env; scripts/ia-api start TES-1 >/dev/null; scripts/ia-api wait-idle TES-1 --timeout 400 --approve",
+        "cd /var/tmp/mobile/server-ts && (npm ci > $TMPDIR/ci-server.log 2>&1; echo server $?)",
+        null,
+      ]) {
+        assert.isFalse(looksLikeServer(c), String(c))
+      }
+      assert.isTrue(detachable([shell("b1", "pnpm dev")], []))
+      assert.isFalse(detachable([], []))
+      // One it waits on, a test run beside it, a Monitor, a subagent, one of unknown type.
+      assert.isFalse(detachable([shell("b1", "pnpm dev")], ["b1"]))
+      assert.isFalse(detachable([shell("b1", "pnpm dev"), shell("b2", "pnpm test")], []))
+      assert.isFalse(detachable([shell("b1", "pnpm dev"), shell("m1", "tail -f server.log", "Monitor")], []))
+      assert.isFalse(detachable([shell("b1", "pnpm dev"), { id: "a1", type: "local_agent", description: "Explore", since: null }], []))
+      assert.isFalse(detachable([{ id: "b1", type: null, description: "pnpm dev", since: null, command: "pnpm dev", tool: "Bash" }], []))
+    }),
+  )
+
+  it.effect.skipIf(!SUPPORTED)(
+    "a turn that ends with only a dev server listening ends its run, leaving the server running; the task moves on (HA-409)",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const { task, agent } = yield* running
+          const fs = yield* FileSystem.FileSystem
+          // The agent (a session of its own, as ia-shim starts it) starts a server in a session of its own, as Claude
+          // Code's Bash tool does.
+          const up = yield* Deferred.make<{ readonly port: number; readonly pid: number }, string>()
+          const agentGone = yield* Deferred.make<void>()
+          const proc = yield* Effect.acquireRelease(
+            Effect.sync(() => {
+              const p = spawn(process.execPath, ["-e", AGENT_SCRIPT], {
+                detached: true,
+                stdio: ["ignore", "pipe", "ignore"],
+                env: { ...process.env, [TASK_ENV]: task },
+              })
+              let out = ""
+              p.stdout.on("data", (d: Buffer) => {
+                out += d.toString()
+                const m = /port (\d+) pid (\d+)/.exec(out)
+                if (m !== null) Deferred.doneUnsafe(up, Exit.succeed({ port: Number(m[1]), pid: Number(m[2]) }))
+              })
+              p.on("exit", () => Deferred.doneUnsafe(agentGone, Exit.void))
+              return p
+            }),
+            (p) =>
+              Effect.gen(function* () {
+                if (p.pid !== undefined) kill(-p.pid)
+                const s = yield* Deferred.await(up).pipe(Effect.option)
+                if (s._tag === "Some") kill(s.value.pid)
+              }),
+          )
+          yield* fs.writeFileString(`${agent.dir}/pid`, String(proc.pid ?? 0)).pipe(Effect.orDie)
+          const listening = yield* Deferred.await(up)
+          yield* output(agent, [
+            {
+              type: "assistant",
+              parent_tool_use_id: null,
+              message: { content: [{ type: "tool_use", id: "tu1", name: "Bash", input: { command: "pnpm dev", run_in_background: true } }] },
+            },
+            shells("b1"),
+            { type: "system", subtype: "task_started", task_id: "b1", tool_use_id: "tu1", task_type: "local_bash" },
+            result,
+          ])
+          assert.isFalse(yield* agent.inputClosed)
+          // Once Claude Code has had time to write its session out, the agent is killed outright; the server stays.
+          yield* TestClock.adjust("1500 millis")
+          yield* (yield* RunInput).settled(agent.run.id, "detach")
+          yield* Deferred.await(agentGone)
+          assert.doesNotThrow(() => process.kill(listening.pid, 0))
+          const background = yield* BackgroundWork
+          assert.deepStrictEqual(
+            (yield* background.detached(agent.run.id)).map((t) => t.id),
+            ["b1"],
+          )
+          // Its shim sees it killed; the run ends as a turn's end does, not failed.
+          yield* agent.end({ code: null, signal: 9 })
+          yield* (yield* RunEnds).ended({ _tag: "RunExited", run: agent.run.id, task, exit: { code: null, signal: 9 }, errorTail: "" })
+          const after = yield* (yield* TaskRepo).get(task)
+          assert.deepStrictEqual([after?.status, after?.attention_reason, after?.background_work], ["in_review", null, null])
+          // The next prompt says what was left running, not that it stopped.
+          const lost = yield* background.takeLost(task)
+          assert.deepStrictEqual(lost, [{ kind: "shell", label: "pnpm dev (server b1)", running: true }])
+          const prompt = yield* (yield* Prompts).start(task, "is it up?", lost)
+          assert.isTrue(prompt.startsWith("Note: this background work of yours was left running when your last run ended"), prompt)
+          assert.notInclude(prompt, "was stopped")
+        }),
+      ),
+    20_000,
+  )
+
+  it.effect("a test run left going, or a stopped turn, keeps the run as before", () =>
+    run(
+      Effect.gen(function* () {
+        const { agent } = yield* running
+        yield* output(agent, [
+          {
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              content: [{ type: "tool_use", id: "tu1", name: "Bash", input: { command: "pnpm test > $TMPDIR/t.log 2>&1", run_in_background: true } }],
+            },
+          },
+          shells("b1"),
+          { type: "system", subtype: "task_started", task_id: "b1", tool_use_id: "tu1", task_type: "local_bash" },
+          result,
+        ])
+        // Nothing looks: the agent hears when it ends.
+        yield* (yield* RunInput).settled(agent.run.id, "detach")
+        assert.isFalse(yield* agent.inputClosed)
+        assert.deepStrictEqual(yield* (yield* BackgroundWork).detached(agent.run.id), [])
       }),
     ),
   )

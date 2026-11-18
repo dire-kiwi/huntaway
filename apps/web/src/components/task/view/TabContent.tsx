@@ -6,7 +6,7 @@ import { Composer } from "../thread/Composer"
 import { WithHeldChoice } from "../../board/MergesInto"
 import { DetailsTab } from "./details/Details"
 import { DocumentView } from "../Document"
-import { ChangeSummaryView, ReviewSummary } from "../Review"
+import { ReviewSummary } from "../Review"
 // 6.7
 import { ActionLog } from "../ActionLog"
 // 6.6
@@ -62,6 +62,7 @@ export function TabContent({
   shown,
   docShown,
   wide,
+  summaries,
   onShowThread,
 }: {
   task: Task
@@ -72,6 +73,8 @@ export function TabContent({
   tab: Tab
   shown: Tab
   docShown: DocumentType | undefined
+  /** The summaries of its changes show folded at the bottom of the thread (HE-55). */
+  summaries: boolean
   onShowThread: () => void
 }) {
   useEffect(preloadTabs, [])
@@ -91,6 +94,7 @@ export function TabContent({
           cwd={task.worktree_path ?? ownWorkDir(task) ?? project?.repo_path}
           empty={isAssistant(task) ? ASSISTANT_EMPTY : isPensThread(task) ? PENS_EMPTY : isPenThread(task) ? PEN_EMPTY : NOT_STARTED}
           placeholder={placeholder}
+          summaries={summaries}
         />
       </WithHeldChoice>
     )
@@ -111,7 +115,7 @@ export function TabContent({
 
 /**
  * What a tab other than the thread or a document shows above the composer: the Changes tab (changes/Changes.tsx), the
- * review and the summary (task/Review.tsx), a workflow's tabs (task/Workflows.tsx, 6.6), the assistant's memory,
+ * review (task/Review.tsx), a workflow's tabs (task/Workflows.tsx, 6.6), the assistant's memory,
  * brief, routines and action log (6.7), and the task's details (HE-31).
  */
 function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, wide: boolean, onShowThread: () => void): ReactNode {
@@ -126,10 +130,6 @@ function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, wide: boolean, on
   ) : shown === "review" ? (
     <div className="h-full overflow-y-auto p-4">
       <ReviewSummary task={task} />
-    </div>
-  ) : shown === "summary" ? (
-    <div className="h-full overflow-y-auto p-4">
-      <ChangeSummaryView task={task} />
     </div>
   ) : isWorkflowTab(shown) ? (
     <div className="h-full overflow-y-auto">

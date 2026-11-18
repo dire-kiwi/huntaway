@@ -1,7 +1,9 @@
 import { toJson } from "../../ui/json"
 import { useEffect, useState } from "react"
-import { type AttachmentRef } from "@huntaway/client"
+import type { ComposerDraft } from "@huntaway/client"
+import { Atom } from "effect/reactivity"
 import type { ExternalLink } from "@huntaway/contracts"
+import { useAttachmentDraft } from "../../task/Attachments"
 import { usesAsana } from "../../task/ExternalLinks"
 import type { Draft } from "./draft"
 import type { AgentChoice } from "./useAgentChoice"
@@ -11,36 +13,12 @@ import type { Origin, Where } from "./useWhere"
 
 export type DraftExtras = ReturnType<typeof useDraft>
 
-/**
- * The files being attached (task/Attachments' `useAttachmentDraft`): not yet on this server's new task dialog, which
- * attaches nothing until the task view's attachments come over (M2). A draft's saved files are kept in it as they were.
- */
-export interface AttachmentDraft {
-  readonly enabled: boolean
-  readonly items: ReadonlyArray<{ key: string; name: string; ref?: AttachmentRef | undefined }>
-  readonly dragging: boolean
-  readonly files: ReadonlyArray<AttachmentRef>
-  readonly uploading: boolean
-  readonly clear: () => void
-  readonly restore: (refs: ReadonlyArray<AttachmentRef>) => void
-  readonly onPaste?: undefined
-  readonly dropProps: object
-}
-
-const noAttachments = (files: ReadonlyArray<AttachmentRef>): AttachmentDraft => ({
-  enabled: false,
-  items: [],
-  dragging: false,
-  files,
-  uploading: false,
-  clear: () => {},
-  restore: () => {},
-  dropProps: {},
-})
-
 /** The files and Asana tasks it's for, and the draft (with them) kept in localStorage as it's written. */
-export function useDraft({ draft, saved }: Origin, _where: Where, { profile }: AgentChoice, { description }: EditorText, { text, pending }: Tokens) {
-  const attach = noAttachments(saved?.files ?? [])
+export function useDraft({ draft, saved }: Origin, { target }: Where, { profile }: AgentChoice, { description }: EditorText, { text, pending }: Tokens) {
+  // The files pasted, dropped or picked, uploaded to the host it goes on; a saved draft's are already there. Only the
+  // files of this atom are used: the text is the dialog's own, kept in the draft below.
+  const [files] = useState(() => Atom.make<ComposerDraft | null>({ text: "", files: saved?.files ?? [] }))
+  const attach = useAttachmentDraft(target.host_id, files)
   // The Asana tasks it's for, in the profile it goes in, unless that has Asana turned off (6.11).
   const linking = usesAsana(profile)
   const [links, setLinks] = useState<ExternalLink[]>(saved?.links ?? [])

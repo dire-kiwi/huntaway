@@ -1,6 +1,6 @@
 import { clsx } from "clsx"
 import { useRef, type ReactNode } from "react"
-import type { AttachmentDraft } from "./useDraft"
+import type { AttachmentDraft } from "../../task/Attachments"
 import { RefChips, RefMenu, useRefCompletion, useRefMentions } from "../../task/RefCompletion"
 import type { Completion } from "./useCompletion"
 import type { EditorLayout } from "./useEditorLayout"

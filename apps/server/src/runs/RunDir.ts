@@ -238,7 +238,7 @@ export interface RunDirShape {
 }
 
 /** The board's files about a run's background work (docs/plan/07-agents.md, The run folder; `runs/background.ts`). */
-export type RunFile = "background" | "background-waited" | "background-killed" | "background-ended" | "background-calls"
+export type RunFile = "background" | "background-waited" | "background-killed" | "background-ended" | "background-calls" | "background-detached"
 
 export class RunDir extends Context.Service<RunDir, RunDirShape>()("huntaway-server/runs/RunDir") {
   static readonly layer = Layer.effect(

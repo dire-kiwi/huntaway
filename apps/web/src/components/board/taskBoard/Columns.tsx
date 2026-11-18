@@ -1,11 +1,12 @@
 import { clsx } from "clsx"
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react"
+import type { Status } from "@huntaway/contracts"
 import { inTab, type PenLanes } from "../penModel"
 import { IconButton, StatusIcon } from "../../ui"
 import { Cards, type CardsProps } from "./Cards"
 import { DropColumn } from "./DropColumn"
 import { LaneHeader, NoLanes } from "./Lanes"
-import { CAN_ADD, QUEUE } from "./model"
+import { asStrip, CAN_ADD, QUEUE, stripAction } from "./model"
 import type { BoardColumn } from "./useBoardColumn"
 
 /** The kanban board: a column for each status but Ready for merge, which is a label in its header (MergeQueue). */
@@ -18,8 +19,8 @@ export function Kanban(props: CardsProps & { canAdd: boolean }) {
     // w-max keeps the right padding when the columns overflow; min-w-full lets them grow to fill a wide window.
     <div className="flex h-full w-max min-w-full gap-3 p-4">
       {shownStatuses.map((s) =>
-        s.id === "backlog" && !backlogOpen ? (
-          // Parked work stays out of the way: a strip at the start that opens into a column and still takes drops.
+        asStrip(s.id, stacks.columnCount(s.id), backlogOpen) ? (
+          // Parked work and empty columns stay out of the way: a strip that still takes drops.
           <DropColumn
             key={s.id}
             status={s.id}
@@ -29,16 +30,11 @@ export function Kanban(props: CardsProps & { canAdd: boolean }) {
               stacks.overColumn(dropTarget, s.id) ? "border-accent/40 bg-accent/[0.03]" : "border-line/70",
             )}
           >
-            <button
-              title={`Show the backlog (${stacks.columnCount(s.id)})`}
-              onClick={toggleBacklog}
-              className="flex h-full w-full flex-col items-center gap-2 rounded-xl pt-3 text-muted transition-colors hover:bg-raised/40 hover:text-fg"
-            >
-              <ChevronRight size={14} className="text-faint" />
-              <StatusIcon status={s.id} />
-              <span className="text-[12px] text-faint">{stacks.columnCount(s.id)}</span>
-              <span className="text-[12.5px] font-medium [writing-mode:vertical-rl]">{s.label}</span>
-            </button>
+            <ColumnStrip
+              status={s}
+              count={stacks.columnCount(s.id)}
+              action={stripAction(s, stacks.columnCount(s.id), canAdd, toggleBacklog, menus.newTaskIn)}
+            />
           </DropColumn>
         ) : (
           <DropColumn
@@ -153,5 +149,28 @@ export function NarrowColumns(props: CardsProps & { canAdd: boolean; lanes?: Pen
         })}
       </div>
     </>
+  )
+}
+
+/** A column drawn as a strip: its icon, count and name down it, and what clicking it does (`stripAction`). */
+export function ColumnStrip({ status, count, action }: { status: { id: Status; label: string }; count: number; action: ReturnType<typeof stripAction> }) {
+  const Icon = action.adds ? Plus : ChevronRight
+  const inside = (
+    <>
+      {action.onClick && <Icon size={14} className="text-faint" />}
+      <StatusIcon status={status.id} />
+      <span className="text-[12px] text-faint">{count}</span>
+      <span className="text-[12.5px] font-medium [writing-mode:vertical-rl]">{status.label}</span>
+    </>
+  )
+  const className = "flex h-full w-full flex-col items-center gap-2 rounded-xl pt-3 text-muted transition-colors"
+  return action.onClick ? (
+    <button title={action.title} onClick={action.onClick} className={clsx(className, "hover:bg-raised/40 hover:text-fg")}>
+      {inside}
+    </button>
+  ) : (
+    <div title={action.title} className={className}>
+      {inside}
+    </div>
   )
 }

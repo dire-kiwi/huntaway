@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react"
 import { backgroundLabel, serverUrl, type HostTask as Task } from "@huntaway/client"
 import type { BackgroundItem, TaskServer } from "@huntaway/contracts"
 import { useNow } from "../../../state/clock"
+import { exitError, useMutation } from "../../../state/mutation"
 import { millisOf } from "../../ui"
 import { duration } from "../../ui/time"
 
@@ -26,10 +27,10 @@ export function BackgroundBanner({ task }: { task: Task }) {
           <div className="pb-0.5 text-[11px] text-faint">The agent has ended its turn: this goes on in the background, and your messages reach it at once.</div>
         )}
         {shells.map((b, i) => (
-          <ShellRow key={b.id ?? i} item={b} onError={setErr} />
+          <ShellRow key={b.id ?? i} task={task} item={b} onError={setErr} />
         ))}
         {servers.map((s) => (
-          <ServerRow key={`${s.port}-${s.pid}`} server={s} onError={setErr} />
+          <ServerRow key={`${s.port}-${s.pid}`} task={task} server={s} onError={setErr} />
         ))}
         {err && <div className="py-0.5 text-[11px] text-red-400">{err}</div>}
       </div>
@@ -37,12 +38,16 @@ export function BackgroundBanner({ task }: { task: Task }) {
   )
 }
 
-// Stopping a background command or a server (the old `api.stopBackground` and `api.stopServer`) comes with agent runs
-// on this server (2.5, Runs): until then the buttons say so.
-const NOT_YET = "not yet on this server (it comes with agent runs)"
-
-function ShellRow({ item, onError }: { item: BackgroundItem; onError: (e: string | null) => void }) {
+function ShellRow({ task, item, onError }: { task: Task; item: BackgroundItem; onError: (e: string | null) => void }) {
   const now = useNow(1000)
+  const [state, stopBackground] = useMutation("tasks.stopBackground")
+  const stop = (id: string) => {
+    onError(null)
+    void stopBackground(task.host_id, { id: task.id, background_id: id }).then((exit) => {
+      const err = exitError(exit)
+      if (err !== null) onError(`Couldn't stop it: ${err}`)
+    })
+  }
   const label = backgroundLabel(item)
   const title = [item.command, item.description && item.description !== item.command ? item.description : null].filter(Boolean).join("\n") || undefined
   return (
@@ -55,9 +60,9 @@ function ShellRow({ item, onError }: { item: BackgroundItem; onError: (e: string
       </span>
       {item.id && (
         <RowButton
-          busy={false}
+          busy={state.busy}
           title="Stop this background command. The agent keeps its conversation, and is told it stopped."
-          onClick={() => onError(`Couldn't stop it: ${NOT_YET}`)}
+          onClick={() => stop(item.id ?? "")}
         >
           <Square size={9} fill="currentColor" /> Stop
         </RowButton>
@@ -66,8 +71,16 @@ function ShellRow({ item, onError }: { item: BackgroundItem; onError: (e: string
   )
 }
 
-function ServerRow({ server, onError }: { server: TaskServer; onError: (e: string | null) => void }) {
+function ServerRow({ task, server, onError }: { task: Task; server: TaskServer; onError: (e: string | null) => void }) {
   const url = serverUrl(server, location.hostname)
+  const [state, stopServer] = useMutation("tasks.stopServer")
+  const stop = () => {
+    onError(null)
+    void stopServer(task.host_id, { id: task.id, port: server.port }).then((exit) => {
+      const err = exitError(exit)
+      if (err !== null) onError(`Couldn't stop the server: ${err}`)
+    })
+  }
   return (
     <div className="flex min-w-0 items-center gap-2 py-0.5" data-server-port={server.port}>
       <Globe size={12} className="shrink-0 text-muted" />
@@ -85,7 +98,7 @@ function ServerRow({ server, onError }: { server: TaskServer; onError: (e: strin
       >
         <ExternalLink size={10} /> Open
       </a>
-      <RowButton busy={false} title="Stop this server (its process group), not the agent" onClick={() => onError(`Couldn't stop the server: ${NOT_YET}`)}>
+      <RowButton busy={state.busy} title="Stop this server (its process group), not the agent" onClick={stop}>
         <Square size={9} fill="currentColor" /> Stop
       </RowButton>
     </div>

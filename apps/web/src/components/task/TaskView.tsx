@@ -255,9 +255,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const boardReviews = !project?.use_workflows || task.review?.state === "running"
   const reviews = task.kind === "task" && group === undefined && !docsOnly && !scratch && !assistant && !routine && !pensThread && boardReviews
   if (reviews) tabs.push("review")
-  // Once there's a summary, or a review that passed to summarise: the tabs fit a phone's width until then.
+  // HE-55: once there's a summary, or a review that passed to summarise, it shows folded at the bottom of the thread.
   const summaries = reviews && (task.summaries.length > 0 || task.review?.state === "passed")
-  if (summaries) tabs.push("summary")
   // A tab for each the task's workflow steps show their output in.
   if (task.kind === "task") tabs.push(...workflowTabs(workflows).map(workflowTab))
   // 6.7: the assistant's action log: what its approval rules asked about or blocked.
@@ -265,7 +264,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // HE-31: the task's title, description and everything set by hand, last as it's the least used. The column beside the
   // other tabs has only the key items (view/details/KeyItems.tsx).
   tabs.push("terminal", "details")
-  // A label taken off shows the thread instead; so does a tab this task hasn't got (review, summary, a workflow's). A
+  // A label taken off shows the thread instead; so does a tab this task hasn't got (review, a workflow's). A
   // terminal tool's tab is the tools' own.
   const shown = (isLabel(tab) && !labels.includes(tab)) || (!tabs.includes(tab) && !tab.startsWith("tool:")) ? "thread" : tab
   const docShown = labels.find((l) => l === shown)
@@ -492,7 +491,17 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
                 </Suspense>
               </div>
             ))}
-          <TabContent task={task} project={project} mode={mode} tab={tab} shown={shown} docShown={docShown} wide={wide} onShowThread={() => setTab("thread")} />
+          <TabContent
+            task={task}
+            project={project}
+            mode={mode}
+            tab={tab}
+            shown={shown}
+            docShown={docShown}
+            wide={wide}
+            summaries={summaries}
+            onShowThread={() => setTab("thread")}
+          />
         </main>
         {desktop && (
           <div className={clsx("min-w-0", wide ? "w-1/2 shrink-0" : "flex-1")}>

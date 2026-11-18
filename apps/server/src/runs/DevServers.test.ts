@@ -6,8 +6,10 @@ import { TestClock } from "effect/testing"
 import { fakeAgent, fakeTask, TestRuns } from "@huntaway/testing"
 import { Timestamp } from "@huntaway/contracts"
 import type { TaskId, TaskServer } from "@huntaway/contracts"
+import { Leftovers } from "../tasks/Leftovers.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
-import { parseTcp, shown, TASK_ENV, taskOf } from "./devServers/proc.ts"
+import { leftRunning, parseStat, parseTcp, shellsServe, shown, TASK_ENV, taskOf } from "./devServers/proc.ts"
+import type { LeftoverProc } from "../tasks/Leftovers.ts"
 import { DevServers, SUPPORTED } from "./DevServers.ts"
 
 // The old servers.test.ts (HA-405): reading /proc's tables, and finding a task's server and stopping it, against real
@@ -21,6 +23,18 @@ const listed = (port: number, pid: number, since: string, address = "127.0.0.1")
   command: "x",
   since: Timestamp.make(since),
   detached: true,
+})
+
+/** A process as `Leftovers` lists it. */
+const proc = (pid: number, ppid: number, argv: ReadonlyArray<string>): LeftoverProc => ({
+  pid,
+  ppid,
+  pgid: pid,
+  uid: 1000,
+  start: "1",
+  argv,
+  cmd: argv.join(" "),
+  exe: null,
 })
 
 describe("DevServers' /proc readers", () => {
@@ -58,6 +72,47 @@ describe("DevServers' /proc readers", () => {
     assert.strictEqual(taskOf(""), null)
   })
 
+  it("tells whether each of an agent's background shells, a session of its own, has a process listening (HA-409)", () => {
+    assert.deepStrictEqual(parseStat("42 (node (x) y) S 7 42 40 0 -1"), { ppid: 7, pgid: 42, sid: 40 })
+    const agent = 100
+    const procs = [
+      // Its MCP server, in its own session: not a shell.
+      { pid: 101, ppid: agent, sid: agent, sockets: [] },
+      // A shell, and the dev server under it, which listens.
+      { pid: 200, ppid: agent, sid: 200, sockets: [] },
+      { pid: 201, ppid: 200, sid: 200, sockets: ["9", "10"] },
+    ]
+    assert.isTrue(shellsServe(procs, new Set(["10"]), agent))
+    assert.isFalse(shellsServe(procs, new Set(["11"]), agent))
+    // A second shell that listens on nothing.
+    assert.isFalse(shellsServe([...procs, { pid: 300, ppid: agent, sid: 300, sockets: ["9"] }], new Set(["10"]), agent))
+    // No shells at all.
+    assert.isFalse(shellsServe(procs.slice(0, 1), new Set(["10"]), agent))
+  })
+
+  it("stops only what a task's agents left running: never the board, a board's server or a shim, nor what is under them", () => {
+    const procs = [
+      proc(10, 1, ["systemd", "--user"]),
+      // The board, started by an agent of the task, and what it started.
+      proc(20, 10, ["node", "main.ts", "serve"]),
+      proc(21, 20, ["git", "status"]),
+      // Another board, and a live run's shim, agent and shell.
+      proc(30, 10, ["/opt/huntaway", "serve", "--data-dir", "/d"]),
+      proc(40, 1, ["/x/ia-shim", "/d/runs/r", "--", "claude"]),
+      proc(41, 40, ["claude"]),
+      proc(42, 41, ["bash", "-c", "pnpm dev"]),
+      // A dev server whose agent is gone, and another task's.
+      proc(50, 1, ["node", "vite"]),
+      proc(60, 1, ["node", "vite"]),
+    ]
+    const named = new Map(procs.map((p) => [p.pid, p.pid === 60 ? "other" : "t"] as const))
+    assert.deepStrictEqual(
+      leftRunning(procs, named, "t", 20, new Set()).map((p) => p.pid),
+      [50],
+    )
+    assert.deepStrictEqual(leftRunning(procs, named, "t", 20, new Set([50])), [])
+  })
+
   it("keeps when a server was first seen, one per port, and says when nothing changed", () => {
     const before = [listed(3000, 1, "a")]
     assert.strictEqual(shown(before, [listed(3000, 1, "b")]), null)
@@ -69,7 +124,7 @@ describe("DevServers' /proc readers", () => {
   })
 })
 
-const TestLive = DevServers.layer.pipe(Layer.provideMerge(TaskRepo.layer), Layer.provideMerge(TestRuns()))
+const TestLive = DevServers.layer.pipe(Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, Leftovers.layer)), Layer.provideMerge(TestRuns()))
 
 /** A server on a free port started for `task`, in a process group of its own (`detached`) or the test's; killed with the scope. */
 const server = (task: TaskId, detached: boolean) =>

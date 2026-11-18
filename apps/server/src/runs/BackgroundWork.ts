@@ -6,7 +6,20 @@ import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import type { LostBackground } from "../tasks/TaskRepo.ts"
-import { addKilled, kindOf, labelOf, lostAtEnd, NOTE_ITEMS, parseBackground, parseCalls, parseEnded, parseIds, parseKilled, workOf } from "./background.ts"
+import {
+  addKilled,
+  kindOf,
+  labelOf,
+  leftAtEnd,
+  lostAtEnd,
+  NOTE_ITEMS,
+  parseBackground,
+  parseCalls,
+  parseEnded,
+  parseIds,
+  parseKilled,
+  workOf,
+} from "./background.ts"
 import type { BackgroundEnded, BackgroundTask } from "./background.ts"
 import type { Run } from "./Run.ts"
 import { RunDir } from "./RunDir.ts"
@@ -30,6 +43,12 @@ export interface BackgroundWorkShape {
   readonly addKilled: (run: RunId, tasks: ReadonlyArray<BackgroundTask>) => Effect.Effect<void>
   /** Keep what it has going as stopped by the board: the run is being stopped. */
   readonly keepKilled: (run: RunId) => Effect.Effect<void>
+  /**
+   * The shells the board left running as it ended the run at its turn's end (`background-detached`, HA-409): the run
+   * ends as a turn's end does, and they're the task's still, not stopped.
+   */
+  readonly detached: (run: RunId) => Effect.Effect<ReadonlyArray<BackgroundTask>>
+  readonly setDetached: (run: RunId, tasks: ReadonlyArray<BackgroundTask>) => Effect.Effect<void>
   /** What ended during the agent's turn, for a turn on their outcome (`background-ended`); null for none. */
   readonly ended: (run: RunId) => Effect.Effect<BackgroundEnded | null>
   readonly setEnded: (run: RunId, ended: BackgroundEnded | null) => Effect.Effect<void>
@@ -41,7 +60,7 @@ export interface BackgroundWorkShape {
   readonly sync: (run: RunId) => Effect.Effect<void>
   /**
    * The run ended: what it had going stopped with it, and the agent's next prompt says so (`lost_background`, the latest
-   * ten); its task no longer shows it. Not for a compaction's.
+   * ten), as it says what the board left running (`detached`); its task no longer shows it. Not for a compaction's.
    */
   readonly runEnded: (run: Run) => Effect.Effect<void>
   /** What the task's agent hasn't been told of what its last runs' ends stopped, taken: it is told now (or never). */
@@ -67,6 +86,7 @@ export class BackgroundWork extends Context.Service<BackgroundWork, BackgroundWo
       const list = (run: RunId) => Effect.map(read(run, "background"), parseBackground)
       const waited = (run: RunId) => Effect.map(read(run, "background-waited"), parseIds)
       const killed = (run: RunId) => Effect.map(read(run, "background-killed"), parseKilled)
+      const detached = (run: RunId) => Effect.map(read(run, "background-detached"), parseKilled)
       const setTasks = (run: RunId, all: ReadonlyArray<BackgroundTask>) =>
         Effect.flatMap(all.length === 0 ? Effect.succeed(null) : Effect.map(toJson(all), (t) => `${t}\n`), (text) => write(run, "background", text))
       const addKilledTo = Effect.fnUntraced(function* (run: RunId, more: ReadonlyArray<BackgroundTask>) {
@@ -127,13 +147,19 @@ export class BackgroundWork extends Context.Service<BackgroundWork, BackgroundWo
       })
 
       const runEnded = Effect.fn("BackgroundWork.runEnded")(function* (run: Run) {
-        const lost = lostAtEnd(yield* killed(run.id), yield* list(run.id))
+        const stopped = yield* killed(run.id)
+        const kept = yield* detached(run.id)
+        const lost = lostAtEnd(stopped, yield* list(run.id), kept)
+        const left = leftAtEnd(stopped, kept)
         yield* db.tx(
           Effect.gen(function* () {
             const task = yield* tasks.get(run.task_id)
             if (task === null) return
-            if (lost.length > 0 && run.kind !== "compact") {
-              const lines = lost.map((t): LostBackground => ({ kind: kindOf(t), label: labelOf(t) }))
+            if (lost.length + left.length > 0 && run.kind !== "compact") {
+              const lines = [
+                ...lost.map((t): LostBackground => ({ kind: kindOf(t), label: labelOf(t) })),
+                ...left.map((t): LostBackground => ({ kind: kindOf(t), label: labelOf(t), running: true })),
+              ]
               yield* tasks.setLostBackground(task.id, [...(yield* tasks.lostBackground(task.id)), ...lines].slice(-NOTE_ITEMS))
             }
             if (task.background_work?.run_id !== run.id) return
@@ -151,6 +177,8 @@ export class BackgroundWork extends Context.Service<BackgroundWork, BackgroundWo
         killed,
         addKilled: addKilledTo,
         keepKilled: (run) => Effect.flatMap(list(run), (all) => addKilledTo(run, all)),
+        detached,
+        setDetached: (run, all) => writeJson(run, "background-detached", all, all.length === 0),
         ended: (run) => Effect.map(read(run, "background-ended"), parseEnded),
         setEnded: (run, ended) => writeJson(run, "background-ended", ended, ended === null),
         onAssistant,

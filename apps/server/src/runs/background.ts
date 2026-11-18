@@ -168,11 +168,97 @@ export const labelOf = (t: BackgroundTask): string => {
   return one.length > NOTE_LABEL ? `${one.slice(0, NOTE_LABEL - 1)}…` : one
 }
 
-/** What the end of a run stopped of its background work: what the board stopped, then what was left going. */
-export const lostAtEnd = (killed: ReadonlyArray<BackgroundTask>, left: ReadonlyArray<BackgroundTask>): ReadonlyArray<BackgroundTask> => [
-  ...killed,
-  ...left.filter((t) => t.id === null || !killed.some((k) => k.id === t.id)),
-]
+/**
+ * What the end of a run stopped of its background work: what the board stopped, then what was left going, but not what
+ * the board left running as it ended the run (`detached`, HA-409) unless it stopped that after all.
+ */
+export const lostAtEnd = (
+  killed: ReadonlyArray<BackgroundTask>,
+  left: ReadonlyArray<BackgroundTask>,
+  detached: ReadonlyArray<BackgroundTask> = [],
+): ReadonlyArray<BackgroundTask> =>
+  [...killed, ...left.filter((t) => t.id === null || !killed.some((k) => k.id === t.id))].filter(
+    (t) => t.id === null || killed.some((k) => k.id === t.id) || !detached.some((d) => d.id === t.id),
+  )
+
+/** What the board left running as it ended the run (`detached`), unless it stopped that after all. */
+export const leftAtEnd = (killed: ReadonlyArray<BackgroundTask>, detached: ReadonlyArray<BackgroundTask>): ReadonlyArray<BackgroundTask> =>
+  detached.filter((d) => !killed.some((k) => k.id === d.id))
+
+// ---- dev servers left running (HA-409) ----------------------------------------------------------------------------
+
+/**
+ * Words that make a command a server's, as whole words of it (`pnpm dev`, `python3 -m http.server`); `start` only as a
+ * package manager's script (`npm start`, `pnpm run start`), not another command's (`ia-api start`).
+ */
+const SERVER_WORDS = new Set(["dev", "serve", "server", "preview", "storybook", "runserver", "http.server"])
+const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"])
+/** Words of a command that ends by itself and that the agent waits on: a test run, a build, a check. */
+const WAITED_WORDS = new Set([
+  "test",
+  "tests",
+  "build",
+  "check",
+  "typecheck",
+  "lint",
+  "install",
+  "ci",
+  "cargo",
+  "make",
+  "pytest",
+  "jest",
+  "vitest",
+  "mocha",
+  "tsc",
+])
+/** Commands that wait on something or end by themselves (`timeout 900 pnpm test`, `until grep …; do sleep 5; done`). */
+const WAITED_COMMANDS = new Set(["timeout", "until", "while", "for", "sleep", "wait"])
+/** Commands that only set up the next one (`cd apps/server && …`) or say something (`echo server $?`). */
+const SETUP_COMMANDS = new Set(["cd", "pushd", "export", "source", ".", "echo", "printf"])
+
+/**
+ * Whether a background shell's command looks like a server's (`astro dev`, `pnpm preview`, `python3 -m http.server`,
+ * `vite`), by its words, not its text: redirections (`> $TMPDIR/test.log`, `2>/dev/null`), `cd` and the like, variables
+ * set before a command, and words with a `/` (paths such as `apps/server`) don't count. A build, test, check or wait
+ * (`pnpm test`, `test:ui`, `cargo …`, `timeout …`, an `until` loop) anywhere in it makes it one the agent waits to hear
+ * the end of, even if what it runs listens on ports (a test run's servers). The old `looks_like_server` (HA-409).
+ */
+export const looksLikeServer = (command: string | null | undefined): boolean => {
+  if (command === null || command === undefined || command === "") return false
+  const text = command.replace(/\d*(?:&>>?|>>?\|?|<)&?\s*(?:"[^"]*"|'[^']*'|[^\s;&|]+)/gu, " ")
+  let server = false
+  for (const segment of text.split(/&&|\|\||[;|&\n()]/u)) {
+    const words = segment
+      .trim()
+      .split(/\s+/u)
+      .map((w) => w.replace(/^["']+|["']+$/gu, ""))
+      .filter((w) => w !== "")
+    while (words.length > 0 && /^[A-Za-z_]\w*=/u.test(words[0] ?? "")) words.shift()
+    const first = words[0]
+    if (first === undefined || SETUP_COMMANDS.has(first)) continue
+    if (WAITED_COMMANDS.has(first)) return false
+    for (let i = 0; i < words.length; i++) {
+      const w = (words[i] ?? "").toLowerCase()
+      if (w.includes("/")) continue
+      const head = w.split(":")[0] ?? w
+      if (WAITED_WORDS.has(head) || WAITED_WORDS.has(w)) return false
+      if (SERVER_WORDS.has(w) || (w.includes(":") && SERVER_WORDS.has(head))) server = true
+      if (w === "vite" && words[i + 1] !== "build") server = true
+      const before = (words[i - 1] === "run" ? words[i - 2] : words[i - 1])?.toLowerCase()
+      if (w === "start" && before !== undefined && PACKAGE_MANAGERS.has(before)) server = true
+    }
+  }
+  return server
+}
+
+/**
+ * Whether a run's turn can end with what it has going in the background left running (HA-409): all of it is shells the
+ * Bash tool started (not a Monitor, which only reports to the agent) whose commands look like servers' (`looksLikeServer`)
+ * and that the agent doesn't wait on. `RunInput` also asks that the task goes to review, the host can find the shells
+ * again, and each of them listens on a port.
+ */
+export const detachable = (list: ReadonlyArray<BackgroundTask>, waited: ReadonlyArray<string>): boolean =>
+  list.length > 0 && list.every((t) => t.id !== null && t.type === "local_bash" && t.tool === "Bash" && looksLikeServer(t.command) && !holds(t, waited))
 
 /** `tasks` added to `before` (what the board stopped), each id once. */
 export const addKilled = (before: ReadonlyArray<BackgroundTask>, tasks: ReadonlyArray<BackgroundTask>): ReadonlyArray<BackgroundTask> => [

@@ -20,7 +20,7 @@ beforeAll(async () => {
     writeFileSync(join(wt, `${t.number}.txt`), title)
     execFileSync("git", ["-C", wt, "add", "."])
     execFileSync("git", ["-C", wt, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", title])
-    await server.rpc("tasks.update", { id: t.id, patch: { status: "in_review" } })
+    // In To do, at the left of the board: In review is under the header's bins' popovers.
     return t
   }
 })
@@ -76,6 +76,9 @@ for (const fullBrowser of [false, true]) {
       // Dropped on the label, a task goes to Ready for merge.
       await card(a).dragTo(label)
       await merging(a.id)
+      // Off the label first, whose queue (open while the pointer is on it) would be over the column.
+      await page.mouse.move(5, 600)
+      await queue.waitFor({ state: "hidden" })
       await card(b).dragTo(label)
       await eventually(async () => assert.equal((await task(b.id)).status, "ready_for_merge"), 10_000)
       // Its queue shows while the pointer is on the label, and goes when it leaves.

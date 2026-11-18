@@ -78,10 +78,18 @@ your next message at once.
   idle (a monitor icon on its card, no **Working…** in its thread), and a banner above the message field lists them:
   "Background: _Start the dev server_ · running 4m". A background subagent still keeps it working, and so does a shell
   the agent says it waits on (its `background_wait` tool, for a long build or test run).
+- **A dev server doesn't keep the task in _In progress_** (Linux hosts). When a task's turn ends with only dev servers
+  left (shells the agent started with Bash and doesn't wait on, whose commands look like a server's, such as `astro dev`
+  or `pnpm preview`, and which listen on a port), the board ends the run as if they'd ended, and leaves them running:
+  the task moves on to _In review_ (or _Needs attention_, if the agent asked you something) and is reviewed, with its
+  dev server still up for you to look at, listed as "outlives its run". Your next message starts a new run, whose
+  prompt tells the agent what was left running (it can no longer read or stop them as its background tasks). Whatever
+  the task's agents left running is stopped once the task is _Done_ or deleted. Anything else left going, such as a
+  build or test run, keeps the run as before, so the agent hears when it ends; so do a Monitor and a subagent, and any
+  shell on macOS and Windows, where the board can't find them again.
 - **Each shell has a Stop of its own**, which ends it and leaves the agent be (Claude Code's `stop_task`). Once none is
   left, the run ends as it would have without them. The run's own Stop says **Stop all** then: it ends the run, and the
-  background work with it. The banner's own Stop buttons (a shell's and a server's) aren't wired up on the new board
-  yet: they say so.
+  background work with it.
 - **The agent is told what stopped.** When a run ends with background work going (a Stop, a restart that couldn't follow
   the run, the run killed), or you stop a shell, the agent's next prompt starts with a note listing it (up to ten), once,
   so it doesn't tell you a dev server is up when it isn't.

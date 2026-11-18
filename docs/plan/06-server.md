@@ -599,7 +599,7 @@ is safe to call at any time.
   worked-out round (`run_round`: the importer brings the old rows, which migrations 79 and 82 had already filled). The
   telemetry event `review` waits for `Telemetry`. A thread's skills are written to `thread_tools.skills`; 6.4's
   `AgentTools` turns them on.
-- **Web (step 1).** `components/task/Review.tsx` (the card's badge, the Review tab's dot, the Review and Summary tabs,
+- **Web (step 1).** `components/task/Review.tsx` (the card's badge, the Review tab's dot, the Review and Summary tabs (HE-55: the summary is now `SummaryBar`, folded at the bottom of the thread over the composer, and a task whose review passed opens on its thread),
   More rounds of fixes, what each round of fixes changed from `checkpoints.turnDiff`, shown as a plain patch until 4.2's
   `PatchBox`), `components/task/view/ReviewThreadView.tsx`, and their places in `TaskView`, `TabContent`,
   `StatusSection` and `TaskCard`. Not ported: `ReviewVerdict` (only the fan-out compare view used it, 2.18 `Fanout`).
