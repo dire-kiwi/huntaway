@@ -23,6 +23,9 @@ import type { CardsProps } from "./taskBoard/Cards"
 import { Kanban, NarrowColumns } from "./taskBoard/Columns"
 import { KanbanLanes, ListLanes } from "./taskBoard/Lanes"
 import { ListView } from "./taskBoard/ListView"
+import { MergeQueue } from "./taskBoard/MergeQueue"
+import { ReminderBin } from "./taskBoard/ReminderBin"
+import { QUEUE } from "./taskBoard/model"
 import { CardMenu, PenMenu } from "./taskBoard/Menus"
 import { ViewToggle } from "./taskBoard/ViewToggle"
 import { useBoardColumn } from "./taskBoard/useBoardColumn"
@@ -108,7 +111,9 @@ export function TaskBoard({
   const q = useBoardQuery(boardKey, kanbanRef)
   const { view, changeView, query, setQuery, search, setSearch, sort, changeSort } = q
   const narrow = useNarrow()
-  const board = useBoardTasks({ hosts, hostId, projects, group, profiles, only, query, sort })
+  // The kanban board (not the narrow layout's) keeps tasks whose reminder is still to come in its Reminders bin (HE-52).
+  const bins = view === "board" && !narrow
+  const board = useBoardTasks({ hosts, hostId, projects, group, profiles, only, query, sort, snooze: bins })
   const { tasks, columns, projectOf, progressOf, shownStatuses, filtering, shown, shownTasks, total } = board
   // The tasks picked with the lasso, which finds them in what the view draws. Changing what the board shows lets them go.
   const pickedIds = useSelection((s) => s.ids)
@@ -181,8 +186,12 @@ export function TaskBoard({
       <SortMenu sort={sort} onChange={changeSort} />
     </>
   )
+  // The kanban board's bins (HE-52): Ready for merge is a label here, whose popover is the merge queue, not a column (the
+  // narrow layout keeps its column); Reminders has the tasks waiting on a reminder, out of their columns.
   const controls = (
     <>
+      {bins && <ReminderBin {...cards} labelled={roomy} />}
+      {bins && shownStatuses.some((s) => s.id === QUEUE) && <MergeQueue {...cards} labelled={wide} />}
       {wide && queryControls}
       {stacks.kanban && stacks.stacks.length > 0 && <StacksSwitch gathered={stacks.views.gathered} onChange={stacks.gatherAll} labelled={roomy} />}
       <ViewToggle view={view} onChange={changeView} wide={wide} roomy={roomy} />

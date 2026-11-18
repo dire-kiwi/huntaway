@@ -105,7 +105,8 @@ test("a stack level waits for the one below it, and says so", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     await spread(ui)
-    await ui.run([`goto /p/${project.id}`, "wait Cart totals"])
+    // The level in Ready for merge is in its queue, which a click on the label shows (HE-52).
+    await ui.run([`goto /p/${project.id}`, "wait Checkout rework", "click button[data-status=ready_for_merge]", "wait Cart totals"])
     assert.match(await card(page, low).locator("[title^='Landing after this task']").innerText(), /1/)
     const badge = card(page, up).locator("button[title^='Lands after SHOP-1']")
     assert.match(await badge.innerText(), /waits for\s*(SHOP-)?1/)
@@ -135,7 +136,7 @@ test("closing the task below asks where the level goes, and restacks it there", 
   })
 })
 
-// HA-386: once every open level of a stack is through review, dragging its card to Ready for merge merges the whole
+// HA-386: once every open level of a stack is through review, dragging its card to Ready for merge (HE-52: its label) merges the whole
 // stack (the server moves each level there as one run of the merge queue, `tasks.mergeStack`); until then the drop is
 // refused and the card says which level holds it up. No other column takes the card.
 test("dragging a stack's card to Ready for merge merges the whole stack, once its levels are through review", async () => {
@@ -148,6 +149,8 @@ test("dragging a stack's card to Ready for merge merges the whole stack, once it
     const { page } = ui
     const stack = page.locator("[data-stack]", { hasText: "Search" })
     const column = (status) => page.locator(`section[data-status=${status}]`)
+    // Ready for merge is a label in the board's header (HE-52).
+    const queue = page.locator("button[data-status=ready_for_merge]")
     const statuses = async () => [(await task(a.id)).status, (await task(b.id)).status]
     // The page's calls that would move a level, to see that a drop it refuses makes none (the old check waited 300 ms
     // and read the tasks; this waits for the page to have drawn the drop's outcome).
@@ -157,7 +160,7 @@ test("dragging a stack's card to Ready for merge merges the whole stack, once it
     await ui.run([`goto /p/${project.id}`, "wait Spread the stack"])
     // A level is still in progress: the card is in that column, isn't dragged anywhere, and says why.
     assert.equal(await column("in_progress").locator("[data-stack]").count(), 1)
-    await stack.dragTo(column("ready_for_merge"))
+    await stack.dragTo(queue)
     await ui.run(["wait The stack can't merge yet. Not through review yet", "wait (in progress)"])
     await stack.dragTo(column("todo"))
     await drawn()
@@ -172,7 +175,7 @@ test("dragging a stack's card to Ready for merge merges the whole stack, once it
     assert.deepEqual(moves(), [])
     assert.deepEqual(await statuses(), ["in_review", "in_review"])
     // Dropped on Ready for merge, every level goes there, as one run, and the card with them.
-    await stack.dragTo(column("ready_for_merge"))
+    await stack.dragTo(queue)
     const moved = await until(b.id, (t) => t.status === "ready_for_merge")
     const bottom = await until(a.id, (t) => t.status === "ready_for_merge" || t.merging)
     assert.ok(moved.stack_run && moved.stack_run === bottom.stack_run, JSON.stringify([bottom.stack_run, moved.stack_run]))

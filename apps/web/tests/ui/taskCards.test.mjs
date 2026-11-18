@@ -33,12 +33,13 @@ const review = (state, issues = []) => ({
 })
 
 // What the cards get on top of what the server says: agents can't run here, so their states are made up.
+// Their reminders are due: one still to come keeps its card out of its column, in the board's Reminders bin (HE-52).
 const STATES = {
   "Card: at work": {
     running: true,
     run_started_at: ago(4140),
     starred: true,
-    remind_at: later(7200),
+    remind_at: ago(7200),
     branch: "ia/a",
     cost_usd: 4.12,
   },
@@ -51,7 +52,7 @@ const STATES = {
     status: "needs_attention",
     attention_reason: "Which of the two layouts should the sidebar use? I need your call before I go on.",
     starred: true,
-    remind_at: later(86400),
+    remind_at: ago(86400),
   },
   "Card: reviewed": {
     status: "in_review",
@@ -64,7 +65,7 @@ const STATES = {
     status: "in_review",
     labels: ["plan"],
     starred: true,
-    remind_at: later(3 * 3600),
+    remind_at: ago(3 * 3600),
     review: review("running"),
     depends: true,
     branch: "ia/c",

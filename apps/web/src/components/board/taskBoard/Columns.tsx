@@ -5,13 +5,13 @@ import { IconButton, StatusIcon } from "../../ui"
 import { Cards, type CardsProps } from "./Cards"
 import { DropColumn } from "./DropColumn"
 import { LaneHeader, NoLanes } from "./Lanes"
-import { CAN_ADD } from "./model"
+import { CAN_ADD, QUEUE } from "./model"
 import type { BoardColumn } from "./useBoardColumn"
 
-/** The kanban board: a column for each status. */
+/** The kanban board: a column for each status but Ready for merge, which is a label in its header (MergeQueue). */
 export function Kanban(props: CardsProps & { canAdd: boolean }) {
   const { board, q, drops, menus, stacks, canAdd } = props
-  const { shownStatuses } = board
+  const shownStatuses = board.shownStatuses.filter((s) => s.id !== QUEUE)
   const { backlogOpen, toggleBacklog } = q
   const { dropTarget } = drops
   return (

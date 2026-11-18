@@ -20,11 +20,16 @@ import type { FilterOption } from "../BoardControls"
 import { useCreatedProgress } from "../TaskCard"
 import { byStatus } from "../stacks"
 import { useBoard } from "../../../state/board"
+import { useReminderClock } from "../../task/Reminders"
+import { isDue, reminderTasks } from "../../ui/reminders"
 
 /** What each board's task picker (below) picked last, from which tasks. */
 const lastPicked = new WeakMap<object, { from: Readonly<Record<string, Task>>; picked: Task[] }>()
 
-/** The board's tasks by status, what `query` and `sort` leave of them to show, and the filter menu's choices. */
+/**
+ * The board's tasks by status, what `query` and `sort` leave of them to show, and the filter menu's choices. With
+ * `snooze`, a task whose reminder is still to come isn't shown in its column, only in `reminders` (HE-52).
+ */
 export function useBoardTasks({
   hosts,
   hostId,
@@ -34,6 +39,7 @@ export function useBoardTasks({
   only,
   query,
   sort,
+  snooze = false,
 }: {
   hosts: ReadonlyArray<Host>
   hostId?: string | undefined
@@ -43,6 +49,7 @@ export function useBoardTasks({
   only?: ((t: Task) => boolean) | undefined
   query: BoardQuery
   sort: SortKey
+  snooze?: boolean | undefined
 }) {
   // Across hosts, the columns any of them has (each takes the tasks it can): those with the
   // projects, and for a profile's board every host with the profile, whose tasks in no project
@@ -109,9 +116,21 @@ export function useBoardTasks({
   // What the search box finds tasks by.
   const keyOf = useCallback((t: Task) => `${keyPrefix(t, byId.get(`${t.host_id}:${t.project_id ?? ""}`))}-${t.number}`, [byId])
   const projectName = useCallback((t: Task) => byId.get(`${t.host_id}:${t.project_id ?? ""}`)?.name ?? t.group_name ?? undefined, [byId])
+  // The tasks with a reminder, soonest first, that the filters keep; with `snooze`, those whose reminder is still to
+  // come stay out of the columns until it comes round.
+  const reminders = useMemo(() => reminderTasks(tasks).filter(keep), [tasks, keep])
+  const reminderNow = useReminderClock(snooze ? reminders : [])
+  const snoozedIds = snooze
+    ? reminders
+        .filter((t) => !isDue(t, reminderNow))
+        .map((t) => t.id)
+        .join(" ")
+    : ""
   const { shown, shownArchived } = useMemo(() => {
-    return { shown: byStatus((k) => sortTasks(columns[k].filter(keep), sort)), shownArchived: sortTasks(archived.filter(keep), sort) }
-  }, [columns, archived, sort, keep])
+    const snoozed = new Set(snoozedIds.split(" "))
+    const show = (t: Task) => keep(t) && !snoozed.has(t.id)
+    return { shown: byStatus((k) => sortTasks(columns[k].filter(show), sort)), shownArchived: sortTasks(archived.filter(show), sort) }
+  }, [columns, archived, sort, keep, snoozedIds])
   // For the views that aren't by status: every task shown, in the order of the statuses.
   const shownTasks = useMemo(
     () => [...shownStatuses.flatMap((s) => shown[s.id]), ...(showsStatus(query, "done") ? shownArchived : [])],
@@ -151,6 +170,8 @@ export function useBoardTasks({
     shown,
     shownArchived,
     shownTasks,
+    reminders,
+    reminderNow,
     total,
     shownCount,
     statusOptions,

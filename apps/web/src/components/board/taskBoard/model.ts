@@ -11,6 +11,12 @@ const isFlag = (f: string): f is TaskFlag => TASK_FLAGS.some((x) => x.id === f)
 // Columns that get a "new task" button. New work starts in To do or Backlog.
 export const CAN_ADD: ReadonlySet<Status> = new Set<Status>(["todo", "backlog"])
 
+// The status the kanban board shows as a label in its header with a popover of the merge queue, not a column (HE-52).
+export const QUEUE: Status = "ready_for_merge"
+
+// What a card dragged out of the Reminders bin (ReminderBin) carries besides its task, so where it's dropped clears its reminder.
+export const FROM_REMINDERS = "text/from-reminders"
+
 // Board and List show the tasks by status; the others are other ways of looking at the same tasks (HA-5).
 export const VIEWS = [
   { id: "board", label: "Board", icon: Kanban, title: "Board view: a column for each status" },
