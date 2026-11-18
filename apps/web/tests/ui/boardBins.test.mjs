@@ -34,15 +34,17 @@ const merging = (id) =>
     assert.ok(t.status === "ready_for_merge" || t.merging, JSON.stringify({ status: t.status, merging: t.merging }))
   }, 10_000)
 
+/** A point in `loc`: 30px in, and `y` from its top or halfway down. */
+const at = async (loc, y) => {
+  const b = await loc.boundingBox()
+  return [b.x + 30, y === undefined ? b.y + b.height / 2 : b.y + y]
+}
+
 /**
  * Drags `source` over `label` (which opens its popover) and on to `target()` in the popover (`dy` from its top) with
  * the mouse, as dragTo can't go by way of the label. Nothing is clicked: the popover isn't pinned.
  */
 const viaLabel = async (page, source, label, target, dy) => {
-  const at = async (loc, y) => {
-    const b = await loc.boundingBox()
-    return [b.x + 30, y === undefined ? b.y + b.height / 2 : b.y + y]
-  }
   const [x, y] = await at(source)
   await page.mouse.move(x, y)
   await page.mouse.down()
