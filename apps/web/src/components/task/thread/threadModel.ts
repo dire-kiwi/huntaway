@@ -2,6 +2,7 @@
 // it, but the parts it leaves as they were (items, tool calls and results, subagents, a subagent's rows) stay the same
 // objects, so the rows that show them don't redraw.
 
+import type { TaskSuggestions } from "@huntaway/contracts"
 import type { Subagent } from "./subagentView"
 
 export interface ToolResult {
@@ -118,6 +119,8 @@ export type Item =
   | { type: "compact"; key: string; meta: CompactMeta; summary?: string | undefined; result?: ResultData | undefined }
   /** A routine's report, posted in the assistant's thread (API 110). */
   | { type: "report"; key: string; data: ReportData }
+  /** The assistant's suggestions of what to do with tasks (HE-61): the card's notice, by its item id. */
+  | { type: "suggestions"; key: string; itemId: string; data: TaskSuggestions }
 
 export interface ThreadModel {
   items: Item[]

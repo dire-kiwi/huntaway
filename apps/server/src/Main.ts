@@ -75,6 +75,7 @@ import { Assistant } from "./assistant/Assistant.ts"
 import { AssistantHooks } from "./assistant/AssistantHooks.ts"
 import { Brief } from "./assistant/Brief.ts"
 import { Connections } from "./assistant/Connections.ts"
+import { Suggestions } from "./assistant/Suggestions.ts"
 import { Google } from "./assistant/Google.ts"
 import { Memory } from "./assistant/Memory.ts"
 import { Tracked } from "./assistant/Tracked.ts"
@@ -186,6 +187,7 @@ import { Approvals } from "./permissions/Approvals.ts"
 import { PermissionRepo } from "./permissions/PermissionRepo.ts"
 import { Permissions } from "./permissions/Permissions.ts"
 import { Questions } from "./permissions/Questions.ts"
+import { UserMessages } from "./permissions/UserMessages.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { ReviewRepo } from "./review/ReviewRepo.ts"
 import { Reviews } from "./review/Reviews.ts"
@@ -495,7 +497,8 @@ const HostsLive = Layer.mergeAll(
  * The permissions area: prompts (with their sweeper, and Claude's `can_use_tool` requests registered), questions, and the
  * board's changes that always ask (with a deleted project's approvals expiring).
  */
-const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.registered, Questions.layer, Approvals.layer, Approvals.projectsDeleted).pipe(
+const PermissionsLive = UserMessages.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(Permissions.sweeper, Permissions.registered, Questions.layer, Approvals.layer, Approvals.projectsDeleted)),
   Layer.provideMerge(Permissions.layer),
   Layer.provideMerge(PermissionRepo.layer),
 )
@@ -595,7 +598,7 @@ const PushLive = Push.watcher.pipe(Layer.provideMerge(Push.layer), Layer.provide
  */
 const AssistantLive = AssistantHooks.pipe(
   Layer.provideMerge(Connections.layer),
-  Layer.provideMerge(Layer.mergeAll(Brief.layer, Google.layer, Tracked.layer)),
+  Layer.provideMerge(Layer.mergeAll(Brief.layer, Google.layer, Tracked.layer, Suggestions.layer)),
   Layer.provideMerge(Assistant.layer),
   Layer.provideMerge(Memory.layer),
 )

@@ -139,6 +139,7 @@ permission mode. All tools except the thread tools take optional `profile` and a
 | `delete_task` | Delete a task (and a subproject's tasks) — **ask** | **task_id**, delete_branch, reason | y | n | n | y |
 | `list_pens` / `create_pen` / `update_pen` / `delete_pen` | Pens (named task sets shown as tabs) | create: **name**, active, color; update: **pen**, name, active, color, index; delete: **pen** | y | n | list only | y |
 | `send_to_task` | Send a message to another task's agent, starting/resuming it | **task_id**, **message** | y | n | n | y |
+| `suggest_task_actions` | New (HE-61): a card in the assistant's thread of tasks, each with a reason and the actions suggested (done, wont_fix, merge, remind, backlog, start, message, delete); the user's click does it ([07-agents.md](../07-agents.md#as-built-in-he-61-suggest_task_actions)) | title, **suggestions**[{**task**, **reason**, **actions**[], remind_at, message}] | err³ | n | n | y |
 | `get_project` | Project settings + effective prompts | project_id | y | y | y | y |
 | `update_project` | Change settings; some fields **ask** (§2.6) | project_id, name, key, base_branch, model, start_prompt, review_prompt, merge_prompt, auto_review, review_rounds (0..20), group_name, reviewers[≤6], permission_mode, setup_script, teardown_script, copy_files, link_folders, status_script, status_scripts{}, repo_path, move_repo, use_worktrees, worktrees_root, use_workflows, auto_summary, summarizer, summarizers[], reason | y | n | n | y |
 | `create_project` | Add a folder as a project — **ask** | **repo_path**, name, reason | y | n | n | y |
@@ -152,6 +153,7 @@ permission mode. All tools except the thread tools take optional `profile` and a
 | `permission_prompt` | Not listed. The internal name every prompt is recorded under; called by name it just asks the user | tool_name, input, tool_use_id | – | – | – | – |
 
 ¹ Listed for everyone, but `tracked.owner()` throws unless the caller is the assistant or a thread whose parent is the assistant.
+³ Refused unless the caller is the assistant or a thread whose parent is the assistant, as ¹.
 ² `review.submit` rejects non-review threads; a workflow agent step's `submit_review` goes to `workflows.submit`.
 `FOR_REVIEWERS` = list_projects, list_tasks, get_task, get_task_field, get_project, wait, background_wait, request_user_input,
 submit_review. `FOR_PLANNING` = those + list_automations, list_workflows, list_pens, list_tracked_work. `tools(review=true)` lists

@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { Rpc, RpcGroup } from "effect/rpc"
 import { Conflict, Invalid, NotFound, Unavailable } from "../errors.ts"
-import { ConnectionState } from "../assistant.ts"
+import { ConnectionState, SuggestionChoice } from "../assistant.ts"
 import { TaskId } from "../ids.ts"
 import { Task } from "../task.ts"
 import { Auth, RequiredScope } from "../session.ts"
@@ -56,6 +56,18 @@ export class ThreadRpcs extends RpcGroup.make(
   Rpc.make("threads.skipConnection", {
     payload: { task_id: TaskId, request_id: Schema.String },
     success: Task,
+    error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]),
+  }).annotate(RequiredScope, "operate"),
+  /**
+   * A suggestions card's row (HE-61, the assistant's `suggest_task_actions`): do what the user picked with its task, as
+   * the board's own buttons do (`keep` does nothing), and mark the row settled. The card is the notice `item_id` of
+   * thread `task_id`, the row its `index`. Not found for no such card, row or task; a conflict once the row is settled,
+   * or when the task can't be moved so now; invalid for a choice the row doesn't offer. What asks first is the client's,
+   * as for the board's own moves: `todos_override` moves a task out of In progress past its agent's unfinished todo list.
+   */
+  Rpc.make("threads.actOnSuggestion", {
+    payload: { task_id: TaskId, item_id: Schema.String, index: Schema.Int, choice: SuggestionChoice, todos_override: Schema.optional(Schema.Boolean) },
+    success: Schema.Void,
     error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]),
   }).annotate(RequiredScope, "operate"),
 ).middleware(Auth) {}

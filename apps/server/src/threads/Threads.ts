@@ -83,6 +83,11 @@ export interface ThreadsShape {
    * automation, its thread's key, its outcome, the text). Its item is `legacy:<n>`.
    */
   readonly report: (task: TaskId, level: Notice["level"], text: string, metadata: Readonly<Record<string, unknown>>) => Effect.Effect<WriteNo, TaskNotFound>
+  /**
+   * A card of the board's in the thread (HE-61: the assistant's suggestions): an info notice with code `code`, `text`
+   * what a client that doesn't know the code shows, `metadata` what the card is. Its item is `legacy:<n>`, its id returned.
+   */
+  readonly card: (task: TaskId, code: string, text: string, metadata: Readonly<Record<string, unknown>>) => Effect.Effect<string, TaskNotFound>
   /** 6.5: changes an item's fields (`item.updated`: one set to null is removed); nothing if the thread has no such item. */
   readonly updateItem: (task: TaskId, id: string, patch: Readonly<Record<string, unknown>>) => Effect.Effect<void, TaskNotFound>
   /** Opens a request, or opens one with the same id again in place (without its resolution). */
@@ -291,6 +296,14 @@ export class Threads extends Context.Service<Threads, ThreadsShape>()("huntaway-
         })
       })
 
+      const card = Effect.fn("Threads.card")(function* (task: TaskId, code: string, text: string, metadata: Readonly<Record<string, unknown>>) {
+        const written = yield* boardWrite(task, (n, at) => {
+          const item: Item = { id: legacyId(n), type: "notice", level: "info", text, code, created_at: at, metadata: { ...metadata } }
+          return { events: [{ type: "item.added", item }] }
+        })
+        return legacyId(written)
+      })
+
       const updateItem = Effect.fn("Threads.updateItem")(function* (task: TaskId, id: string, patch: Readonly<Record<string, unknown>>) {
         yield* db.tx(
           Effect.gen(function* () {
@@ -470,6 +483,7 @@ export class Threads extends Context.Service<Threads, ThreadsShape>()("huntaway-
         notice,
         // 6.5
         report,
+        card,
         updateItem,
         openRequest,
         resolveRequest,

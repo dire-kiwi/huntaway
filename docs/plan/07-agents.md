@@ -953,6 +953,50 @@ tool (`THREAD_TOOLS`: an agent on another host is refused), rerunnable and allow
   → Assistant in a dialog, which checks again when closed), **Check again**, **Skip**; settled, _Connected as
   <address>_, skipped, or answered in the thread. Browser check: `apps/web/tests/ui/connectionCard.test.mjs`.
 
+### As built in HE-61: `suggest_task_actions`
+
+The assistant helps the user curate the board: it lists tasks, each with why and what it suggests doing with it, and
+the user settles each from a card. The board tool `suggest_task_actions` (`mcp/tools/suggestions.ts`) is the
+assistant's and its routines' (`trackedList.owner`, as for tracked work; a project's agent is refused), a thread tool
+(`THREAD_TOOLS`), listed after `send_to_task`; not rerunnable, not for reviewers or plan mode.
+
+- **Arguments**: `{ title?, suggestions: [{ task, reason, actions, remind_at?, message? }] }`, 1 to 30 rows, 1 to 4
+  actions each from `SuggestionAction` (contracts' `assistant.ts`): `done`, `wont_fix`, `merge`, `remind`, `backlog`,
+  `start`, `message`, `delete`; the first is the one it recommends. `task` is found as `get_task` finds it, on this
+  host's boards only (no other host: the card's buttons act here); a task twice is refused. `suggestionRow`
+  (`assistant/suggestionText.ts`) checks the rest: a reason (at most 500 characters, as it's the reminder's note), no
+  action twice, a message for `message`, a `remind_at` that `reminderTime` reads (kept as written, `1d` if left out, and
+  read again when it's picked, so a delay counts from the click). The heading defaults to "Tasks to tidy up".
+- **The card is a notice, not a request** (`Suggestions.post`, `Threads.card`): an info notice with code
+  `task_suggestions`, its `metadata` the card (`TaskSuggestions`: `title`, `suggestions[]` with `task_id`, `key`
+  (qualified `<profile>:KEY-n` for another profile's board), `title`, `reason`, `actions`, `remind_at`, `message`,
+  `outcome`), its `text` a line for a client that doesn't draw it (the phone app shows it as a notice). A request would
+  hold the run (`Needs attention`) and be settled once, and by any reply; a curation list waits for nobody, nothing
+  but the user settles it, and its rows are settled one at a time, whenever the user gets to them. It always goes in
+  the assistant's own thread: a routine's too, since the user reads routines' reports there and nobody watches the
+  routine's thread. The agent is told it's up and that it won't hear what's picked, and ends its turn.
+- **Settling a row** (`Suggestions.act`, `threads.actOnSuggestion { task_id, item_id, index, choice }`): under the
+  thread's `["suggestions", thread]` lock (before the row's task's own), the row must be open (`SuggestionClosed`, a
+  conflict) and offer the choice (`keep`, Leave it, always does). Then, as the user (the session's actor): `done` and
+  `wont_fix` are `Tasks.update { status: "done", resolution }`, `merge` `{ status: "ready_for_merge" }` (the merge queue
+  takes it from there, as for a drag), `backlog` likewise, each noted first with `Push.noteMove` as the user's own move
+  (the handler passes it in: push is below the assistant); `remind` sets `remind_at` and the reason as `reminder`;
+  `start` and `message` are `UserMessages.send` (permissions area), the board's own `tasks.send`: `Runs.send` as the
+  user's (empty, which starts a task that hasn't run, or the message), and for a message, the agent's open questions
+  settled as replied and its permission prompts skipped, so it reads it now; `delete` is `TaskDeletion.delete` (not the
+  branch). The row's `outcome` (`{ choice, at, remind_at? }`) is written with `Threads.updateItem` once that worked; a
+  refusal (an agent running, PR approval) leaves the row open and the card shows why.
+- **What asks first is the card's**, as it is the board's own buttons' (the server checks neither for a user's move):
+  Move to Done and Close as won't fix go through `useConfirmDone` (Done with work that isn't merged; tasks merging into
+  it or landing after it), and every move through `useConfirmTodos` (leaving In progress with the agent's todo list
+  unfinished), which, told to move it anyway, sends `todos_override` with the pick (`ActOptions.todosOverride`). A
+  Done the assistant recommends rests on its word (say, that the pull request merged), so this is where a wrong claim
+  is caught.
+- **Web**: `components/task/thread/SuggestionsCard.tsx` (an item `suggestions` in the thread model): the heading, how
+  many rows are left, and per row its key (opens the task), its title and live column from the board, the reason, the
+  message to send, a button per action (the first highlighted; Delete asks again; a move asks as above) and Leave it; settled, what was
+  done. Browser check: `apps/web/tests/ui/suggestionsCard.test.mjs`.
+
 ## Codex<a id="codex"></a>
 
 ### As built in 5.1–5.3 (HE-5)

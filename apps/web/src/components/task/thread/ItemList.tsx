@@ -10,6 +10,7 @@ import { lineage, ThreadCtx, usePendingFocus } from "./context"
 import { CompactLine, ConnectionRow, EventLine, FoldedTurnRow, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
 import { Markdown } from "./Markdown"
 import { AutomationChangeCard, isWorkflowApproval, ProjectChangeCard, TaskDeletionCard, WorkflowChangeCard } from "./requestCards"
+import { SuggestionsCard } from "./SuggestionsCard"
 import type { Item, ReportData } from "./threadModel"
 import { ToolGroup } from "./tools"
 import { finishedTurns } from "./turnFold"
@@ -137,6 +138,8 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
       return <CompactLine meta={it.meta} summary={it.summary} result={it.result} />
     case "report":
       return <RoutineReport data={it.data} />
+    case "suggestions":
+      return <SuggestionsCard itemId={it.itemId} data={it.data} hostId={hostId} />
     default:
       return null
   }

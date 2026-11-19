@@ -138,3 +138,47 @@ export type BriefItem = typeof BriefItem.Type
 /** A rating's line in MEMORY.md (none for `clear`), what MEMORY.md says now, and its commit. */
 export const BriefFeedback = Schema.Struct({ line: Schema.NullOr(Schema.String), content: Schema.String, commit: Schema.NullOr(Schema.String) })
 export type BriefFeedback = typeof BriefFeedback.Type
+
+/**
+ * What a suggestions card (HE-61, the assistant's `suggest_task_actions`) can offer to do with a task: move it to Done,
+ * close it as won't fix, merge it (move it to Ready for merge), remind the user of it later, move it to the backlog,
+ * start its agent, send its agent a message, or delete it.
+ */
+export const SuggestionAction = Schema.Literals(["done", "wont_fix", "merge", "remind", "backlog", "start", "message", "delete"])
+export type SuggestionAction = typeof SuggestionAction.Type
+
+/** What the user picked on a card's row: one of its actions, or `keep` (leave the task as it is). */
+export const SuggestionChoice = Schema.Union([SuggestionAction, Schema.Literal("keep")])
+export type SuggestionChoice = typeof SuggestionChoice.Type
+
+/** How a row was settled: what the user picked, when, and for `remind` the time it set. */
+export const SuggestionOutcome = Schema.Struct({
+  choice: SuggestionChoice,
+  at: Schema.String,
+  remind_at: Schema.optionalKey(Schema.String),
+})
+export type SuggestionOutcome = typeof SuggestionOutcome.Type
+
+/**
+ * A row of a suggestions card: the task (its key, qualified `<profile>:KEY-n` when it's on another profile's board, and
+ * its title when it was suggested), why the assistant suggests it, the actions it offers (the one it recommends first),
+ * the reminder's time as the assistant wrote it (`3d`, a date) and the message to send, and once settled, its outcome.
+ */
+export const TaskSuggestion = Schema.Struct({
+  task_id: Schema.String,
+  key: Schema.String,
+  title: Schema.String,
+  reason: Schema.String,
+  actions: Schema.Array(SuggestionAction),
+  remind_at: Schema.NullOr(Schema.String),
+  message: Schema.NullOr(Schema.String),
+  outcome: Schema.NullOr(SuggestionOutcome),
+})
+export type TaskSuggestion = typeof TaskSuggestion.Type
+
+/** The notice code of a suggestions card in a thread. */
+export const SUGGESTIONS_CODE = "task_suggestions"
+
+/** A suggestions card, as its notice's `metadata` keeps it: its heading and its rows. */
+export const TaskSuggestions = Schema.Struct({ title: Schema.String, suggestions: Schema.Array(TaskSuggestion) })
+export type TaskSuggestions = typeof TaskSuggestions.Type

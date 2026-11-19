@@ -8,6 +8,7 @@ import { penTools } from "./pens.ts"
 import { projectTools } from "./projects.ts"
 import { questionTools } from "./questions.ts"
 import { reviewTools } from "./review.ts"
+import { suggestionTools } from "./suggestions.ts"
 import { taskTools } from "./tasks.ts"
 import { trackingTools } from "./tracking.ts"
 import { waitTools } from "./wait.ts"
@@ -39,6 +40,7 @@ export const BOARD_TOOLS: ReadonlyArray<string> = [
   "update_pen",
   "delete_pen",
   "send_to_task",
+  "suggest_task_actions",
   "get_project",
   "update_project",
   "create_project",
@@ -72,6 +74,8 @@ export const BoardTools = McpServers.register(
       ...Object.values(yield* projectTools),
       ...Object.values(yield* taskTools),
       ...Object.values(yield* penTools),
+      // HE-61
+      ...Object.values(yield* suggestionTools),
       ...Object.values(yield* reviewTools),
       // 6.5
       ...Object.values(yield* automationTools),

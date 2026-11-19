@@ -244,6 +244,10 @@ Changes:
 - **A connection card** (HE-28, the assistant's `request_connection`) is no new request kind: it is a board question
   whose metadata names the `connection` (with the agent's `reason` and what was missing), drawn as its own card
   ([07-agents.md](07-agents.md#as-built-in-he-28-request_connection)).
+- **A suggestions card** (HE-61, the assistant's `suggest_task_actions`) is a notice with code `task_suggestions` whose
+  metadata is the card, its rows settled one at a time by `item.updated`
+  ([07-agents.md](07-agents.md#as-built-in-he-61-suggest_task_actions)). Like `routine_report`, its code doesn't make it
+  the agent speaking (only an error notice with a code does).
 - **Permission modes keep both spellings**: Claude Code's on tasks and projects (`acceptEdits`), snake_case in the
   thread protocol (`accept_edits`). One pair of converters in the contracts package replaces the copies.
 

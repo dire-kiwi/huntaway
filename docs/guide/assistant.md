@@ -256,6 +256,22 @@ connected when it asks, there's no card and it tries again. The routines' thread
 run, with nobody there, puts up no card: it carries on without Google and says in its report that Google isn't
 connected. The RPCs are `threads.checkConnection` and `threads.skipConnection` (`{"task_id", "request_id"}`).
 
+**Tidying the board.** Ask the assistant to go through your board (or give a routine that job), and rather than move
+things itself it suggests what to do with each task that looks finished, stale or forgotten: a task whose pull request
+has merged but that isn't done, one waiting to be merged, one to come back to later. It calls the board tool
+`suggest_task_actions`, and the assistant's thread shows a card listing those tasks, each with its key (click it to open
+the task), its column now, the assistant's reason, and a button for each thing it suggests, the one it recommends
+first: **Move to Done**, **Close as won't fix**, **Merge** (to Ready for merge, where its agent merges it), **Remind me
+in 3d** (a reminder with the reason as its note, counted from your click), **Move to Backlog**, **Start**, **Send the
+message** (to the task's agent), **Delete** (it asks again), and always **Leave it**. A click does it straight away, as
+the board's own buttons do, asking first what they ask (Move to Done with work that isn't merged, closing a task
+others merge into, leaving In progress with the agent's todo list unfinished), and the row says what was done; a
+message is sent as one from the task's thread is, answering its agent's question or prompt. A move the board refuses
+(an agent still running, say)
+leaves the row as it was, with why. Go through the rows whenever you like: nothing waits on the card, and the assistant
+isn't told what you picked. A routine's card goes in the assistant's thread too, beside its report. The RPC is
+`threads.actOnSuggestion` (`{"task_id", "item_id", "index", "choice", "todos_override"}`).
+
 On a test server, the old repository's
 [`scripts/stub-google-mcp.py`](https://github.com/dire-kiwi/huntaway-legacy/blob/master/scripts/stub-google-mcp.py) (not in
 this one) stands in for workspace-mcp: an MCP server over stdio
