@@ -40,8 +40,8 @@ export const ThreadHandlers = ThreadRpcs.toLayer(
       "threads.checkConnection": ({ task_id, request_id }) => connections.check(task_id, request_id).pipe(Effect.catchTags(cardErrors)),
       "threads.skipConnection": ({ task_id, request_id }) => connections.skip(task_id, request_id).pipe(Effect.catchTags(cardErrors)),
       // HE-61: as the user (or the device), whose move of the task doesn't notify them, as the board's own buttons.
-      "threads.actOnSuggestion": ({ task_id, item_id, index, choice }) =>
-        Effect.flatMap(actor, (by) => suggestions.act(task_id, item_id, index, choice, by, push.noteMove)).pipe(
+      "threads.actOnSuggestion": ({ task_id, item_id, index, choice, todos_override }) =>
+        Effect.flatMap(actor, (by) => suggestions.act(task_id, item_id, index, choice, { by, beforeMove: push.noteMove, todosOverride: todos_override })).pipe(
           Effect.catchTags({
             TaskNotFound: (e) => Effect.fail(taskNotFound(e)),
             SuggestionNotFound: (e) => Effect.fail(new NotFound({ what: "suggestion", id: `${e.item_id}#${e.index}` })),

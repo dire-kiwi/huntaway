@@ -4,7 +4,7 @@ import type { Conflict, NotFound, Status, SuggestionChoice, SuggestionOutcome, T
 import type { Actor } from "../platform/Changes.ts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
-import { Runs } from "../runs/Runs.ts"
+import { UserMessages } from "../permissions/UserMessages.ts"
 import type { SendRefused } from "../runs/Runs.ts"
 import { TaskDeletion } from "../runs/TaskDeletion.ts"
 import { reminderTime } from "../tasks/reminders.ts"
@@ -41,21 +41,31 @@ const MOVES = {
   backlog: { status: "backlog" },
 } as const satisfies Readonly<Record<string, TaskPatch & { readonly status: Status }>>
 
+/** Who picks, and what the move needs (`Suggestions.act`). */
+export interface ActOptions {
+  /** The user, or their device. */
+  readonly by: Actor
+  /** Told the task and the column first, when the pick moves it (to note the move as the user's own). */
+  readonly beforeMove?: ((task: TaskId, status: Status) => Effect.Effect<void>) | undefined
+  /** Move it out of In progress even with its agent's todo list unfinished, as the user said to. */
+  readonly todosOverride?: boolean | undefined
+}
+
 export interface SuggestionsShape {
   /** Puts `card` in `thread` as a suggestions card; its item's id. */
   readonly post: (thread: TaskId, card: TaskSuggestions) => Effect.Effect<string, TaskNotFound>
   /**
-   * Row `index` of card `item` in `thread`: does `choice` with its task, as the user (`by`), and marks the row settled.
-   * Only the first pick counts; one that fails leaves the row as it was. `beforeMove` is told the task and the column
-   * first, when the pick moves it.
+   * Row `index` of card `item` in `thread`: does `choice` with its task, as the user, and marks the row settled. Only
+   * the first pick counts; one that fails leaves the row as it was. A message is sent as `tasks.send` sends one
+   * (`UserMessages`). What asks before a move (unmerged work, an unfinished todo list) is the client's, as for the
+   * board's own buttons; a todo list it said to move past is `todosOverride`.
    */
   readonly act: (
     thread: TaskId,
     item: string,
     index: number,
     choice: SuggestionChoice,
-    by: Actor,
-    beforeMove?: (task: TaskId, status: Status) => Effect.Effect<void>,
+    options: ActOptions,
   ) => Effect.Effect<void, TaskNotFound | SuggestionNotFound | SuggestionClosed | Invalid | Conflict | NotFound | SendRefused>
 }
 
@@ -68,7 +78,7 @@ export class Suggestions extends Context.Service<Suggestions, SuggestionsShape>(
       const threads = yield* Threads
       const store = yield* ThreadStore
       const tasks = yield* Tasks
-      const runs = yield* Runs
+      const userMessages = yield* UserMessages
       const deletion = yield* TaskDeletion
       const locks = yield* KeyedLock
 
@@ -89,8 +99,7 @@ export class Suggestions extends Context.Service<Suggestions, SuggestionsShape>(
       const apply = Effect.fnUntraced(function* (
         row: TaskSuggestion,
         choice: SuggestionChoice,
-        by: Actor,
-        beforeMove: (task: TaskId, status: Status) => Effect.Effect<void>,
+        { by, beforeMove = () => Effect.void, todosOverride }: ActOptions,
       ) {
         const id = TaskId.make(row.task_id)
         const at = yield* nowTimestamp
@@ -102,7 +111,7 @@ export class Suggestions extends Context.Service<Suggestions, SuggestionsShape>(
           case "backlog": {
             const move = MOVES[choice]
             yield* beforeMove(id, move.status)
-            yield* tasks.update(id, move, by)
+            yield* tasks.update(id, todosOverride === true ? { ...move, todos_override: true } : move, by)
             return outcome
           }
           case "remind": {
@@ -114,10 +123,10 @@ export class Suggestions extends Context.Service<Suggestions, SuggestionsShape>(
             return { ...outcome, remind_at: when }
           }
           case "start":
-            yield* runs.send(id, { text: "", source: "user" })
+            yield* userMessages.send(id, "")
             return outcome
           case "message":
-            yield* runs.send(id, { text: row.message ?? "", source: "user" })
+            yield* userMessages.send(id, row.message ?? "")
             return outcome
           case "delete":
             yield* deletion.delete(id, { deleteBranch: false }, by)
@@ -128,14 +137,7 @@ export class Suggestions extends Context.Service<Suggestions, SuggestionsShape>(
         return outcome
       })
 
-      const act = Effect.fn("Suggestions.act")(function* (
-        thread: TaskId,
-        item: string,
-        index: number,
-        choice: SuggestionChoice,
-        by: Actor,
-        beforeMove: (task: TaskId, status: Status) => Effect.Effect<void> = () => Effect.void,
-      ) {
+      const act = Effect.fn("Suggestions.act")(function* (thread: TaskId, item: string, index: number, choice: SuggestionChoice, options: ActOptions) {
         // One pick on a thread's cards at a time, held while it's done: of two picks of a row, the second finds it settled.
         yield* locks.withLock(["suggestions", thread])(
           Effect.gen(function* () {
@@ -145,7 +147,7 @@ export class Suggestions extends Context.Service<Suggestions, SuggestionsShape>(
             const refused = refusal(row, choice)
             if (refused !== null)
               return yield* refused.closed ? new SuggestionClosed({ detail: refused.reason }) : new Invalid({ field: "choice", reason: refused.reason })
-            const outcome = yield* apply(row, choice, by, beforeMove)
+            const outcome = yield* apply(row, choice, options)
             return yield* threads.updateItem(thread, item, { metadata: settled(card, index, outcome) })
           }),
         )

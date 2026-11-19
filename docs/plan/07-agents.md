@@ -981,13 +981,20 @@ assistant's and its routines' (`trackedList.owner`, as for tracked work; a proje
   `wont_fix` are `Tasks.update { status: "done", resolution }`, `merge` `{ status: "ready_for_merge" }` (the merge queue
   takes it from there, as for a drag), `backlog` likewise, each noted first with `Push.noteMove` as the user's own move
   (the handler passes it in: push is below the assistant); `remind` sets `remind_at` and the reason as `reminder`;
-  `start` and `message` are `Runs.send` as the user's (empty, which starts a task that hasn't run, or the message);
-  `delete` is `TaskDeletion.delete` (not the branch). The row's `outcome` (`{ choice, at, remind_at? }`) is written with
-  `Threads.updateItem` once that worked; a refusal (an agent running, todos unfinished, PR approval) leaves the row open
-  and the card shows why.
+  `start` and `message` are `UserMessages.send` (permissions area), the board's own `tasks.send`: `Runs.send` as the
+  user's (empty, which starts a task that hasn't run, or the message), and for a message, the agent's open questions
+  settled as replied and its permission prompts skipped, so it reads it now; `delete` is `TaskDeletion.delete` (not the
+  branch). The row's `outcome` (`{ choice, at, remind_at? }`) is written with `Threads.updateItem` once that worked; a
+  refusal (an agent running, PR approval) leaves the row open and the card shows why.
+- **What asks first is the card's**, as it is the board's own buttons' (the server checks neither for a user's move):
+  Move to Done and Close as won't fix go through `useConfirmDone` (Done with work that isn't merged; tasks merging into
+  it or landing after it), and every move through `useConfirmTodos` (leaving In progress with the agent's todo list
+  unfinished), which, told to move it anyway, sends `todos_override` with the pick (`ActOptions.todosOverride`). A
+  Done the assistant recommends rests on its word (say, that the pull request merged), so this is where a wrong claim
+  is caught.
 - **Web**: `components/task/thread/SuggestionsCard.tsx` (an item `suggestions` in the thread model): the heading, how
   many rows are left, and per row its key (opens the task), its title and live column from the board, the reason, the
-  message to send, a button per action (the first highlighted; Delete asks again) and Leave it; settled, what was
+  message to send, a button per action (the first highlighted; Delete asks again; a move asks as above) and Leave it; settled, what was
   done. Browser check: `apps/web/tests/ui/suggestionsCard.test.mjs`.
 
 ## Codex<a id="codex"></a>

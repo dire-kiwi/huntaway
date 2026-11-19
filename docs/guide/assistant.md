@@ -264,10 +264,13 @@ the task), its column now, the assistant's reason, and a button for each thing i
 first: **Move to Done**, **Close as won't fix**, **Merge** (to Ready for merge, where its agent merges it), **Remind me
 in 3d** (a reminder with the reason as its note, counted from your click), **Move to Backlog**, **Start**, **Send the
 message** (to the task's agent), **Delete** (it asks again), and always **Leave it**. A click does it straight away, as
-the board's own buttons do, and the row says what was done; a move the board refuses (an agent still running, say)
+the board's own buttons do, asking first what they ask (Move to Done with work that isn't merged, closing a task
+others merge into, leaving In progress with the agent's todo list unfinished), and the row says what was done; a
+message is sent as one from the task's thread is, answering its agent's question or prompt. A move the board refuses
+(an agent still running, say)
 leaves the row as it was, with why. Go through the rows whenever you like: nothing waits on the card, and the assistant
 isn't told what you picked. A routine's card goes in the assistant's thread too, beside its report. The RPC is
-`threads.actOnSuggestion` (`{"task_id", "item_id", "index", "choice"}`).
+`threads.actOnSuggestion` (`{"task_id", "item_id", "index", "choice", "todos_override"}`).
 
 On a test server, the old repository's
 [`scripts/stub-google-mcp.py`](https://github.com/dire-kiwi/huntaway-legacy/blob/master/scripts/stub-google-mcp.py) (not in

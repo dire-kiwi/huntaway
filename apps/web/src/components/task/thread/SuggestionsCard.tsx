@@ -1,10 +1,11 @@
 // A suggestions card (HE-61): the assistant, with suggest_task_actions, lists tasks it suggests doing something with
 // (move to Done, merge, remind me later…), each with its reason. Every row has a button for each action it offers (the
 // recommended one first, highlighted) and Leave it; a click does it on the board (`threads.actOnSuggestion`) and the row
-// says what was done. Rows are settled one at a time, whenever the user gets to them: nothing waits on the card. Each
-// row shows its task as it is now, and opens it.
+// says what was done. A move asks first what the same move on the board asks (`useConfirmDone`, `useConfirmTodos`).
+// Rows are settled one at a time, whenever the user gets to them: nothing waits on the card. Each row shows its task as
+// it is now, and opens it.
 import { mutate } from "@huntaway/client"
-import type { SuggestionChoice, TaskSuggestion, TaskSuggestions } from "@huntaway/contracts"
+import type { Status, SuggestionChoice, TaskSuggestion, TaskSuggestions } from "@huntaway/contracts"
 import { TaskId } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { ListChecks, Loader2 } from "lucide-react"
@@ -12,6 +13,8 @@ import { memo, useState } from "react"
 import { useBoard } from "../../../state/board"
 import { useAction } from "../../../state/mutation"
 import { openTaskModal } from "../../../state/route"
+import { useConfirmDone } from "../../board/ConfirmDone"
+import { useConfirmTodos, type TaskUpdateOptions } from "../../board/ConfirmTodos"
 import { statusLabel } from "../../board/StackedOn"
 import { Button } from "../../ui"
 import { localeString } from "../../ui/dates"
@@ -58,6 +61,9 @@ const done = (row: TaskSuggestion): string => {
   return DONE[o.choice]
 }
 
+/** The column each pick that moves its task moves it to (the server's `Suggestions` MOVES). */
+const MOVES_TO: { readonly [C in SuggestionChoice]?: Status } = { done: "done", wont_fix: "done", merge: "ready_for_merge", backlog: "backlog" }
+
 export const SuggestionsCard = memo(function SuggestionsCard({ itemId, data, hostId }: { itemId: string; data: TaskSuggestions; hostId: string }) {
   const threadId = useThread((t) => t.taskId)
   const left = data.suggestions.filter((s) => s.outcome === null).length
@@ -84,10 +90,23 @@ function SuggestionRow({ row, index, itemId, threadId, hostId }: { row: TaskSugg
   const [doing, setDoing] = useState<SuggestionChoice | null>(null)
   // Delete asks once more.
   const [confirm, setConfirm] = useState(false)
+  // A move asks first what the board's own moves ask: Done with work that isn't merged, closing a task others merge into
+  // or land after, leaving In progress with the agent's todo list unfinished.
+  const { confirmDone, dialog: doneDialog } = useConfirmDone()
+  const { confirmTodos, dialog: todosDialog } = useConfirmTodos()
+  const asked = (choice: SuggestionChoice): Promise<TaskUpdateOptions | null> => {
+    const status = MOVES_TO[choice]
+    if (!status || !task) return Promise.resolve({})
+    const closing = choice === "done" || choice === "wont_fix" ? confirmDone(task, choice) : Promise.resolve(true)
+    return closing.then((go) => (go ? confirmTodos(task, status) : null))
+  }
   const pick = (choice: SuggestionChoice) => {
     if (choice === "delete" && !confirm) return setConfirm(true)
-    setDoing(choice)
-    void run(mutate("threads.actOnSuggestion", hostId, { task_id: TaskId.make(threadId), item_id: itemId, index, choice }))
+    void asked(choice).then((options) => {
+      if (options === null) return
+      setDoing(choice)
+      void run(mutate("threads.actOnSuggestion", hostId, { task_id: TaskId.make(threadId), item_id: itemId, index, choice, ...options }))
+    })
   }
   const settled = row.outcome !== null
   const busy = action.busy ? doing : null
@@ -130,6 +149,8 @@ function SuggestionRow({ row, index, itemId, threadId, hostId }: { row: TaskSugg
         </div>
       )}
       {action.error && <div className="mt-1 text-xs text-red-400">{action.error}</div>}
+      {doneDialog}
+      {todosDialog}
     </li>
   )
 }

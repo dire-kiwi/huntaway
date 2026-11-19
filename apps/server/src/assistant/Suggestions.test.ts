@@ -6,7 +6,8 @@ import type { Status } from "@huntaway/contracts"
 import { fakeAgent, TestMcp } from "@huntaway/testing"
 import { Actor } from "../platform/Changes.ts"
 import { NOT_THE_ASSISTANT, POSTED } from "../mcp/tools/suggestions.ts"
-import { agentOf, agentOn, call, err, ok, profile, project, task } from "../mcp/tools/tests/board.ts"
+import { agentOf, agentOn, call, err, ok, profile, project, setTask, task } from "../mcp/tools/tests/board.ts"
+import { Questions, SETTLED } from "../permissions/Questions.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { Threads } from "../threads/Threads.ts"
 import { cardText, DEFAULT_REMIND, suggestionRow } from "./suggestionText.ts"
@@ -75,30 +76,30 @@ describe("suggest_task_actions", () => {
       const noted = (id: TaskId, status: Status) => Effect.sync(() => void moves.push([id, status]))
 
       // Done: the task is done, the row settled, and its move noted first as the user's own.
-      yield* suggestions.act(thread, item, 0, "done", Actor.user, noted)
+      yield* suggestions.act(thread, item, 0, "done", { by: Actor.user, beforeMove: noted })
       const done = yield* taskOf(merged.id)
       assert.deepStrictEqual([done.status, done.resolution], ["done", "done"])
       assert.deepStrictEqual(moves, [[merged.id, "done"]])
       // Once: picked again, or something else, it's settled.
-      assert.strictEqual(yield* failure(suggestions.act(thread, item, 0, "merge", Actor.user)), "SuggestionClosed")
+      assert.strictEqual(yield* failure(suggestions.act(thread, item, 0, "merge", { by: Actor.user })), "SuggestionClosed")
       // Only what the row offers.
-      assert.strictEqual(yield* failure(suggestions.act(thread, item, 1, "done", Actor.user)), "Invalid")
-      assert.strictEqual(yield* failure(suggestions.act(thread, item, 9, "keep", Actor.user)), "SuggestionNotFound")
-      assert.strictEqual(yield* failure(suggestions.act(thread, "legacy:999999", 0, "keep", Actor.user)), "SuggestionNotFound")
+      assert.strictEqual(yield* failure(suggestions.act(thread, item, 1, "done", { by: Actor.user })), "Invalid")
+      assert.strictEqual(yield* failure(suggestions.act(thread, item, 9, "keep", { by: Actor.user })), "SuggestionNotFound")
+      assert.strictEqual(yield* failure(suggestions.act(thread, "legacy:999999", 0, "keep", { by: Actor.user })), "SuggestionNotFound")
 
       // Won't fix.
-      yield* suggestions.act(thread, item, 1, "wont_fix", Actor.user)
+      yield* suggestions.act(thread, item, 1, "wont_fix", { by: Actor.user })
       assert.deepStrictEqual([(yield* taskOf(stale.id)).status, (yield* taskOf(stale.id)).resolution], ["done", "wont_fix"])
 
       // Remind me: 3 days from the pick, with the reason as the reminder's note.
       const before = yield* DateTime.now
-      yield* suggestions.act(thread, item, 2, "remind", Actor.user)
+      yield* suggestions.act(thread, item, 2, "remind", { by: Actor.user })
       const reminded = yield* taskOf(later.id)
       assert.strictEqual(reminded.reminder, "Waits on the release")
       assert.strictEqual(reminded.remind_at, DateTime.formatIso(DateTime.add(before, { days: 3 })))
 
       // Leave it: nothing changes but the row.
-      yield* suggestions.act(thread, item, 3, "keep", Actor.user)
+      yield* suggestions.act(thread, item, 3, "keep", { by: Actor.user })
       assert.strictEqual((yield* taskOf(gone.id)).status, "todo")
 
       const [after] = yield* cards(thread)
@@ -114,7 +115,7 @@ describe("suggest_task_actions", () => {
     }).pipe(Effect.provide(TestMcp())),
   )
 
-  it.effect("merges, moves to the backlog, sends a message and deletes, as the board's buttons do", () =>
+  it.effect("merges, moves to the backlog, sends a message (as the board's send does) and deletes, as the board's buttons do", () =>
     Effect.gen(function* () {
       const p = yield* profile("personal")
       const ha = yield* project(p, "huntaway", "HA")
@@ -122,6 +123,11 @@ describe("suggest_task_actions", () => {
       const b = yield* task(ha, "Later")
       const c = yield* task(ha, "Ask")
       const d = yield* task(ha, "Delete me")
+      const busy = yield* task(ha, "Half done")
+      yield* setTask(busy.id, {
+        status: "in_progress",
+        todos: '[{"text": "Write it", "status": "completed"}, {"text": "Test it", "status": "in_progress"}]',
+      })
       const me = yield* agentOf(p)
       ok(
         yield* call(me, "suggest_task_actions", {
@@ -130,6 +136,7 @@ describe("suggest_task_actions", () => {
             { task: "HA-2", reason: "Not now", actions: ["backlog"] },
             { task: "HA-3", reason: "Needs a rebase", actions: ["message"], message: "Please rebase onto main" },
             { task: "HA-4", reason: "A duplicate", actions: ["delete"] },
+            { task: "HA-5", reason: "Stalled", actions: ["backlog"] },
           ],
         }),
       )
@@ -138,17 +145,29 @@ describe("suggest_task_actions", () => {
       const item = posted?.id ?? ""
       const suggestions = yield* Suggestions
       // Nothing to merge: it goes straight to Done, as moving it to Ready for merge does.
-      yield* suggestions.act(me.run.task_id, item, 0, "merge", Actor.user)
+      yield* suggestions.act(me.run.task_id, item, 0, "merge", { by: Actor.user })
       assert.include(["ready_for_merge", "done"], (yield* taskOf(a.id)).status)
-      yield* suggestions.act(me.run.task_id, item, 1, "backlog", Actor.user)
+      yield* suggestions.act(me.run.task_id, item, 1, "backlog", { by: Actor.user })
       assert.strictEqual((yield* taskOf(b.id)).status, "backlog")
-      yield* suggestions.act(me.run.task_id, item, 2, "message", Actor.user)
+      // The question its agent ended on: the message answers it, as a message sent from the task's thread does.
+      const questions = yield* Questions
+      yield* questions.ask(c.id, "q1", { question: "Which base?", options: [], multi_select: false, allow_other: true })
+      yield* suggestions.act(me.run.task_id, item, 2, "message", { by: Actor.user })
+      assert.deepStrictEqual((yield* (yield* Threads).stored(c.id)).requests.at(-1)?.resolution, { outcome: "cancel", message: SETTLED.replied })
       // As the user's message: it starts the task's agent.
       const said = (yield* (yield* Threads).stored(c.id)).entries.find((e) => e.item.type === "user_message" && e.item.text === "Please rebase onto main")
       assert.isDefined(said)
       assert.isTrue((yield* taskOf(c.id)).running)
-      yield* suggestions.act(me.run.task_id, item, 3, "delete", Actor.user)
+      yield* suggestions.act(me.run.task_id, item, 3, "delete", { by: Actor.user })
       assert.isNull(yield* Effect.flatMap(TaskRepo, (r) => r.get(d.id)))
+
+      // Its agent's todo list holds it in In progress, as for a drag: refused, and the row stays open; the card asks the
+      // user and, told to move it anyway, sends the override.
+      assert.strictEqual(yield* failure(suggestions.act(me.run.task_id, item, 4, "backlog", { by: Actor.user })), "Conflict")
+      assert.strictEqual((yield* taskOf(busy.id)).status, "in_progress")
+      assert.isNull((yield* cards(me.run.task_id))[0]?.card.suggestions[4]?.outcome)
+      yield* suggestions.act(me.run.task_id, item, 4, "backlog", { by: Actor.user, todosOverride: true })
+      assert.strictEqual((yield* taskOf(busy.id)).status, "backlog")
     }).pipe(Effect.provide(TestMcp())),
   )
 

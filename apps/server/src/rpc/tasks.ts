@@ -10,8 +10,7 @@ import { MergeTargets } from "../merge/MergeTargets.ts"
 import { InReview } from "../review/InReview.ts"
 import type { FixChecksRefused } from "../review/InReview.ts"
 import { DevServers } from "../runs/DevServers.ts"
-import { Permissions } from "../permissions/Permissions.ts"
-import { Questions } from "../permissions/Questions.ts"
+import { UserMessages } from "../permissions/UserMessages.ts"
 import { Push } from "../push/Push.ts"
 import { Reviews } from "../review/Reviews.ts"
 import { WorkflowEngine } from "../workflows/WorkflowEngine.ts"
@@ -75,8 +74,7 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const refs = yield* TaskRefs
     const runs = yield* Runs
     const deletion = yield* TaskDeletion
-    const questions = yield* Questions
-    const permissions = yield* Permissions
+    const userMessages = yield* UserMessages
     const devServers = yield* DevServers
     const meter = yield* ContextMeter
     const stackTitles = yield* StackTitles
@@ -110,13 +108,8 @@ export const TaskHandlers = TaskRpcs.toLayer(
         Effect.flatMap(actor, (by) => deletion.delete(id, { deleteBranch: delete_branch ?? false }, by)).pipe(
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound }),
         ),
-      "tasks.send": ({ id, text }) =>
-        runs.send(id, { text, source: "user" }).pipe(
-          // The user's reply answers the questions the agent asked (`Questions`), and skips its permission prompts, so
-          // that it reads the message now (`Permissions.skipFor`).
-          Effect.tap(() => (text.trim() === "" ? Effect.void : Effect.andThen(questions.settle(id, "replied"), permissions.skipFor(id)))),
-          Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused }),
-        ),
+      // The user's reply answers the questions the agent asked, and skips its permission prompts (`UserMessages`).
+      "tasks.send": ({ id, text }) => userMessages.send(id, text).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused })),
       // Its agent, and its review and summaries (4.6).
       "tasks.stop": ({ id }) =>
         Effect.gen(function* () {

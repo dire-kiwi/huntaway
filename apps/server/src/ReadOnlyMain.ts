@@ -102,6 +102,7 @@ import { MergeTargets } from "./merge/MergeTargets.ts"
 import { PermissionRepo } from "./permissions/PermissionRepo.ts"
 import { Permissions } from "./permissions/Permissions.ts"
 import { Questions } from "./permissions/Questions.ts"
+import { UserMessages } from "./permissions/UserMessages.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
 import { DataDir } from "./platform/DataDir.ts"
@@ -298,7 +299,7 @@ const ActingAreas = InReview.layer.pipe(
       Layer.provideMerge(Layer.mergeAll(ReviewRepo.layer, FanoutRepo.layer)),
     ),
   ),
-  Layer.provideMerge(Layer.mergeAll(Permissions.layer, Questions.layer).pipe(Layer.provideMerge(PermissionRepo.layer))),
+  Layer.provideMerge(UserMessages.layer.pipe(Layer.provideMerge(Layer.mergeAll(Permissions.layer, Questions.layer)), Layer.provideMerge(PermissionRepo.layer))),
   Layer.provideMerge(DevServers.layer),
   Layer.provideMerge(Layer.mergeAll(TaskDeletion.layer, SetupThread.layer)),
   Layer.provideMerge(RunsArea),

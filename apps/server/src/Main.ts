@@ -187,6 +187,7 @@ import { Approvals } from "./permissions/Approvals.ts"
 import { PermissionRepo } from "./permissions/PermissionRepo.ts"
 import { Permissions } from "./permissions/Permissions.ts"
 import { Questions } from "./permissions/Questions.ts"
+import { UserMessages } from "./permissions/UserMessages.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { ReviewRepo } from "./review/ReviewRepo.ts"
 import { Reviews } from "./review/Reviews.ts"
@@ -496,7 +497,8 @@ const HostsLive = Layer.mergeAll(
  * The permissions area: prompts (with their sweeper, and Claude's `can_use_tool` requests registered), questions, and the
  * board's changes that always ask (with a deleted project's approvals expiring).
  */
-const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.registered, Questions.layer, Approvals.layer, Approvals.projectsDeleted).pipe(
+const PermissionsLive = UserMessages.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(Permissions.sweeper, Permissions.registered, Questions.layer, Approvals.layer, Approvals.projectsDeleted)),
   Layer.provideMerge(Permissions.layer),
   Layer.provideMerge(PermissionRepo.layer),
 )
