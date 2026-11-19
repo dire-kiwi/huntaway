@@ -375,7 +375,6 @@ describe("translate", () => {
       type: "notice",
       level: "warning",
       text: "Opus 5.5's safeguards flagged this session, so Opus 4.8 answers it from here.",
-      code: "model_fallback",
       created_at: atOf(1),
       detail: "Opus 4.8 is answering instead.",
     })

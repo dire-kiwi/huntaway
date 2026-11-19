@@ -1156,14 +1156,17 @@ Claude Code can move a session to another model: when Opus 5.5's safeguards flag
 (`system`/`model_fallback`: overloaded, retired, no access) another answers that turn. Both carry `original_model` and
 `fallback_model`.
 
-- The translator (`agents/claude/translate.ts`) writes a warning notice with code `model_fallback` ("Opus 5.5's
-  safeguards flagged this session, so Opus 4.8 answers it from here.", Claude Code's own text as its detail) and says
-  `ModelFallback { from, to, reason }` to the run. A refusal with `scope: "local"` (a subagent's or side question's one
+- The translator (`agents/claude/translate.ts`) writes a warning notice ("Opus 5.5's safeguards flagged this session,
+  so Opus 4.8 answers it from here.", Claude Code's own text as its detail) and says `ModelFallback { from, to, reason }`
+  to the run. The notice has no `code`: a coded notice is the agent's own words (the web draws it as its text), and this
+  is the board's warning. A refusal with `scope: "local"` (a subagent's or side question's one
   answer) gets the notice only: the session's model is unchanged.
 - The line handler writes it to the task's `model_fallback` (`ModelFallback { from, to, reason, at }`, a JSON column
   added by `2026-11-19-model-fallback.ts`). Every main-conversation `assistant` line says `ModelAnswered { model }`
   (not Claude Code's `<synthetic>` ones); one from another model than `to` clears it, so a new session back on the
-  model it asked for, or a model the user picked since, ends the mark without the board having to know which.
+  model it asked for, or a model the user picked since, ends the mark without the board having to know which. The line
+  handler keeps each followed task's `to` in memory (read once, kept as it commits), so a reply reads and writes nothing
+  while the task has no mark, and stays `deferrable`: only one that takes the mark off ends its chunk's transaction.
 - The web app marks the task, amber, with the model answering (`ModelFallbackBadge`, "Opus 4.8") on its card and list
   row and beside its thread's model picker; hovering says why and since when. `modelName` (contracts) names a model
   as people say it (`claude-opus-4-8` is `Opus 4.8`).

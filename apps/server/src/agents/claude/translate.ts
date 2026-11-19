@@ -160,7 +160,8 @@ export const translate = (state: TranslatorState, line: ClaudeLine, ctx: LineCon
 
 /**
  * Claude Code moved to another model (HE-59): a warning in the thread, with what Claude Code says about it as its detail,
- * and for the session's own model (not a subagent's one answer) a `ModelFallback` for the task to show.
+ * and for the session's own model (not a subagent's one answer) a `ModelFallback` for the task to show. The notice has no
+ * code: a coded notice is the agent's own words (an API error it gave as its text), and this one is the board's news.
  */
 const modelFallback = (step: Step, line: ModelFallbackLine): void => {
   const [from, to] = [modelName(line.original_model), modelName(line.fallback_model)]
@@ -177,7 +178,6 @@ const modelFallback = (step: Step, line: ModelFallbackLine): void => {
     type: "notice",
     level: "warning",
     text,
-    code: "model_fallback",
     created_at: step.ctx.at,
     ...(content === "" ? {} : { detail: content }),
   }

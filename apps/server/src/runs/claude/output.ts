@@ -60,6 +60,8 @@ interface After {
   readonly cost: number
   /** The run's row as the line found it. */
   readonly row: Run
+  /** A reply from another model took the task's model fallback mark off (HE-59). */
+  readonly fallbackCleared: boolean
 }
 
 /** The most lines one transaction applies, so that others wait for the database no longer than that many take. */
@@ -72,12 +74,23 @@ export const CHUNK_LINES = 64
  * (the end of a turn closing the input, a request answered, a steer taken in) follows its commit with nothing applied
  * after it, as with a transaction per line.
  */
-const deferrable = (line: ClaudeLine, done: After): boolean =>
+export const deferrable = (
+  line: ClaudeLine,
+  done: Pick<After, "awaitedBefore" | "effects" | "turnEnded" | "turnStarted" | "fallbackCleared"> & { readonly kept: Pick<Kept, "awaited"> },
+): boolean =>
   (line.type === "assistant" || line.type === "stream_event" || (line.type === "user" && line.isReplay !== true)) &&
   !done.turnEnded &&
   !done.turnStarted &&
   done.awaitedBefore === done.kept.awaited &&
-  done.effects.every((e) => e._tag === "TurnStarted" || e._tag === "AgentAt" || e._tag === "PreviewReset" || e._tag === "PreviewText")
+  done.effects.every(
+    (e) =>
+      e._tag === "TurnStarted" ||
+      e._tag === "AgentAt" ||
+      e._tag === "PreviewReset" ||
+      e._tag === "PreviewText" ||
+      // A reply that leaves the task's model fallback mark as it is writes nothing (HE-59).
+      (e._tag === "ModelAnswered" && !done.fallbackCleared),
+  )
 
 /** The lines whose items take the board's write number (`legacy:<n>…` ids): the others make no items. */
 const numbered = (line: ClaudeLine): boolean =>
@@ -131,6 +144,10 @@ export const ClaudeOutput = Layer.effect(
     // Changed in place, one key at a time (a line's run is the only writer of its task's entry), and emptied of a run's
     // entry when the follower lets the run go (`released`), so it holds the threads being followed and no more.
     const kept = MutableHashMap.empty<TaskId, Kept>()
+    // HE-59: the model each followed task's session fell back to (`model_fallback.to`), null for none, so that a reply
+    // reads and writes nothing unless the task is marked. Read once, then kept as this handler (its only writer) commits.
+    const fallbacks = MutableHashMap.empty<TaskId, string | null>()
+    const noteFallback = (task: TaskId, to: string | null) => db.sql.afterCommit(Effect.sync(() => MutableHashMap.set(fallbacks, task, to)))
 
     /** The thread's state as stored, for a run followed afresh. */
     const rebuild = Effect.fnUntraced(function* (run: Run) {
@@ -205,6 +222,7 @@ export const ClaudeOutput = Layer.effect(
       // The follower is the only writer of `between_turns`: what the line itself does to it is all that changes it.
       let between = now.between_turns
       let agentAt: string | undefined
+      let fallbackCleared = false
       for (const effect of effects) {
         switch (effect._tag) {
           case "SessionStarted": {
@@ -243,11 +261,20 @@ export const ClaudeOutput = Layer.effect(
             // HE-59: the task shows the model answering instead until the session is back on another.
             const at = yield* nowTimestamp
             yield* writeTask(run.task_id, { model_fallback: { from: effect.from, to: effect.to, reason: effect.reason, at } })
+            yield* noteFallback(run.task_id, effect.to)
             break
           }
           case "ModelAnswered": {
-            const fallback = (yield* tasks.get(run.task_id))?.model_fallback
-            if (fallback != null && fallback.to !== effect.model) yield* writeTask(run.task_id, { model_fallback: null })
+            let to = Option.getOrUndefined(MutableHashMap.get(fallbacks, run.task_id))
+            if (to === undefined) {
+              to = (yield* tasks.get(run.task_id))?.model_fallback?.to ?? null
+              MutableHashMap.set(fallbacks, run.task_id, to)
+            }
+            if (to !== null && to !== effect.model) {
+              yield* writeTask(run.task_id, { model_fallback: null })
+              yield* noteFallback(run.task_id, null)
+              fallbackCleared = true
+            }
             break
           }
           // The reply being written is published after the commit; rate limits are `Usage`'s and compactions the
@@ -259,7 +286,7 @@ export const ClaudeOutput = Layer.effect(
             break
         }
       }
-      return { ended, started, agentAt }
+      return { ended, started, agentAt, fallbackCleared }
     })
 
     /** Claude Code refused the `initialize` that gives it the board's tools: the agent goes on without them. */
@@ -314,6 +341,7 @@ export const ClaudeOutput = Layer.effect(
           turnStarted: false,
           cost: 0,
           row: now,
+          fallbackCleared: false,
         }
         return skipped
       }
@@ -336,7 +364,7 @@ export const ClaudeOutput = Layer.effect(
         seq = written.saved.at(-1)?.seq ?? seq
       } else made = translate(before.state, line, { writeNo: 0, at, turn })
       for (const warning of made.warnings) yield* Effect.logWarning(`run=${run.id} ${warning.code}: ${warning.text}`)
-      const { ended: turnEnded, started: turnStarted, agentAt } = yield* apply(run, line, made.effects, cost, now)
+      const { ended: turnEnded, started: turnStarted, agentAt, fallbackCleared } = yield* apply(run, line, made.effects, cost, now)
       // The wait its agent is in (3.5): its own thread's other calls and its turn's end end it, a subagent's end is recorded.
       yield* waits.line(run, line)
       if (line.type === "control_response") yield* initRefused(run, line)
@@ -354,6 +382,7 @@ export const ClaudeOutput = Layer.effect(
         turnStarted,
         cost,
         row: now,
+        fallbackCleared,
       }
       return after
     })
@@ -510,6 +539,8 @@ export const ClaudeOutput = Layer.effect(
       Effect.sync(() => {
         const had = Option.getOrUndefined(MutableHashMap.get(kept, run.task_id))
         if (had !== undefined && had.run === run.id) MutableHashMap.remove(kept, run.task_id)
+        // Read again by its next run (a later run of the task already following it only reads it once more).
+        MutableHashMap.remove(fallbacks, run.task_id)
       })
 
     return RunOutput.of({
