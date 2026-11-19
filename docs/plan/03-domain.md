@@ -128,6 +128,7 @@ export const Task = Schema.Struct({
   run_started_at: Schema.NullOr(Timestamp),
   steerable: Schema.Boolean,
   limit_reset_at: Schema.NullOr(Timestamp),
+  model_fallback: Schema.optional(Schema.NullOr(ModelFallback)), // HE-59: the model Claude Code moved its session to
   agent_wait: Schema.NullOr(AgentWait),
   background_work: Schema.NullOr(BackgroundWork),
   servers: Schema.NullOr(Schema.Array(TaskServer)),

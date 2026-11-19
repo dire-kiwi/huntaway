@@ -239,6 +239,17 @@ export const ClaudeOutput = Layer.effect(
             // Written with the offset.
             agentAt = effect.uuid
             break
+          case "ModelFallback": {
+            // HE-59: the task shows the model answering instead until the session is back on another.
+            const at = yield* nowTimestamp
+            yield* writeTask(run.task_id, { model_fallback: { from: effect.from, to: effect.to, reason: effect.reason, at } })
+            break
+          }
+          case "ModelAnswered": {
+            const fallback = (yield* tasks.get(run.task_id))?.model_fallback
+            if (fallback != null && fallback.to !== effect.model) yield* writeTask(run.task_id, { model_fallback: null })
+            break
+          }
           // The reply being written is published after the commit; rate limits are `Usage`'s and compactions the
           // context meter's (plan task 2.8).
           case "PreviewReset":

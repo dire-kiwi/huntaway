@@ -359,6 +359,43 @@ describe("translate", () => {
     assert.deepStrictEqual(c.effects[0], [{ _tag: "Compacted", metadata: { trigger: "manual", pre_tokens: 1234, post_tokens: 120 } }])
   })
 
+  it("a model fallback warns in the thread and tells the run (HE-59)", () => {
+    const fallback = { original_model: "claude-opus-5-5", fallback_model: "claude-opus-4-8", content: "Opus 4.8 is answering instead." }
+    const c = convert([
+      task(1, { subtype: "model_refusal_fallback", scope: "session", ...fallback }),
+      msg(2, { type: "assistant", session_id: "s1", message: { model: "claude-opus-4-8", content: [{ type: "text", text: "On it" }] } }),
+      // A subagent's own answer from the fallback model: the session's model is unchanged.
+      task(3, { subtype: "model_refusal_fallback", scope: "local", ...fallback }),
+      task(4, { subtype: "model_fallback", original_model: "claude-opus-5-5", fallback_model: "claude-sonnet-4-5-20250929" }),
+      msg(5, { type: "assistant", session_id: "s1", message: { model: "<synthetic>", content: [{ type: "text", text: "API Error" }] } }),
+    ])
+    const items = byId(c)
+    assert.deepStrictEqual(items["legacy:1"], {
+      id: "legacy:1",
+      type: "notice",
+      level: "warning",
+      text: "Opus 5.5's safeguards flagged this session, so Opus 4.8 answers it from here.",
+      code: "model_fallback",
+      created_at: atOf(1),
+      detail: "Opus 4.8 is answering instead.",
+    })
+    assert.deepStrictEqual(c.effects[0], [{ _tag: "ModelFallback", from: "claude-opus-5-5", to: "claude-opus-4-8", reason: "refusal" }])
+    assert.deepStrictEqual(
+      c.effects[1]?.filter((e) => e._tag === "ModelAnswered"),
+      [{ _tag: "ModelAnswered", model: "claude-opus-4-8" }],
+    )
+    assert.strictEqual(
+      items["legacy:3"]?.type === "notice" ? items["legacy:3"].text : null,
+      "Opus 5.5's safeguards stopped a subagent's answer, so Opus 4.8 answered it.",
+    )
+    assert.deepStrictEqual(c.effects[2], [])
+    assert.strictEqual(items["legacy:4"]?.type === "notice" ? items["legacy:4"].text : null, "Opus 5.5 failed, so Sonnet 4.5 answers this turn.")
+    assert.deepStrictEqual(c.effects[3], [{ _tag: "ModelFallback", from: "claude-opus-5-5", to: "claude-sonnet-4-5-20250929", reason: "error" }])
+    // Claude Code's own messages are no model's answers.
+    assert.isFalse(c.effects[4]?.some((e) => e._tag === "ModelAnswered"))
+    assert.deepStrictEqual(c.codes, [])
+  })
+
   it("a subagent that runs again keeps when it first ended until it does", () => {
     const start = [
       assistant(1, null, [{ type: "tool_use", id: "bg", name: "Agent", input: { description: "Away", run_in_background: true } }]),

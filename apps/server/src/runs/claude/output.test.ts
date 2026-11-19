@@ -32,6 +32,8 @@ const said = (uuid: string, text: string) => ({
   parent_tool_use_id: null,
   message: { id: `m-${uuid}`, role: "assistant", content: [{ type: "text", text }] },
 })
+/** A reply from `model`. */
+const reply = (model: string, uuid: string) => ({ ...said(uuid, "Hi"), message: { ...said(uuid, "Hi").message, model } })
 const event = (e: unknown) => ({ type: "stream_event", session_id: "s1", parent_tool_use_id: null, event: e })
 const result = { type: "result", subtype: "success", is_error: false, total_cost_usd: 0.5, num_turns: 1, session_id: "s1" }
 
@@ -178,6 +180,42 @@ describe("Claude output in chunks", () => {
         )
         const row = yield* agent.row
         assert.deepStrictEqual([row.out_offset, row.agent_at], [chunk.at(-1)?.[1], `u${n - 1}`])
+      }),
+    ),
+  )
+
+  it.effect("HE-59: a model fallback marks the task until the session's replies come from another model", () =>
+    run(
+      Effect.gen(function* () {
+        const handler = yield* RunOutput
+        const agent = yield* fakeAgent()
+        let end = 0
+        const feed = Effect.fnUntraced(function* (line: unknown) {
+          const text = yield* Schema.encodeEffect(Json)(line).pipe(Effect.orDie)
+          yield* agent.write([text])
+          end += new TextEncoder().encode(`${text}\n`).length
+          yield* handler.handle(yield* agent.row, text, end)
+        })
+        const tasks = yield* TaskRepo
+        const fallback = () => Effect.map(tasks.get(agent.run.task_id), (t) => t?.model_fallback ?? null)
+        yield* feed(reply("claude-opus-5-5", "u1"))
+        assert.isNull(yield* fallback())
+        yield* feed({
+          type: "system",
+          subtype: "model_refusal_fallback",
+          session_id: "s1",
+          scope: "session",
+          original_model: "claude-opus-5-5",
+          fallback_model: "claude-opus-4-8",
+          content: "Opus 4.8 is answering instead.",
+        })
+        const marked = yield* fallback()
+        assert.deepStrictEqual(marked === null ? null : [marked.from, marked.to, marked.reason], ["claude-opus-5-5", "claude-opus-4-8", "refusal"])
+        // Its replies from the fallback model keep the mark; one from another model (a new session's) clears it.
+        yield* feed(reply("claude-opus-4-8", "u2"))
+        assert.isNotNull(yield* fallback())
+        yield* feed(reply("claude-opus-5-5", "u3"))
+        assert.isNull(yield* fallback())
       }),
     ),
   )

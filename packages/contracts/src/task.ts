@@ -157,6 +157,28 @@ export const WaitPr = Schema.Struct({
 export interface WaitPr extends Schema.Schema.Type<typeof WaitPr> {}
 
 /** What an agent in the `wait` tool is waiting for. Not to be confused with `Task.waiting`. */
+/**
+ * Claude Code switched the task's session to another model (HE-59): `from` the model it asked for, `to` the one answering
+ * now (`claude-opus-5-5` to `claude-opus-4-8` when Opus 5.5's safeguards flag the session), and when. Cleared once the
+ * session's own messages come from another model than `to` again.
+ */
+export const ModelFallback = Schema.Struct({
+  from: Schema.String,
+  to: Schema.String,
+  /** `refusal`: the model's safeguards refused, for the rest of the session; `error`: the model failed, for the turn. */
+  reason: Schema.Literals(["refusal", "error"]),
+  at: Timestamp,
+})
+export interface ModelFallback extends Schema.Schema.Type<typeof ModelFallback> {}
+
+/** A Claude model's name as people say it: `claude-opus-4-8` is `Opus 4.8`, `claude-sonnet-4-5-20250929` `Sonnet 4.5`; any other as it is. */
+export const modelName = (id: string): string => {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id)
+  if (m === null) return id
+  const [, family = "", major, minor] = m
+  return `${family.charAt(0).toUpperCase()}${family.slice(1)} ${major}${minor === undefined ? "" : `.${minor}`}`
+}
+
 export const AgentWait = Schema.Struct({
   /** In the agent's words. */
   reason: Schema.NullOr(Schema.String),
@@ -400,6 +422,8 @@ export const Task = Schema.Struct({
   steerable: Schema.Boolean,
   /** When the usage limit its agent last ran out of resets. */
   limit_reset_at: Schema.NullOr(Timestamp),
+  /** The model Claude Code fell back to for its session, while it answers (HE-59). Absent from older servers. */
+  model_fallback: Schema.optional(Schema.NullOr(ModelFallback)),
   agent_wait: Schema.NullOr(AgentWait),
   background_work: Schema.NullOr(BackgroundWork),
   /** The ports its processes listen on (Linux only); empty if none. */
