@@ -27,6 +27,8 @@ const cards = (thread: TaskId) =>
   })
 
 const taskOf = (id: string) => Effect.flatMap(TaskRepo, (r) => r.get(TaskId.make(id))).pipe(Effect.map((t) => t ?? assert.fail("no task")))
+/** One suggestion for HA-1, with `s` over it. */
+const one = (s: Readonly<Record<string, unknown>>) => ({ suggestions: [{ task: "HA-1", reason: "Why", actions: ["done"], ...s }] })
 const failure = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) => Effect.map(Effect.flip(effect), (e) => e._tag)
 
 describe("suggest_task_actions", () => {
@@ -157,7 +159,6 @@ describe("suggest_task_actions", () => {
       yield* task(ha, "One")
       const a = yield* agentOf(p)
       const worker = yield* agentOn(yield* task(ha, "Worker"))
-      const one = (s: Readonly<Record<string, unknown>>) => ({ suggestions: [{ task: "HA-1", reason: "Why", actions: ["done"], ...s }] })
       assert.strictEqual(err(yield* call(worker, "suggest_task_actions", one({}))), NOT_THE_ASSISTANT)
       assert.include(err(yield* call(a, "suggest_task_actions", one({ actions: ["archive"] }))), "schema")
       assert.include(err(yield* call(a, "suggest_task_actions", one({ actions: ["done", "merge", "backlog", "remind", "delete"] }))), "schema")

@@ -10,7 +10,9 @@
 // A new snapshot rebuilds the model, but what it leaves as it was stays the same objects: apply_event keeps the
 // identity of the items an event doesn't change, and what's made of each is kept by item (`made`).
 
+import { SUGGESTIONS_CODE, TaskSuggestions } from "@huntaway/contracts"
 import type { Item as ThreadItem, Snapshot, ThreadRequest, ToolCall } from "@huntaway/contracts"
+import { Option, Schema } from "effect"
 import type { Subagent, SubagentStatus } from "./subagentView"
 import { fieldsOf, listOf, numberOf, shown, stringOf, type Fields } from "./fields"
 import {
@@ -70,6 +72,7 @@ const oncePrompt = cache<PromptData>()
 const onceQuestion = cache<QuestionData>()
 const onceConnection = cache<ConnectionData>()
 const onceReport = cache<ReportData>()
+const onceSuggestions = cache<TaskSuggestions | null>()
 
 /** The board's own facts on an item or request (its `metadata`), read through fields.ts. */
 const meta = (x: { readonly metadata?: Readonly<Record<string, unknown>> }): Fields => x.metadata ?? {}
@@ -128,6 +131,11 @@ const reportData = (it: Extract<ThreadItem, { type: "notice" }>) =>
       text: stringOf(md.text),
     }
   })
+
+const decodeSuggestions = Schema.decodeUnknownOption(TaskSuggestions)
+
+/** A suggestions card (HE-61): what its notice's metadata says, or null for one this client can't read. */
+const suggestionsData = (it: Extract<ThreadItem, { type: "notice" }>) => onceSuggestions(it, () => Option.getOrNull(decodeSuggestions(it.metadata)))
 
 /** A permission request's status as the board keeps it, for a request from before its metadata (converter 2). */
 function statusOf(r: ThreadRequest): string {
@@ -308,6 +316,12 @@ class Rows {
         // Claude Code's "[Request interrupted…]": nothing's drawn for it.
         if (it.code === "interrupted") return
         if (it.code === "routine_report") return this.push({ type: "report", key, data: reportData(it) })
+        if (it.code === SUGGESTIONS_CODE) {
+          const data = suggestionsData(it)
+          // One it can't read shows as what its text says.
+          if (data) return this.push({ type: "suggestions", key, itemId: it.id, data })
+          return this.push({ type: "event", key, level: "info", text: it.text, detail: null })
+        }
         // An API error Claude Code gave as the assistant's text (the board's own events have no code).
         if (it.code) return this.push({ type: "text", key: `${key}.0`, text: it.text })
         this.push({ type: "event", key, level: it.level === "warning" ? "warn" : it.level, text: it.text, detail: it.detail ?? null })
