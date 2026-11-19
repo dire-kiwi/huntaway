@@ -72,6 +72,31 @@ describe("buildItemModel", () => {
     })
   })
 
+  it("a model fallback's notice is the board's warning with Claude Code's text, not the agent's words (HE-59)", () => {
+    const m = buildItemModel(
+      whole([
+        {
+          id: "legacy:1",
+          type: "notice",
+          level: "warning",
+          text: "Opus 5.5's safeguards flagged this session, so Opus 4.8 answers it from here.",
+          detail: "Opus 4.8 is answering instead.",
+          created_at: at(1),
+        },
+      ]),
+      false,
+    )
+    expect(m.items).toEqual([
+      {
+        type: "event",
+        key: "1",
+        level: "warn",
+        text: "Opus 5.5's safeguards flagged this session, so Opus 4.8 answers it from here.",
+        detail: "Opus 4.8 is answering instead.",
+      },
+    ])
+  })
+
   it("what an event leaves as it was stays the same objects", () => {
     const before = whole([{ id: "legacy:1", type: "user_message", text: "Go" }, text(2, "One"), text(3, "Two")])
     const prev = buildItemModel(before, true)

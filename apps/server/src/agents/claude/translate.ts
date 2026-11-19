@@ -1,9 +1,11 @@
+import { modelName } from "@huntaway/contracts"
 import type { Compaction, Item, NewEvent, Notice, ThreadMetadata, Timestamp, ToolCall, ToolStatus, TurnResult } from "@huntaway/contracts"
 import { HashMap, Predicate, Schema } from "effect"
 import {
   type AssistantLine,
   type ClaudeLine,
   type CompactBoundaryLine,
+  ModelFallbackLine,
   type ResultLine,
   type TaskLine,
   TextBlock,
@@ -77,6 +79,13 @@ export type LineEffect =
   | { readonly _tag: "RateLimit"; readonly info: unknown }
   /** The conversation was compacted, for the context meter (`compact_metadata` as Claude Code gave it). */
   | { readonly _tag: "Compacted"; readonly metadata: CompactBoundaryLine["compact_metadata"] | null }
+  /**
+   * Claude Code moved the session to another model (HE-59): `refusal` when the model's safeguards flagged it (for the rest
+   * of the session), `error` when the model failed (for the turn). Not for a subagent's own answer (`scope: "local"`).
+   */
+  | { readonly _tag: "ModelFallback"; readonly from: string; readonly to: string; readonly reason: "refusal" | "error" }
+  /** The main conversation's assistant spoke, from model `model`: a session that fell back is back once it's another. */
+  | { readonly _tag: "ModelAnswered"; readonly model: string }
 
 /** What one line made. */
 export interface Translated {
@@ -90,6 +99,7 @@ export interface Translated {
 }
 
 const isText = Schema.is(TextBlock)
+const isModelFallback = Schema.is(ModelFallbackLine)
 const isThinking = Schema.is(ThinkingBlock)
 const isToolUse = Schema.is(ToolUseBlock)
 const isToolResult = Schema.is(ToolResultBlock)
@@ -122,6 +132,7 @@ export const translate = (state: TranslatorState, line: ClaudeLine, ctx: LineCon
         if (line.session_id !== undefined && line.session_id !== "") step.effects.push({ _tag: "SessionStarted", sessionId: line.session_id })
         step.effects.push({ _tag: "TurnStarted", from: "init" })
       } else if (line.subtype === "compact_boundary") compactBoundary(step, line)
+      else if (isModelFallback(line)) modelFallback(step, line)
       else if (line.subtype !== "background_tasks_changed") job(step, line)
       break
     case "stream_event":
@@ -145,6 +156,33 @@ export const translate = (state: TranslatorState, line: ClaudeLine, ctx: LineCon
       break
   }
   return { state: step.s, events: step.events, metas: step.metas, effects: step.effects, warnings: step.warnings }
+}
+
+/**
+ * Claude Code moved to another model (HE-59): a warning in the thread, with what Claude Code says about it as its detail,
+ * and for the session's own model (not a subagent's one answer) a `ModelFallback` for the task to show. The notice has no
+ * code: a coded notice is the agent's own words (an API error it gave as its text), and this one is the board's news.
+ */
+const modelFallback = (step: Step, line: ModelFallbackLine): void => {
+  const [from, to] = [modelName(line.original_model), modelName(line.fallback_model)]
+  const refusal = line.subtype === "model_refusal_fallback"
+  const local = refusal && line.scope === "local"
+  const text = !refusal
+    ? `${from} failed, so ${to} answers this turn.`
+    : local
+      ? `${from}'s safeguards stopped a subagent's answer, so ${to} answered it.`
+      : `${from}'s safeguards flagged this session, so ${to} answers it from here.`
+  const content = line.content ?? ""
+  const notice: Notice = {
+    id: step.id(),
+    type: "notice",
+    level: "warning",
+    text,
+    created_at: step.ctx.at,
+    ...(content === "" ? {} : { detail: content }),
+  }
+  step.add(notice)
+  if (!local) step.effects.push({ _tag: "ModelFallback", from: line.original_model, to: line.fallback_model, reason: refusal ? "refusal" : "error" })
 }
 
 // ---------- what a line tells the run ----------
@@ -258,6 +296,9 @@ const assistant = (step: Step, line: AssistantLine): void => {
   usageLimitInfo(step, line)
   const parentRaw = str(line, "parent_tool_use_id")
   if (parentRaw === undefined) step.effects.push({ _tag: "TurnStarted", from: "assistant" })
+  // Synthetic messages (an error, a stop) are `<synthetic>`'s, no model's.
+  const model = line.message.model
+  if (parentRaw === undefined && model !== undefined && model !== "" && !model.startsWith("<")) step.effects.push({ _tag: "ModelAnswered", model })
   // Thinking blocks with no text were never kept, and the blocks' indexes (in ids) are of those left.
   const blocks: ReadonlyArray<unknown> = line.message.content.filter((b) => !(b.type === "thinking" && !(isThinking(b) && b.thinking !== "")))
   if (blocks.length === 0) return

@@ -8,6 +8,7 @@ import { useBoard } from "../../../state/board"
 import { useMutation } from "../../../state/mutation"
 import { useProject } from "../../boardHelpers"
 import { ModelPicker } from "../../layout/newTask/ModelPicker"
+import { ModelFallbackBadge } from "../ModelFallback"
 import { useThreadConfig } from "../view/hooks"
 
 const pickerClass =
@@ -41,6 +42,7 @@ export function ModelEffort({ task }: { task: Task }) {
         inherited={inheritedModel(threadConfig, models, project?.model, profileModel, hostModel) || (task.model ? null : task.context?.model)}
         onChange={(m) => change({ model: m || null }, "model")}
       />
+      <ModelFallbackBadge task={task} className="flex shrink-0 items-center gap-1 text-[11.5px]" />
       <select
         className={pickerClass}
         title="Effort"

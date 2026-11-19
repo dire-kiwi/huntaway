@@ -71,6 +71,24 @@ export const TaskLine = Schema.Struct({
 })
 export type TaskLine = typeof TaskLine.Type
 
+/**
+ * `system`/`model_refusal_fallback` and `model_fallback`: Claude Code moved to another model (HE-59). A refusal's (the
+ * model's safeguards flagged the session, say Opus 5.5's) is for the rest of the session when its `scope` is `session`
+ * (or absent, from older Claude Codes), and for one subagent's or side question's answer when it is `local`; a failure's
+ * (`model_fallback`: overloaded, retired, no access) is for the turn.
+ */
+export const ModelFallbackLine = Schema.Struct({
+  type: Schema.Literal("system"),
+  subtype: Schema.Literals(["model_refusal_fallback", "model_fallback"]),
+  ...session,
+  scope: text,
+  original_model: Schema.String,
+  fallback_model: Schema.String,
+  /** What Claude Code shows about it. */
+  content: text,
+})
+export type ModelFallbackLine = typeof ModelFallbackLine.Type
+
 /** `stream_event`: the API's own stream, of which the server reads where messages and blocks start and text deltas. */
 export const StreamEventLine = Schema.Struct({
   type: Schema.Literal("stream_event"),
@@ -223,6 +241,7 @@ export const ClaudeLine = Schema.Union([
   CompactBoundaryLine,
   BackgroundTasksLine,
   TaskLine,
+  ModelFallbackLine,
   StreamEventLine,
   AssistantLine,
   UserLine,
@@ -260,6 +279,8 @@ const decoders: ReadonlyMap<string, Decoder> = new Map<string, Decoder>([
   ["system/task_progress", Schema.decodeUnknownResult(TaskLine)],
   ["system/task_updated", Schema.decodeUnknownResult(TaskLine)],
   ["system/task_notification", Schema.decodeUnknownResult(TaskLine)],
+  ["system/model_refusal_fallback", Schema.decodeUnknownResult(ModelFallbackLine)],
+  ["system/model_fallback", Schema.decodeUnknownResult(ModelFallbackLine)],
   ["stream_event", Schema.decodeUnknownResult(StreamEventLine)],
   ["assistant", Schema.decodeUnknownResult(AssistantLine)],
   ["user", Schema.decodeUnknownResult(UserLine)],

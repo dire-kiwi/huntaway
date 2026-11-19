@@ -49,6 +49,7 @@ import {
 import { useNarrow, useTouch } from "../../narrow"
 import { resetsIn, resetTime } from "../ui/usageConfigs"
 import { useBoard } from "../../state/board"
+import { ModelFallbackBadge } from "../task/ModelFallback"
 import { ReviewBadge } from "../task/Review"
 import { ExternalLinkIcon } from "../task/ExternalLinks"
 
@@ -137,7 +138,7 @@ function TypeBadges({ task, progress, compact }: { task: Task; progress?: Progre
 /**
  * What kind of task it is and where it stands, on a card (`compact`: icons, with their words once the card has room) or
  * a list row: a group task's progress, its type and labels, the merge queue, what it waits on, what it
- * merges into and what merges into it, its fan-out and its review.
+ * merges into and what merges into it, the model answering instead of its own (HE-59), its fan-out and its review.
  */
 function TaskBadges({
   task,
@@ -174,6 +175,7 @@ function TaskBadges({
         </span>
       )}
       {limitQueued(task) && task.limit_reset_at && <LimitBadge at={task.limit_reset_at} className={badge} words={words} />}
+      <ModelFallbackBadge task={task} className={compact ? CARD_BADGE : "flex items-center gap-1"} />
       <DependencyBadge task={task} project={project} compact={compact} />
       <MergesIntoBadge task={task} project={project} compact={compact} />
       <IncomingBadge task={task} project={project} compact={compact} />

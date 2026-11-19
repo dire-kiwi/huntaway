@@ -1,9 +1,9 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem, Schema, Stream } from "effect"
+import { Effect, FileSystem, Result, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import type { SecureRandom } from "effect/crypto"
 import type { SqlClient } from "effect/sql"
-import { ThreadSnapshot } from "@huntaway/contracts"
+import { ThreadSnapshot, Timestamp } from "@huntaway/contracts"
 import { fakeAgent, TestBoard } from "@huntaway/testing"
 import type { FakeAgent } from "@huntaway/testing"
 import { TaskDocuments } from "../../docs/TaskDocuments.ts"
@@ -13,7 +13,9 @@ import { Threads } from "../../threads/Threads.ts"
 import type { RunDir } from "../RunDir.ts"
 import { RunOutput } from "../RunOutput.ts"
 import type { RunRepo } from "../RunRepo.ts"
-import { CHUNK_LINES } from "./output.ts"
+import { decodeLine } from "../../agents/claude/lines.ts"
+import { emptyState, translate } from "../../agents/claude/translate.ts"
+import { CHUNK_LINES, deferrable } from "./output.ts"
 
 // The Claude line handler's chunks (docs/plan/07-agents.md, Following): lines read together are applied several to a
 // transaction, and come out as they do one by one.
@@ -32,6 +34,17 @@ const said = (uuid: string, text: string) => ({
   parent_tool_use_id: null,
   message: { id: `m-${uuid}`, role: "assistant", content: [{ type: "text", text }] },
 })
+/** A reply from `model`. */
+const reply = (model: string, uuid: string) => ({ ...said(uuid, "Hi"), message: { ...said(uuid, "Hi").message, model } })
+const fallbackLine = {
+  type: "system",
+  subtype: "model_refusal_fallback",
+  session_id: "s1",
+  scope: "session",
+  original_model: "claude-opus-5-5",
+  fallback_model: "claude-opus-4-8",
+  content: "Opus 4.8 is answering instead.",
+}
 const event = (e: unknown) => ({ type: "stream_event", session_id: "s1", parent_tool_use_id: null, event: e })
 const result = { type: "result", subtype: "success", is_error: false, total_cost_usd: 0.5, num_turns: 1, session_id: "s1" }
 
@@ -180,6 +193,70 @@ describe("Claude output in chunks", () => {
         assert.deepStrictEqual([row.out_offset, row.agent_at], [chunk.at(-1)?.[1], `u${n - 1}`])
       }),
     ),
+  )
+
+  it.effect("HE-59: a model fallback marks the task until the session's replies come from another model", () =>
+    run(
+      Effect.gen(function* () {
+        const handler = yield* RunOutput
+        const agent = yield* fakeAgent()
+        let end = 0
+        const feed = Effect.fnUntraced(function* (line: unknown) {
+          const text = yield* Schema.encodeEffect(Json)(line).pipe(Effect.orDie)
+          yield* agent.write([text])
+          end += new TextEncoder().encode(`${text}\n`).length
+          yield* handler.handle(yield* agent.row, text, end)
+        })
+        const tasks = yield* TaskRepo
+        const fallback = () => Effect.map(tasks.get(agent.run.task_id), (t) => t?.model_fallback ?? null)
+        yield* feed(reply("claude-opus-5-5", "u1"))
+        assert.isNull(yield* fallback())
+        yield* feed(fallbackLine)
+        const marked = yield* fallback()
+        assert.deepStrictEqual(marked === null ? null : [marked.from, marked.to, marked.reason], ["claude-opus-5-5", "claude-opus-4-8", "refusal"])
+        // Its replies from the fallback model keep the mark; one from another model (a new session's) clears it.
+        yield* feed(reply("claude-opus-4-8", "u2"))
+        assert.isNotNull(yield* fallback())
+        yield* feed(reply("claude-opus-5-5", "u3"))
+        assert.isNull(yield* fallback())
+      }),
+    ),
+  )
+
+  it.effect("HE-59: the same, read in one chunk", () =>
+    run(
+      Effect.gen(function* () {
+        const handler = yield* RunOutput
+        const agent = yield* fakeAgent()
+        const lines = yield* Effect.forEach(
+          [reply("claude-opus-5-5", "u1"), fallbackLine, reply("claude-opus-4-8", "u2"), reply("claude-opus-4-8", "u3")],
+          (line) => Schema.encodeEffect(Json)(line),
+          { concurrency: 1 },
+        ).pipe(Effect.orDie)
+        yield* agent.write(lines)
+        yield* (handler.handleChunk ?? (() => Effect.void))(yield* agent.row, withEnds(lines, 0))
+        const task = yield* (yield* TaskRepo).get(agent.run.task_id)
+        assert.strictEqual(task?.model_fallback?.to, "claude-opus-4-8")
+        const back = yield* Schema.encodeEffect(Json)(reply("claude-opus-5-5", "u4")).pipe(Effect.orDie)
+        yield* agent.write([back])
+        yield* (handler.handleChunk ?? (() => Effect.void))(yield* agent.row, withEnds([back], withEnds(lines, 0).at(-1)?.[1] ?? 0))
+        assert.isNull((yield* (yield* TaskRepo).get(agent.run.task_id))?.model_fallback ?? null)
+      }),
+    ),
+  )
+
+  it.effect("HE-59: a reply from a model shares its chunk's transaction unless it takes a fallback mark off", () =>
+    Effect.gen(function* () {
+      const decoded = decodeLine(yield* Schema.encodeEffect(Json)(reply("claude-opus-5-5", "u1")).pipe(Effect.orDie))
+      assert.isTrue(Result.isSuccess(decoded))
+      if (Result.isFailure(decoded)) return
+      const line = decoded.success
+      const made = translate(emptyState, line, { writeNo: 1, at: Timestamp.make("2026-11-19T00:00:00.000Z") })
+      assert.isTrue(made.effects.some((e) => e._tag === "ModelAnswered"))
+      const done = { awaitedBefore: null, effects: made.effects, turnEnded: false, turnStarted: false, kept: { awaited: null } }
+      assert.isTrue(deferrable(line, { ...done, fallbackCleared: false }))
+      assert.isFalse(deferrable(line, { ...done, fallbackCleared: true }))
+    }),
   )
 
   it.effect("6.2: a tool's result keeps the task's document as it's written, and the turn's end closes its version", () =>
