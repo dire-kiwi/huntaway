@@ -24,6 +24,8 @@ export type LockKey =
   // 6.6: one workflow start per task at a time (before the task's lock), and a workflow run's state (one row) changed by one at a time.
   | readonly ["workflows", string]
   | readonly ["workflowRun", string]
+  // HE-61: a thread's suggestions cards, one row acted on at a time (before the task's lock of the row's task).
+  | readonly ["suggestions", string]
 
 export interface KeyedLockShape {
   /** One holder per key at a time, waiters in order, released on any exit. */

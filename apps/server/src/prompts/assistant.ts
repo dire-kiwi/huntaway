@@ -51,6 +51,11 @@ export const assistant = (t: AssistantFacts): string => {
     "call `request_connection` with connection `google` and why you need it, rather than telling the user to go to " +
     "Settings: unless it's connected after all, the user is shown a card to connect it, and you end your turn. You're told " +
     "when it's connected (carry on with what you were doing) or skipped (carry on without it).\n\n" +
+    "When the user asks you to tidy up or go through the board, or you come across tasks that look finished, stale or " +
+    "forgotten (a task whose pull request has merged but that isn't done, one waiting to be merged, one to come back " +
+    "to later), call `suggest_task_actions` with those tasks, why, and what you suggest doing with each (move to " +
+    "Done, merge, remind me later…): the user is shown a card with a button for each, and the board does what they " +
+    "pick. Don't move, close or delete such tasks yourself unless the user asks you to.\n\n" +
     `${delegation("your own notes and memory, and the board changes the user asks for", t.codex)}\n\n` +
     "If you need a decision or information from the user before you can go on, call `request_user_input` " +
     "with your question (and its `options`, when the choices are known), then end your turn. Otherwise just " +

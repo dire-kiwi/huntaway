@@ -1,8 +1,9 @@
 import { DateTime, Option } from "effect"
-import { rfc3339Utc } from "../../tasks/checks.ts"
+import { rfc3339Utc } from "./checks.ts"
 
-// When `create_task` and `update_task` remind the user of a task (docs/plan/inventory/03-mcp.md 2.5; the old
-// mcp/tools/tasks.ts `reminder_time`): what an agent writes, made a time the task can keep.
+// When `create_task`, `update_task` and a suggestions card's Remind me (HE-61) remind the user of a task
+// (docs/plan/inventory/03-mcp.md 2.5; the old mcp/tools/tasks.ts `reminder_time`): what an agent writes, made a time the
+// task can keep.
 
 const MINUTE = 60_000
 

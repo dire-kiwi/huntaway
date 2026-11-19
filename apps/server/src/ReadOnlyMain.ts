@@ -65,6 +65,7 @@ import { Assistant } from "./assistant/Assistant.ts"
 import { AssistantHost } from "./hosts/AssistantHost.ts"
 import { Brief } from "./assistant/Brief.ts"
 import { Connections } from "./assistant/Connections.ts"
+import { Suggestions } from "./assistant/Suggestions.ts"
 import { Google } from "./assistant/Google.ts"
 import { Memory } from "./assistant/Memory.ts"
 import { Tracked } from "./assistant/Tracked.ts"
@@ -310,7 +311,7 @@ export const ReadOnlyAreas = Layer.mergeAll(Board.layer, LinkRepo.layer).pipe(
   Layer.provideMerge(Workflows.layer.pipe(Layer.provideMerge(WorkflowEngine.layer), Layer.provideMerge(WorkflowStore.layer))),
   Layer.provideMerge(
     Connections.layer.pipe(
-      Layer.provideMerge(Layer.mergeAll(Brief.layer, Google.layer, Tracked.layer, AssistantHost.readOnly)),
+      Layer.provideMerge(Layer.mergeAll(Brief.layer, Google.layer, Tracked.layer, Suggestions.layer, AssistantHost.readOnly)),
       Layer.provideMerge(Assistant.layer),
       Layer.provideMerge(Memory.layer),
     ),

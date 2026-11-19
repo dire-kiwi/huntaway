@@ -15,7 +15,7 @@ import { makeReach } from "../resolve.ts"
 import { ApprovalKind, ForPlanning, ForReviewers, Rerunnable, ToolError } from "../tool.ts"
 import type { McpCaller } from "../tool.ts"
 import { asker, boardTool, given, Json, MAX_HOPS, nextHops, ProfileArg, TaskRefArg, told, tooManyHops } from "./common.ts"
-import { BAD_REMIND_AT, reminderTime } from "./reminders.ts"
+import { BAD_REMIND_AT, reminderTime } from "../../tasks/reminders.ts"
 import { field, makeTaskJson, overview, TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT } from "./taskJson.ts"
 
 // The board's task tools (docs/plan/inventory/03-mcp.md 2.5; the old mcp/schemas/tasks.ts and mcp/tools/local.ts):

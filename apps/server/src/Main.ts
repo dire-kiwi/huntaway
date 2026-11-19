@@ -75,6 +75,7 @@ import { Assistant } from "./assistant/Assistant.ts"
 import { AssistantHooks } from "./assistant/AssistantHooks.ts"
 import { Brief } from "./assistant/Brief.ts"
 import { Connections } from "./assistant/Connections.ts"
+import { Suggestions } from "./assistant/Suggestions.ts"
 import { Google } from "./assistant/Google.ts"
 import { Memory } from "./assistant/Memory.ts"
 import { Tracked } from "./assistant/Tracked.ts"
@@ -595,7 +596,7 @@ const PushLive = Push.watcher.pipe(Layer.provideMerge(Push.layer), Layer.provide
  */
 const AssistantLive = AssistantHooks.pipe(
   Layer.provideMerge(Connections.layer),
-  Layer.provideMerge(Layer.mergeAll(Brief.layer, Google.layer, Tracked.layer)),
+  Layer.provideMerge(Layer.mergeAll(Brief.layer, Google.layer, Tracked.layer, Suggestions.layer)),
   Layer.provideMerge(Assistant.layer),
   Layer.provideMerge(Memory.layer),
 )

@@ -33,6 +33,8 @@ export const routine = (t: RoutineFacts): string => {
     "When a Google tool (`mcp__google__…`) you need is missing or fails for want of a sign-in, call `request_connection` " +
     "with connection `google`: no card is shown during a routine's run, so carry on without it and say in your report " +
     "that Google isn't connected. " +
+    "To suggest what to do with tasks (a routine that tidies the board), call `suggest_task_actions`: its card goes " +
+    "in the main thread, for the user to pick from when they read your report. " +
     "Don't move this thread to another status."
   )
 }

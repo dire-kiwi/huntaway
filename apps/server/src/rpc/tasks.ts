@@ -24,7 +24,7 @@ import { TaskRefs } from "../tasks/TaskRefs.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 
 /** Who a session acts as: a paired device, or the board's user. */
-const actor: Effect.Effect<Actor, never, Session> = Effect.gen(function* () {
+export const actor: Effect.Effect<Actor, never, Session> = Effect.gen(function* () {
   const s = yield* Session
   return s.kind === "device" && s.device_id !== null ? { _tag: "Device", device_id: s.device_id } : Actor.user
 })

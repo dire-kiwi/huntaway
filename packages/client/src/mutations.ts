@@ -45,6 +45,8 @@ export const mutations = {
     answerQuestion: mutation("threads.answerQuestion"),
     checkConnection: mutation("threads.checkConnection"),
     skipConnection: mutation("threads.skipConnection"),
+    // HE-61: a suggestions card's row; the card and the row's task change with the events that follow.
+    actOnSuggestion: mutation("threads.actOnSuggestion"),
   },
   // Rewinding a task to before a turn, and keeping its conversation as it is: the task and its turns change with the
   // events that follow.

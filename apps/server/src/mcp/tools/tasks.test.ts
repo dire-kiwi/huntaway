@@ -8,7 +8,7 @@ import { Projects } from "../../projects/Projects.ts"
 import { Tasks } from "../../tasks/Tasks.ts"
 import { Threads } from "../../threads/Threads.ts"
 import { McpServers } from "../McpServers.ts"
-import { BAD_REMIND_AT, reminderTime } from "./reminders.ts"
+import { BAD_REMIND_AT, reminderTime } from "../../tasks/reminders.ts"
 import { overview, TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT } from "./taskJson.ts"
 import { agentOf, agentOn, at, byText, call, err, grant, idOf, keys, list, ok, profile, project, setTask, str, task } from "./tests/board.ts"
 
@@ -511,6 +511,8 @@ describe("task tools", () => {
         "update_pen",
         "delete_pen",
         "send_to_task",
+        // HE-61
+        "suggest_task_actions",
         "get_project",
         "update_project",
         "create_project",

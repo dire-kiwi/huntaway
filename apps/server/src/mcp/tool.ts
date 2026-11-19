@@ -110,6 +110,7 @@ export const THREAD_TOOLS: ReadonlyArray<string> = [
   "request_user_input",
   "finish_work",
   "request_connection",
+  "suggest_task_actions",
   "submit_review",
   "wait",
   "background_wait",
