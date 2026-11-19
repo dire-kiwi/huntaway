@@ -80,6 +80,11 @@ The first path segment of a board URL that isn't one of the board's own is a plu
 links are stable and shareable: `<board public URL>/<id>/<path>` (`PluginHost.pageUrl`). `/docs/…` is the docs
 plugin's (HE-42), at the paths the built-in documents had, so the links agents were given keep working.
 
+A page is the page's own host's, except one whose path starts with a profile's id (`/docs/<profile id>/…`, as every
+document's does): that is the host's that has the profile (the page's own first, where two have one id;
+`components/plugins/pluginHost.ts`, HE-60). So a document of a host the hub links opens there, not on the hub, which
+has no such profile. Until the board is loaded, a path naming a profile no host has shown yet waits.
+
 ## Calls and events
 
 `calls: { [method]: pluginCall({ scope, payload, success, handle }) }`. `plugins.call` needs `read`, and the method's
@@ -163,5 +168,5 @@ the renderer's in `pnpm-lock.yaml` by hand, `sha512-` and the base64 of its tarb
 
 - `@huntaway/plugin` published as a tarball on releases, so a plugin outside this repository has its types.
 - A page's query string (`render`'s `query` is empty from the web app for now), a plugin's pages on another host than
-  the page's own (the frame takes a `host`; the menu shows the page's own host's), plugins in backups, and the phone
-  app.
+  the page's own other than by a profile's id in the path (the frame takes a `host`; the menu shows the page's own
+  host's), plugins in backups, and the phone app.

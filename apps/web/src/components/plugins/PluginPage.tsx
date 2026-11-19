@@ -4,14 +4,16 @@ import { useBoard } from "../../state/board"
 import { navigate } from "../../state/route"
 import { MenuButton } from "../ui"
 import { PluginFrame } from "./PluginFrame"
+import { pluginHost } from "./pluginHost"
 import { usePluginList } from "./usePlugins"
 
 // HE-34: a plugin's own page, `/<plugin id>/<path>` (docs/plan/15-plugins.md, Pages), on the page's own host: its frame
 // fills the board's main area under a header with the plugin's name and the page's title. A first segment that names
 // no plugin of the host's (an old link, a mistyped address) goes home, as it did before plugins, once the list is read.
+// HE-60: a path that starts with a profile's id (every document's) is that profile's host's page, not the hub's.
 
 export function PluginPage({ route }: { route: Extract<Route, { name: "plugin" }> }) {
-  const host = useBoard((s) => s.localHostId)
+  const host = useBoard((s) => pluginHost(s, route.path))
   const plugins = usePluginList(host)
   const plugin = plugins?.find((p) => p.id === route.plugin)
   const unknown = plugins !== null && plugin === undefined
@@ -28,7 +30,7 @@ export function PluginPage({ route }: { route: Extract<Route, { name: "plugin" }
       </header>
       <div className="min-h-0 flex-1">
         {host && plugin.error === null && (
-          <PluginFrame key={route.path} host={host} plugin={route.plugin} slot="page" path={route.path} fill onTitle={setTitle} />
+          <PluginFrame key={`${host}/${route.path}`} host={host} plugin={route.plugin} slot="page" path={route.path} fill onTitle={setTitle} />
         )}
         {plugin.error !== null && <p className="p-5 text-[13px] text-red-400">{`${plugin.name} isn't running: ${plugin.error}`}</p>}
       </div>
