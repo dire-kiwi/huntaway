@@ -79,3 +79,48 @@ test("keeps a pinned favorite's group for its own profile's group tasks", async 
     await ui.run([`click ${group}`, "wait Plan across PinnedGroup"])
   })
 })
+
+const at = (path) => `assert location.pathname + location.search === ${JSON.stringify(path)}`
+
+// HE-64: switching to a profile (its row, or p and P) goes back to the page it was last on, through the pages of every
+// profile in between; the row of the profile already on opens its board.
+test("switching profiles goes back to the page each was last on", async () => {
+  await server.rpc("projects.update", { id: demo.id, patch: { group_name: null } })
+  await withBrowser(server, {}, async (ui) => {
+    const defaultNav = "css=aside >> role=button[name=/^D Default/]"
+    const testNav = "css=aside >> role=button[name=/^t test/]"
+    await ui.run([`goto /p/${demo.id}`, "wait css=header >> text=Demo", `click ${testNav}`, at("/profile/test"), `wait ${testRow}`])
+    await ui.run([`click ${testRow}`, "wait css=header >> text=Test", `click ${defaultNav}`, at(`/p/${demo.id}`), `wait ${demoRow}`])
+    await ui.run(["goto /settings", "wait css=header >> text=Settings", "press p", at(`/p/${testProject.id}`), "wait css=header >> text=Test"])
+    // The row of the profile already on opens its board, from its kept page and from a page of every profile alike.
+    await ui.run(["press P", at(`/p/${demo.id}`), "wait css=header >> text=Demo", "goto /settings", "wait css=header >> text=Settings"])
+    await ui.run([
+      `click ${defaultNav}`,
+      at("/profile/Default"),
+      `click ${demoRow}`,
+      "wait css=header >> text=Demo",
+      `click ${defaultNav}`,
+      at("/profile/Default"),
+    ])
+    // It's kept in the browser for the next visit.
+    await ui.run(["goto /guide", `click ${testNav}`, at(`/p/${testProject.id}`)])
+
+    // A pinned project open under both profiles: switching stays on it and only moves the sidebar.
+    await ui.run([`click ${defaultNav}`, at("/profile/Default"), `rclick ${demoRow}`, "click [role=menu] >> text=Pin to every profile", `click ${demoRow}`])
+    await ui.run(["wait css=header >> text=Demo", `click ${testNav}`, at(`/p/${testProject.id}`), `click ${demoRow}`, "wait css=header >> text=Demo"])
+    await ui.run([`click ${defaultNav}`, at(`/p/${demo.id}`), "wait css=aside [aria-current] >> text=/^D\\s*Default/"])
+    await ui.run([
+      "press p",
+      at(`/p/${demo.id}`),
+      "wait css=aside [aria-current] >> text=/^t\\s*test/",
+      "goto /guide",
+      `click ${defaultNav}`,
+      at(`/p/${demo.id}`),
+    ])
+
+    // A kept page the profile no longer lists (the pinned project, unpinned, is Default's) opens its board instead.
+    await ui.run([`click ${testNav}`, at(`/p/${demo.id}`), "wait css=aside [aria-current] >> text=/^t\\s*test/", `rclick ${demoRow}`])
+    await ui.run(["click [role=menu] >> text=Unpin", "wait css=aside [aria-current] >> text=/^D\\s*Default/", "goto /settings", `click ${testNav}`])
+    await ui.run([at("/profile/test"), "wait css=aside [aria-current] >> text=/^t\\s*test/", `wait ${testRow}`, `gone ${demoRow}`])
+  })
+})

@@ -48,8 +48,8 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
   const activeProject = "projectId" in route ? route.projectId : routeTask?.project_id
   const names = profileNames(profiles)
   const taskList = useMemo(() => Object.values(tasks), [tasks])
-  const active = useActiveProfile({ route, routeTask, names, profiles, projects, taskList, profileOf, isPinned })
-  usePageShortcuts(active)
+  const { active, switchTo } = useActiveProfile({ route, routeTask, names, profiles, projects, taskList, profileOf, isPinned })
+  usePageShortcuts(active, switchTo)
   const { shown, favoriteList, groups, grouped } = useProjectLists({ hosts, projects, taskList, active, profileOf, marks })
   const { naming, setNaming, groupErr, setGroupErr, leaveGroup, trySetGroup, saveName } = useGroupActions({ route, collapsed, setCollapsedGroup })
   const { menu, setMenu, archiving, setArchiving, projectMenu, groupMenu } = useProjectMenus({
@@ -87,7 +87,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
         </div>
       )}
 
-      <ProfileNav route={route} names={names} active={active} byProfile={stats.byProfile} setMenu={setMenu} />
+      <ProfileNav route={route} names={names} active={active} switchTo={switchTo} byProfile={stats.byProfile} setMenu={setMenu} />
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-2">
         {/* HE-34: the plugins' pages (the profile's documents are the docs plugin's, HE-42). */}

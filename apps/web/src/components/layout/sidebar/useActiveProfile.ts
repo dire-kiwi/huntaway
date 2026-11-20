@@ -1,17 +1,22 @@
-import { useEffect, useState } from "react"
-import { activeProfile, loadActiveProfile, saveActiveProfile } from "../../../activeProfile"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { activeProfile, loadActiveProfile, profilePlace, saveActiveProfile, saveProfilePlace } from "../../../activeProfile"
 import type { HostProfile as Profile, HostProject as Project, HostTask as Task } from "@huntaway/client"
 
 import { profileTint, showProfileTint } from "../../../theme"
 import { groupProjects, groupTasks } from "../../../projectGroups"
-import type { Route } from "../../../router"
+import { href, parse, type Route, withoutModal } from "../../../router"
+import { navigate, onNavigate } from "../../../state/route"
 import type { ProfileOf } from "./useProfileOf"
 import { useBoard } from "../../../state/board"
 import { setTitleProfile } from "../notifier"
 
+/** The page open, without a task dialog over it (which is only over it for now). */
+const here = (): string => withoutModal(window.location.pathname + window.location.search)
+
 /**
  * The profile whose projects the sidebar lists, which is saved in this browser, named in the
- * page's title when there are several, and whose tint the board shows.
+ * page's title when there are several, and whose tint the board shows; and `switchTo`, which moves to a profile at
+ * the page it was last on (HE-64).
  */
 export function useActiveProfile({
   route,
@@ -36,32 +41,73 @@ export function useActiveProfile({
 
   // The sidebar lists the projects of one profile (and the pinned ones): the profile whose board
   // is open, else the one picked last. Opening a project it doesn't list moves to its profile.
-  const openProjects =
-    route.name === "board" || route.name === "projectSettings"
-      ? projects.filter((p) => p.id === route.projectId)
-      : routeTask?.project_id
-        ? projects.filter((p) => p.host_id === routeTask.host_id && p.id === routeTask.project_id)
-        : route.name === "group"
-          ? groupProjects(projects, route.hostId, route.group)
+  const openProjectsAt = (r: Route, task: Task | undefined) =>
+    r.name === "board" || r.name === "projectSettings"
+      ? projects.filter((p) => p.id === r.projectId)
+      : task?.project_id
+        ? projects.filter((p) => p.host_id === task.host_id && p.id === task.project_id)
+        : r.name === "group"
+          ? groupProjects(projects, r.hostId, r.group)
           : []
-  const active = activeProfile(names, savedProfile, (current) => {
-    if (route.name === "profile" || route.name === "assistant") return route.profile
-    const listed = openProjects.some((p) => profileOf(p) === current || isPinned(p))
-    if (route.name === "group") {
+  /** The profile page `r` needs instead of `current` (`activeProfile`'s `needs`). */
+  const needsAt = (r: Route, task: Task | undefined) => (current: string) => {
+    if (r.name === "profile" || r.name === "assistant") return r.profile
+    const open = openProjectsAt(r, task)
+    const listed = open.some((p) => profileOf(p) === current || isPinned(p))
+    if (r.name === "group") {
       // A profile lists a group for its projects in it, and for its group tasks in it (which can
       // stay after its own projects leave the group), so either keeps it.
-      const owners = groupTasks(taskList, route.hostId, route.group).map(profileOf)
+      const owners = groupTasks(taskList, r.hostId, r.group).map(profileOf)
       if (listed || owners.includes(current)) return undefined
-      const [first] = openProjects
+      const [first] = open
       return first ? profileOf(first) : owners[0]
     }
-    const [first] = openProjects
+    const [first] = open
     return first && !listed ? profileOf(first) : undefined
-  })
+  }
+  const openProjects = openProjectsAt(route, routeTask)
+  const active = activeProfile(names, savedProfile, needsAt(route, routeTask))
   if (active !== undefined && active !== savedProfile) setSavedProfile(active)
   useEffect(() => {
     if (active !== undefined) saveActiveProfile(active)
   }, [active])
+
+  // HE-64: the page open is where the active profile is, once it's known whose it is: a profile's own pages, a project's
+  // or group's once loaded, and a plugin's (its documents). Not the pages of every profile (settings, analytics, the
+  // guide, a host's), nor a task's page, which moves on to its board.
+  const [url, setUrl] = useState(here)
+  useEffect(() => onNavigate(() => setUrl(here())), [])
+  const loaded = useBoard((s) => s.loaded)
+  const known =
+    route.name === "profile" || route.name === "assistant"
+      ? route.profile === active
+      : route.name === "board" || route.name === "projectSettings"
+        ? openProjects.length > 0
+        : route.name === "group"
+          ? loaded
+          : route.name === "plugin"
+  useEffect(() => {
+    if (active !== undefined && known) saveProfilePlace(active, url)
+  }, [active, known, url])
+  // Another profile opens at its kept page, and the one already on at its board. The profile is picked first, so the
+  // page goes on with it even where the sidebar would stay on this one (a pinned project, a plugin's page), and when
+  // its kept page is the one open (the same pinned project, or plugin page, under both) it only moves the sidebar. A
+  // kept page the sidebar would move off the profile at (a project since unpinned, moved or deleted) opens its board.
+  const keeps = (name: string, place: string): boolean => {
+    const r = parse(place.split("?")[0] ?? "")
+    if ((r.name === "board" || r.name === "projectSettings") && !projects.some((p) => p.id === r.projectId)) return false
+    return activeProfile(names, name, needsAt(r, undefined)) === name
+  }
+  const latest = useRef({ active, keeps })
+  useEffect(() => {
+    latest.current = { active, keeps }
+  })
+  const switchTo = useCallback((name: string) => {
+    const { active: on, keeps: stays } = latest.current
+    const kept = name === on ? undefined : profilePlace(name)
+    setSavedProfile(name)
+    navigate(kept !== undefined && stays(name, kept) ? kept : href({ name: "profile", profile: name }))
+  }, [])
 
   // The board takes on the active profile's tint (HA-397).
   const localHostId = useBoard((s) => s.localHostId)
@@ -76,5 +122,5 @@ export function useActiveProfile({
     setTitleProfile(titled)
   }, [titled])
 
-  return active
+  return { active, switchTo }
 }

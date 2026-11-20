@@ -260,7 +260,7 @@
   to another column to reopen it. Tasks keep when they were done in `done_at`.
 - **Search, filter and sort:** each board's header (a project's, a group's or a
   profile's; on a narrow board, a row below it), in every view, has a search field (`/` goes to it; Settings → Keyboard shortcuts lists the board's keys and gives this one, the
-  triage and compare views' next and previous, and the keys that work on every page (`p` and `P` for the next and previous profile's board,
+  triage and compare views' next and previous, and the keys that work on every page (`p` and `P` for the next and previous profile, at the page it was last on,
   `a` for the profile's assistant) another key, kept in the browser). It doesn't filter the
   board (HA-306): it lists under it, to open one, the board's tasks with every word typed in their key, title, description,
   branch or project (a key typed in full first, then those not done, then done and archived ones; 20 at most). ↑ and ↓

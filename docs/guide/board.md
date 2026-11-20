@@ -2,7 +2,9 @@
 
 The board shows every profile at once. The sidebar lists the profiles at the top, each with a bar of how many of its
 tasks are in progress (blue), need attention (amber), in review (purple) and merging or waiting to merge (pink), leaving
-out the columns with none. Clicking one opens the **profile's board**: all of its tasks together, from every project and
+out the columns with none. Clicking another one switches to it, back on the page you were on when you left it (HE-64:
+its board the first time, or when that page isn't one of its own any more; `p` and `P` switch the same way); clicking the one you're on opens the **profile's board**:
+all of its tasks together, from every project and
 every host that has the profile, with its group and scratch tasks. Its _New task_ form picks the project, or makes a
 scratch task: type `in:` and a project's key (`in:HA`), `in:none` for a scratch task in no project or `in:group` for a
 group task (this was `@HA` on the old board until HA-303). Below the profiles, _Guide_ opens this guide in the app, a
@@ -34,8 +36,8 @@ heading. It stays while you're on other pages, and opening a project it doesn't 
 link, or a starred task) moves it to that project's profile. Pin a project to keep it listed
 whichever profile is active by right-clicking it and picking _Pin to every profile_ (a group's
 menu pins the projects it lists); pinned projects show a pin, and the initial of their own
-profile when it's another one. The active profile and pinned projects are saved in this browser,
-and the board opens on the active profile's board.
+profile when it's another one. The active profile, the page each profile was last on and pinned projects are saved in
+this browser, and the board opens on the active profile's board.
 
 **Docs** in the menu is the docs plugin's (HE-42): [dire-kiwi/docs](https://github.com/dire-kiwi/docs)'s
 `@dire-kiwi/docs-huntaway`, which this build includes (a plugin, see
