@@ -1,4 +1,4 @@
-import { type HostTask, mutate } from "@huntaway/client"
+import { type HostTask, mutate, unreadInReview } from "@huntaway/client"
 import { ProjectId } from "@huntaway/contracts"
 import { Exit } from "effect"
 import { router, Stack, useLocalSearchParams } from "expo-router"
@@ -52,11 +52,18 @@ export default function ProjectScreen() {
 
 function TaskRow({ task: t }: { readonly task: HostTask }) {
   const agent = agentState(t)
+  // Came into In review and not opened since (HE-65).
+  const fresh = unreadInReview(t)
   return (
-    <Pressable style={s.card} accessibilityRole="link" onPress={() => router.push({ pathname: "/task/[host]/[id]", params: { host: t.host_id, id: t.id } })}>
+    <Pressable
+      style={[s.card, fresh && { borderColor: STATUS_COLOR.in_review }]}
+      accessibilityRole="link"
+      onPress={() => router.push({ pathname: "/task/[host]/[id]", params: { host: t.host_id, id: t.id } })}
+    >
       <View style={s.row}>
         <View style={[s.dot, { backgroundColor: STATUS_COLOR[t.status] }]} />
         <Text style={s.faint}>{t.key}</Text>
+        {fresh && <Text style={[s.faint, { color: STATUS_COLOR.in_review }]}>New in review</Text>}
         {agent !== null && <Text style={[s.faint, { color: colors.blue }]}>{agent}</Text>}
       </View>
       <Text style={s.title} numberOfLines={2}>

@@ -441,6 +441,11 @@ export const Task = Schema.Struct({
   /** Tool rules always allowed for it. */
   auto_allow: Schema.Array(Schema.String),
   review: Schema.NullOr(Review),
+  /**
+   * Came into In review and not opened by the user since (HE-65): set each time it moves in, unless the user moved it,
+   * and cleared by opening it (`review_unread: false`) or by moving it out. Absent from older servers.
+   */
+  review_unread: Schema.optional(Schema.Boolean),
   /** One from each summarizer; possibly empty. */
   summaries: Schema.Array(ChangeSummary),
   rewind: Schema.NullOr(Rewind),
@@ -506,6 +511,8 @@ export const TaskPatch = Schema.Struct({
   todos_override: Schema.optional(Schema.Boolean),
   /** With `status: "in_progress"` while its agent is merging it: step out of the merge queue and rejoin it when the run ends. */
   remerge: Schema.optional(Schema.Boolean),
+  /** false: the user has seen it in In review (opened it), so it isn't marked new there any more. */
+  review_unread: Schema.optional(Schema.Boolean),
 })
 export interface TaskPatch extends Schema.Schema.Type<typeof TaskPatch> {}
 

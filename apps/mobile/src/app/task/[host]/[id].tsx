@@ -1,14 +1,14 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react"
-import { mutate, optimisticMove, STATUSES, taskAtom } from "@huntaway/client"
+import { mutate, optimisticMove, STATUSES, taskAtom, unreadInReview } from "@huntaway/client"
 import { TaskId } from "@huntaway/contracts"
 import { Stack, useLocalSearchParams } from "expo-router"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, Text, View } from "react-native"
 import { Composer } from "../../../components/composer"
 import { ThreadView } from "../../../components/thread"
 import { Button, Empty, ErrorText, s } from "../../../components/ui"
 import { agentState, statusLabel } from "../../../logic/tasks"
-import { useAction } from "../../../state/action"
+import { runExit, useAction } from "../../../state/action"
 import { colors, STATUS_COLOR } from "../../../theme"
 
 // A task: its status, its agent, its pull request, Stop / Start / Move, its thread and the composer.
@@ -23,6 +23,11 @@ export default function TaskScreen() {
   const move = useAtomSet(optimisticMove({ host_id: host, id }))
   const [{ busy, error }, run] = useAction()
   const [moving, setMoving] = useState(false)
+  // Opened in In review, it has been seen there (HE-65); a failed save leaves the mark for the next time.
+  const fresh = task !== undefined && unreadInReview(task)
+  useEffect(() => {
+    if (fresh) runExit(mutate("tasks.update", host, { id: TaskId.make(id), patch: { review_unread: false } }), () => undefined)
+  }, [fresh, host, id])
   if (task === undefined)
     return (
       <View style={s.screen}>

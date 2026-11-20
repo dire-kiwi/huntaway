@@ -13,7 +13,9 @@ import {
   runningAgentSteers,
   stopTitle,
   taskLabels,
+  unreadInReview,
   type DocumentType,
+  type HostTask,
 } from "@huntaway/client"
 import type { TerminalTool } from "@huntaway/contracts"
 import { clsx } from "clsx"
@@ -24,7 +26,8 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { boardTaskUrl, groupTaskUrl, href, profileTaskUrl, type Panel } from "../../router"
 import { closeTask, closeTaskModal, navigate, setPanelExpanded } from "../../state/route"
 import { board, useBoard } from "../../state/board"
-import { exitError, useAction } from "../../state/mutation"
+import { exitError, runExit, useAction } from "../../state/mutation"
+import { useVisible } from "../../state/visibility"
 import { isGroupTask, useHost, useProfileName, useProject } from "../boardHelpers"
 import { useNarrow } from "../../narrow"
 import { openingTab } from "./openingTab"
@@ -168,6 +171,21 @@ export function TaskModal({ taskId }: { taskId: string }) {
   )
 }
 
+/**
+ * Opened (and shown) in In review, the task has been seen there (HE-65): it isn't marked new on the board any more. A
+ * failed save is left be: the mark stays, and opening it again tries again.
+ */
+function useMarkSeen(task: HostTask | undefined) {
+  const visible = useVisible()
+  const unread = !!task && unreadInReview(task)
+  const host = task?.host_id
+  const id = task?.id
+  useEffect(() => {
+    if (!unread || !visible || host === undefined || id === undefined) return
+    void runExit(mutate("tasks.update", host, { id, patch: { review_unread: false } }))
+  }, [unread, visible, host, id])
+}
+
 export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mode }) {
   const boardTask = useBoard((s) => s.tasks[taskId])
   const sought = useSoughtTask(taskId, !!boardTask)
@@ -220,6 +238,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   }, [task, hostTools, openIds, act, closeTool])
   // A subagent's thread stays shown while the task is open: closing it (or opening another) goes back to the main thread.
   useEffect(() => () => useSubagentView.getState().show(taskId, null), [taskId])
+  useMarkSeen(task)
   if (!task)
     return (
       <div className="flex h-full flex-col">

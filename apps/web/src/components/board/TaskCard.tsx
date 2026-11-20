@@ -10,6 +10,7 @@ import {
   mergeQueued,
   rejoinsMerge,
   taskLabels,
+  unreadInReview,
   type HostProject as Project,
   type HostTask as Task,
 } from "@huntaway/client"
@@ -269,6 +270,19 @@ function CardTodos({ todos }: { todos: ReadonlyArray<TaskTodo> }) {
   )
 }
 
+/** A dot on a task that came into In review and hasn't been opened since (HE-65). */
+function NewInReview({ task, className }: { task: Task; className?: string | undefined }) {
+  if (!unreadInReview(task)) return null
+  return (
+    <span
+      role="img"
+      aria-label="New in review"
+      title="New in review: not opened since it came here"
+      className={clsx("h-2 w-2 shrink-0 rounded-full bg-st-review", className)}
+    />
+  )
+}
+
 export const TaskCard = memo(function TaskCard({
   task,
   project,
@@ -297,13 +311,20 @@ export const TaskCard = memo(function TaskCard({
       {...selectable}
       className={clsx(
         "group @container relative cursor-pointer overflow-hidden rounded-lg border bg-panel-2 p-3 transition-colors outline-none hover:border-line-strong hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent",
-        task.status === "needs_attention" ? "border-st-attention/35" : task.review?.state === "running" ? "border-st-review/40" : "border-line",
+        task.status === "needs_attention"
+          ? "border-st-attention/35"
+          : unreadInReview(task)
+            ? "border-st-review/80 bg-st-review/[0.1]"
+            : task.review?.state === "running"
+              ? "border-st-review/40"
+              : "border-line",
         open && "bg-raised ring-1 ring-accent/60",
       )}
     >
       {/* One line that never wraps: the key and the state stay whole, and badges that don't fit are cut off. */}
       <div className="mb-1 flex items-center gap-2 text-[11px] text-faint">
         <span className="flex shrink-0 items-center gap-1 font-mono">
+          <NewInReview task={task} />
           <AgentIcon task={task} size={11} />
           {keyPrefix(task, project)}-{task.number}
         </span>
@@ -374,11 +395,12 @@ export const TaskRow = memo(function TaskRow({
       {...selectable}
       className={clsx(
         "flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-colors outline-none hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset narrow:flex-wrap narrow:gap-x-2 narrow:px-3",
-        open ? "bg-raised shadow-[inset_2px_0_0_var(--color-accent)]" : "bg-panel/60",
+        open ? "bg-raised shadow-[inset_2px_0_0_var(--color-accent)]" : unreadInReview(task) ? "bg-st-review/[0.1]" : "bg-panel/60",
       )}
     >
-      <span className="pt-0.5">
+      <span className="relative pt-0.5">
         <StatusIcon status={task.status} />
+        <NewInReview task={task} className="absolute -top-0.5 -right-1" />
       </span>
       <span className="w-14 shrink-0 pt-px font-mono text-[11.5px] text-faint narrow:w-auto">
         {keyPrefix(task, project)}-{task.number}

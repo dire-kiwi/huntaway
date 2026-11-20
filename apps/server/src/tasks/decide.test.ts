@@ -334,6 +334,23 @@ describe("decideUpdate: moving between columns", () => {
     assert.isUndefined(ok(update(task({ kind: "review" }), { status: "ready_for_merge" }, work)).merging)
   })
 
+  it("marks a task new in In review each time it comes in, until the user opens it (HE-65)", () => {
+    const working = task({ status: "in_progress" })
+    // Its run ending, or its agent moving it, puts it there new; the user moving it there has seen it.
+    assert.isTrue(after(working, deriveColumns(working, { status: "in_review" }, NOW)).review_unread)
+    assert.isTrue(moved(working, { status: "in_review" }, {}, agent).review_unread)
+    assert.isFalse(moved(working, { status: "in_review" }).review_unread)
+    // Opened, it isn't new; a change that leaves it in In review keeps it as it is.
+    const unread = task({ status: "in_review", review_unread: true })
+    assert.isFalse(moved(unread, { review_unread: false }).review_unread)
+    assert.isTrue(moved(unread, { title: "x" }, {}, agent).review_unread)
+    assert.isTrue(moved(unread, { status: "in_review" }, {}, agent).review_unread)
+    // Back to work and in again, it's new again; moved out unopened, it's not new anywhere else.
+    const back = moved(unread, { status: "in_progress" })
+    assert.isFalse(back.review_unread)
+    assert.isTrue(after(back, deriveColumns(back, { status: "in_review" }, NOW)).review_unread)
+  })
+
   it("refuses Ready for merge while the agent runs", () => {
     conflict(update(task(), { status: "ready_for_merge" }, { ...work, running: true }), "agent_running", "still running")
     conflict(update(task({ running: true }), { status: "ready_for_merge" }, work), "agent_running")
@@ -620,7 +637,7 @@ describe("deriveColumns", () => {
         "moved on: loses its place and the approval",
         like(merging, { remerge: true, merging: false, status: "in_progress" }),
         { status: "in_review" },
-        { status: "in_review", resolution: null, done_at: null, stack_run: null, remerge: false, merge_approval: null },
+        { status: "in_review", resolution: null, done_at: null, stack_run: null, remerge: false, merge_approval: null, review_unread: true },
       ],
       ["other columns change nothing else", task(), { title: "x" }, { title: "x" }],
     ]

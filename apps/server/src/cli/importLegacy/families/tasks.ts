@@ -376,6 +376,7 @@ export const convertTask = (
     run_started_at: t.run_started_at,
     limit_reset_at: t.limit_reset_at,
     model_fallback: null,
+    review_unread: 0,
     agent_wait: null,
     background_work: null,
     servers: null,

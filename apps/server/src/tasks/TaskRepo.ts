@@ -194,6 +194,7 @@ export const TaskRow = Schema.Struct({
   claude_config_id: Schema.NullOr(AgentConfigId),
   auto_allow: JsonColumn(Schema.Array(Schema.String), []),
   review: JsonColumn(Schema.NullOr(Review), null),
+  review_unread: Bit,
   summaries: JsonColumn(Schema.Array(ChangeSummary), []),
   rewind: JsonColumn(Schema.NullOr(Rewind), null),
   project_key: Text,

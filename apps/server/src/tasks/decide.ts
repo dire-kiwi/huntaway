@@ -114,6 +114,12 @@ export const deriveColumns = (before: Task, columns: TaskColumns, now: Timestamp
     const t = after()
     if (t.merge_approval !== null && !t.merging && !t.remerge) out.merge_approval = null
   }
+  // Each time it comes into In review it's new there until the user opens it (HE-65); out of In review it's not.
+  if (changes(columns, "status") && !changes(columns, "review_unread")) {
+    const into = after().status === "in_review"
+    if (into && before.status !== "in_review") out.review_unread = true
+    else if (!into && before.review_unread === true) out.review_unread = false
+  }
   return out
 }
 
@@ -350,7 +356,11 @@ export const decideUpdate = (before: Task, patch: TaskPatch, facts: UpdateFacts,
       if (remerge) columns.remerge = true
       // Moving it ends its agent's wait, told so in the same write.
       if (before.agent_wait !== null && status !== before.status) columns.agent_wait = { ...before.agent_wait, moved_to: status }
+      // The user moving it into In review has seen it there (HE-65).
+      if (status === "in_review" && (actor._tag === "User" || actor._tag === "Device")) columns.review_unread = false
     }
+    // Opened by the user, or marked new again.
+    if (patch.review_unread !== undefined) columns.review_unread = patch.review_unread
 
     // A setup that failed before making the branch left nothing to tear down, so it can be put right and set up again.
     const unmade =

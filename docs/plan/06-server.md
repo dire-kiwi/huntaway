@@ -201,6 +201,11 @@ export class Tasks extends Context.Service<Tasks, {
   `db/tasks/write.ts`, without the orchestration, which the reactor now has.
 - `Actor` is who asked: the user, a device, an agent (with its task), an automation, the board. It decides what may
   be set and is recorded as the change's cause.
+- **New in review** (HE-65): `review_unread` is set by `deriveColumns` each time a task's status moves into In review
+  (its run ending, its agent moving it), and cleared when it moves out; `decideUpdate` leaves it clear when the user or
+  a device moves it there. Opening the task (the web app's `TaskView` while the page is shown, the phone's task screen)
+  sends `tasks.update` with `review_unread: false`. The board marks such a task (`unreadInReview`): a violet border,
+  tint and dot on its card, a dot on its list row and its stack's card, "New in review" on the phone's list.
 - `TaskRefs` resolves `KEY-n`, former keys, `<profile>:<key>` and ids, for board tools and the CLI.
 - Deleting a task is by hand and in order, not by cascade alone: abort its runs, expire its prompts, kill its
   terminals, tear down its worktree under the lock, fix what pointed at it, then the row.

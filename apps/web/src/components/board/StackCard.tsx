@@ -14,6 +14,7 @@ import {
   mergeAwaitsApproval,
   mergeQueued,
   STATUSES,
+  unreadInReview,
   type HostProject as Project,
   type HostTask as Task,
 } from "@huntaway/client"
@@ -283,6 +284,8 @@ export function StackCard({
   const open = !!panel && stack.tasks.some((t) => t.id === panel.taskId)
   const attention = stack.tasks.some((t) => t.status === "needs_attention")
   const running = stack.tasks.some((t) => t.running)
+  // Levels that came into In review and haven't been opened since (HE-65).
+  const fresh = stack.tasks.filter(unreadInReview)
   const notes = stackNotes(stack, all, check, hidden, narrow || touch)
   const opens = landsNext(stack) ?? stack.main.at(-1) ?? stack.bottom
   const description = meta ? stack.bottom.stack_description?.trim() : null
@@ -325,6 +328,14 @@ export function StackCard({
             {stack.main.length} levels{stack.beside.length > 0 && ` +${stack.beside.length} beside`}
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            {fresh.length > 0 && (
+              <span
+                role="img"
+                aria-label="New in review"
+                title={`New in review, not opened since: ${fresh.map((t) => t.title).join(", ")}`}
+                className="h-2 w-2 rounded-full bg-st-review"
+              />
+            )}
             {running && <RunningDot />}
             <button
               type="button"
