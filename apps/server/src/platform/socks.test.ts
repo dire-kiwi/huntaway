@@ -41,6 +41,21 @@ describe("the SOCKS proxy", () => {
       const res = yield* client.execute(HttpClientRequest.get("http://preview.test:8080/pr/3"))
       assert.deepStrictEqual([res.status, yield* res.text], [200, "<title>preview.test:8080</title>"])
       assert.deepStrictEqual(proxy.asked, ["preview.test:8080"])
+      // A redirect is followed, as the checks that don't go through it follow one.
+      const moved = yield* client.execute(HttpClientRequest.get("http://preview.test/moved"))
+      assert.deepStrictEqual([moved.status, yield* moved.text], [200, "<title>preview.test</title>"])
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect("is reached at an IPv6 address", () =>
+    Effect.gen(function* () {
+      const site = yield* hostEcho
+      const proxy = yield* fakeSocks(site.port, "::1")
+      assert.match(proxy.url, /^socks5:\/\/\[::1\]:\d+$/u)
+      assert.strictEqual(yield* checkSocksProxy(proxy.url), proxy.url)
+      const res = yield* (yield* socksClient(proxy.url)).execute(HttpClientRequest.get("http://preview.test/"))
+      assert.strictEqual(res.status, 200)
+      assert.deepStrictEqual(proxy.asked, ["preview.test:80"])
     }).pipe(Effect.scoped),
   )
 })

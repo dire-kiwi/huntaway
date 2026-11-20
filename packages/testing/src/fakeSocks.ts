@@ -24,10 +24,10 @@ const target = (b: Buffer): { readonly host: string; readonly port: number; read
 }
 
 /**
- * A SOCKS5 proxy (HE-67) on 127.0.0.1, for the scope: no sign-in, CONNECT only, and every connection asked for goes to
+ * A SOCKS5 proxy (HE-67) on 127.0.0.1 (or `on`), for the scope: no sign-in, CONNECT only, and every connection asked for goes to
  * 127.0.0.1:`to`, whatever its host, so a test can open `http://preview.test/` and get its own server.
  */
-export const fakeSocks = (to: number) =>
+export const fakeSocks = (to: number, on = "127.0.0.1") =>
   Effect.acquireRelease(
     Effect.callback<{ readonly fake: FakeSocks; readonly close: () => void }>((resume) => {
       const asked: Array<string> = []
@@ -67,23 +67,30 @@ export const fakeSocks = (to: number) =>
         }
         client.on("data", onData)
       })
-      server.listen(0, "127.0.0.1", () => {
+      server.listen(0, on, () => {
         const address = server.address()
         const port = typeof address === "object" && address !== null ? address.port : 0
         const close = () => {
           for (const s of open) s.destroy()
           server.close()
         }
-        resume(Effect.succeed({ fake: { url: `socks5://127.0.0.1:${port}`, asked }, close }))
+        resume(Effect.succeed({ fake: { url: `socks5://${on.includes(":") ? `[${on}]` : on}:${port}`, asked }, close }))
       })
     }),
     ({ close }) => Effect.sync(close),
   ).pipe(Effect.map(({ fake }) => fake))
 
-/** A web server on a free port of 127.0.0.1 that answers every page with its Host header as its title, for the scope. */
+/**
+ * A web server on a free port of 127.0.0.1 that answers every page with its Host header as its title, for the scope;
+ * `/moved` redirects (302) to `/`.
+ */
 export const hostEcho = Effect.acquireRelease(
   Effect.callback<{ readonly port: number; readonly close: () => void }>((resume) => {
-    const server = createHttpServer((req, res) => res.writeHead(200, { "content-type": "text/html" }).end(`<title>${req.headers.host ?? ""}</title>`))
+    const server = createHttpServer((req, res) =>
+      req.url === "/moved"
+        ? res.writeHead(302, { location: "/" }).end()
+        : res.writeHead(200, { "content-type": "text/html" }).end(`<title>${req.headers.host ?? ""}</title>`),
+    )
     server.listen(0, "127.0.0.1", () => {
       const a = server.address()
       resume(Effect.succeed({ port: typeof a === "object" && a !== null ? a.port : 0, close: () => server.close() }))

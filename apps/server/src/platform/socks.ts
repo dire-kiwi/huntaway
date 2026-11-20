@@ -1,8 +1,8 @@
 import { NodeHttpClient } from "@effect/platform-node"
 import { Effect } from "effect"
 import type { Scope } from "effect"
-import type { HttpClient } from "effect/http"
-import { Socks5ProxyAgent } from "undici"
+import { HttpClient } from "effect/http"
+import { buildConnector, Socks5ProxyAgent } from "undici"
 import { Invalid } from "@huntaway/contracts"
 
 // HE-67: the host's SOCKS proxy (Settings → the host's page, `socks_proxy`), which its preview checks
@@ -35,9 +35,12 @@ export const checkSocksProxy = (given: string): Effect.Effect<string | null, Inv
   return Effect.succeed(`socks5://${url.hostname}:${url.port === "" ? SOCKS_PORT : url.port}`)
 }
 
+/** A URL's host name without the brackets an IPv6 address has there (`[::1]` is `::1`). */
+const bare = (hostname: string) => hostname.replace(/^\[(.*)\]$/u, "$1")
+
 /** Whether a host name is this machine's (localhost, 127.0.0.0/8, ::1): its pages aren't proxied. */
 export const isLoopback = (hostname: string): boolean => {
-  const h = hostname.toLowerCase().replace(/^\[(.*)\]$/u, "$1")
+  const h = bare(hostname.toLowerCase())
   return h === "localhost" || h.endsWith(".localhost") || h === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/u.test(h)
 }
 
@@ -48,12 +51,34 @@ export const proxiedTo = (proxy: string | null | undefined, url: string): proxy 
   return to !== null && !isLoopback(to.hostname)
 }
 
-/** An HTTP client whose requests all go through the SOCKS5 proxy `proxy` (as `checkSocksProxy` stores it), for the scope. */
+/** How long the proxy has to take a connection (undici's default for its SOCKS5 agent). */
+const CONNECT_MS = 5000
+
+/** How many redirects a request follows, as `fetch` does for the checks that don't go through the proxy. */
+const REDIRECTS = 20
+
+/**
+ * The connection to the proxy itself: undici's, given the proxy's host without the brackets an IPv6 address has in a URL
+ * (`[::1]`), which undici's SOCKS5 agent passes on as they are.
+ */
+const toProxy = (): buildConnector.connector => {
+  const connect = buildConnector({ timeout: CONNECT_MS })
+  return (options, callback) =>
+    connect({ ...options, hostname: bare(options.hostname), ...(options.host === undefined ? {} : { host: bare(options.host) }) }, callback)
+}
+
+/**
+ * An HTTP client whose requests all go through the SOCKS5 proxy `proxy` (as `checkSocksProxy` stores it), for the
+ * scope. It follows redirects, as the server's own client (`fetch`) does.
+ */
 export const socksClient = (proxy: string): Effect.Effect<HttpClient.HttpClient, never, Scope.Scope> =>
   Effect.acquireRelease(
-    Effect.sync(() => new Socks5ProxyAgent(proxy)),
+    Effect.sync(() => new Socks5ProxyAgent(proxy, { connect: toProxy() })),
     (agent) => Effect.promise(() => agent.destroy().catch(() => undefined)),
-  ).pipe(Effect.flatMap((agent) => Effect.provideService(NodeHttpClient.makeUndici, NodeHttpClient.Dispatcher, agent)))
+  ).pipe(
+    Effect.flatMap((agent) => Effect.provideService(NodeHttpClient.makeUndici, NodeHttpClient.Dispatcher, agent)),
+    Effect.map(HttpClient.followRedirects(REDIRECTS)),
+  )
 
 /** Chrome's flags for `proxy`: none without one. Chrome itself leaves this machine's pages out of it. */
 export const chromeProxyArgs = (proxy: string | null): ReadonlyArray<string> => (proxy === null ? [] : [`--proxy-server=${proxy}`])

@@ -188,7 +188,9 @@ describe("a task's pull request", () => {
         const prs = yield* PullRequests
         assert.deepStrictEqual(yield* prs.previewStatus("http://pr-3.preview.test/"), { up: true, status: 200 })
         assert.deepStrictEqual(yield* prs.previewStatus(`http://127.0.0.1:${site.port}/`), { up: true, status: 200 })
-        assert.deepStrictEqual(proxy.asked, ["pr-3.preview.test:80"])
+        assert.deepStrictEqual(yield* prs.previewStatus("http://pr-4.preview.test/moved"), { up: true, status: 200 }, "a redirect is followed")
+        // (The redirect's request may take a connection of its own.)
+        assert.deepStrictEqual(new Set(proxy.asked), new Set(["pr-3.preview.test:80", "pr-4.preview.test:80"]))
       }),
     ),
   )
