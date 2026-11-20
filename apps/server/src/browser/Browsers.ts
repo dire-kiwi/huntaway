@@ -126,7 +126,8 @@ interface Tab {
   readonly usedAt: number
   readonly viewers: number
   readonly dialog: string | null
-  readonly size: { readonly width: number; readonly height: number }
+  /** The page's size (CSS pixels), the last viewer's to ask: every viewer follows it, to map its pointer onto the page. */
+  readonly size: SubscriptionRef.SubscriptionRef<{ readonly width: number; readonly height: number }>
 }
 interface Running {
   /** Counts Chrome's starts: a page of an earlier one is gone. */
@@ -198,7 +199,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
             usedAt: yield* Clock.currentTimeMillis,
             viewers: 0,
             dialog: null,
-            size: DEFAULT_SIZE,
+            size: yield* SubscriptionRef.make<{ readonly width: number; readonly height: number }>(DEFAULT_SIZE),
           }
           yield* Ref.update(tabs, (m) => new Map([...m, [task, fresh]]))
           return fresh
@@ -299,7 +300,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           const targetId = str(made, "targetId")
           const page = pageOf(cdp, str(yield* cdp.send("Target.attachToTarget", { targetId, flatten: true }), "sessionId"))
           yield* preparePage(page)
-          yield* setSize(page, tab.size)
+          yield* setSize(page, yield* SubscriptionRef.get(tab.size))
           const scope = yield* Scope.fork(r.scope)
           yield* track(task, page, tab.info, true).pipe(Scope.provide(scope))
           yield* Scope.addFinalizer(scope, cdp.send("Target.closeTarget", { targetId }).pipe(Effect.ignore))
@@ -442,12 +443,12 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
               gone: Effect.raceFirst(Deferred.await(h.gone), r.chrome.cdp.closed.pipe(Effect.asVoid)),
               // A script may change the title with no event of the page's: it's looked at while someone watches.
               refresh: refresh(h.page, now.info),
+              size: now.size,
               resize: (w, hgt) =>
                 Effect.gen(function* () {
                   const s = sizeOf(w, hgt)
-                  yield* setTab(task, (t) => ({ ...t, size: s }))
                   yield* setSize(h.page, s)
-                  return s
+                  yield* SubscriptionRef.set(now.size, s)
                 }),
               navigate: (url) => {
                 const to = browserUrl(url)

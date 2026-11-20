@@ -353,7 +353,8 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 - `BrowserWebview.tsx`: the old pane's <webview> (`persist:huntaway-browser`, popups in the pane, DevTools, open in the
   system's browser, the last address in `ia.browser:<host>:<task>`), which an empty pane starts at the agent's page
   (`browser.status`): it starts at the first web address it learns of (the saved one, the task's preview, the agent's
-  page) and keeps it. Once the webview is ready it takes its debugger through the preload's `paneDebugger` and opens
+  page) and keeps it; while it has none it reads `browser.status` every 2 seconds, so a page the agent opens later
+  comes into the pane. Once the webview is ready it takes its debugger through the preload's `paneDebugger` and opens
   `/api/browser/<ticket>` with a `browser.pane` ticket: the server's CDP commands go to the debugger and its answers and events come
   back. A dot in the bar says whether the agent is connected. Closed, it stays mounted for the task it was opened on
   (`TaskView`'s `keptFor`; never for a task viewed after), off-screen at a page's size rather than `display: none`,

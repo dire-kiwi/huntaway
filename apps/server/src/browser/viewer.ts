@@ -25,7 +25,9 @@ export interface ViewerTab {
   /** Read the page's address and title again (a script may change the title with no event). */
   readonly refresh: Effect.Effect<void>
   /** Set the page's size (CSS pixels), as the viewer asks. */
-  readonly resize: (width: number, height: number) => Effect.Effect<{ readonly width: number; readonly height: number }>
+  readonly resize: (width: number, height: number) => Effect.Effect<void>
+  /** The page's size, which any of its viewers may change: each follows it. */
+  readonly size: SubscriptionRef.SubscriptionRef<{ readonly width: number; readonly height: number }>
   /** Load an address the viewer typed; fails with why it didn't load. */
   readonly navigate: (url: string) => Effect.Effect<void, { readonly reason: string }>
   /** Back, forward, reload. */
@@ -114,14 +116,18 @@ export const relayViewer = Effect.fnUntraced(function* (
     const bytes = Option.isSome(shot) ? Base64.decode(str(shot.value, "data")) : undefined
     if (bytes?._tag === "Success" && !(yield* Ref.get(sent))) yield* onFrame(bytes.success, STILL)
   })
-  const resized = (w: number, h: number) =>
+  /** The page's size as this viewer last showed it: a change (its own or another viewer's) is shown once. */
+  const shownSize = yield* Ref.make<{ readonly width: number; readonly height: number } | null>(null)
+  const show = (s: { readonly width: number; readonly height: number }) =>
     Effect.gen(function* () {
-      const s = yield* tab.resize(w, h)
+      const was = yield* Ref.getAndSet(shownSize, s)
+      if (was !== null && was.width === s.width && was.height === s.height) return
       yield* say({ type: "viewport", width: s.width, height: s.height })
       yield* screencast(s)
       yield* Ref.set(sent, false)
       yield* still.pipe(Effect.forkScoped)
     })
+  const resized = (w: number, h: number) => Effect.andThen(tab.resize(w, h), Effect.flatMap(SubscriptionRef.get(tab.size), show))
 
   const sub = yield* tab.cdp.subscribe
   yield* PubSub.take(sub).pipe(
@@ -144,6 +150,8 @@ export const relayViewer = Effect.fnUntraced(function* (
   yield* tab.refresh.pipe(Effect.repeat(Schedule.spaced(TITLE_EVERY)), Effect.forkScoped)
   yield* page.send("Page.enable").pipe(Effect.ignore)
   yield* resized(size.width, size.height)
+  // Another viewer may give the page its size: this one's frames and pointer follow.
+  yield* SubscriptionRef.changes(tab.size).pipe(Stream.runForEach(show), Effect.forkScoped)
 
   const mouse = (m: Extract<BrowserClientFrame, { readonly type: "mouse" }>) =>
     page.send("Input.dispatchMouseEvent", {

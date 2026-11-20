@@ -378,6 +378,37 @@ describe.skipIf(systemChrome === null)("a task's browser", () => {
   )
 
   it.live(
+    "two viewers of one page follow its size, whichever gave it",
+    () =>
+      withBrowser((url) =>
+        Effect.gen(function* () {
+          const browsers = yield* Browsers
+          const agent = yield* fakeAgent()
+          const task = agent.run.task_id
+          yield* call(agent, "navigate", { url })
+          const a = yield* fakeSocket
+          yield* browsers
+            .serve(yield* browsers.ticket(task, "view"), { width: 400, height: 700, url: null }, Effect.succeed(a.socket))
+            .pipe(Effect.scoped, Effect.forkChild)
+          assert.deepStrictEqual(yield* nextJson(a, "viewport"), { type: "viewport", width: 400, height: 700 })
+          const b = yield* fakeSocket
+          yield* browsers
+            .serve(yield* browsers.ticket(task, "view"), { width: 1200, height: 800, url: null }, Effect.succeed(b.socket))
+            .pipe(Effect.scoped, Effect.forkChild)
+          assert.deepStrictEqual(yield* nextJson(b, "viewport"), { type: "viewport", width: 1200, height: 800 })
+          // The first is told the page's new size, which it maps its pointer onto.
+          assert.deepStrictEqual(yield* nextJson(a, "viewport"), { type: "viewport", width: 1200, height: 800 })
+          // And back, when the first resizes.
+          yield* a.send('{"type":"resize","width":500,"height":600}')
+          assert.deepStrictEqual(yield* nextJson(b, "viewport"), { type: "viewport", width: 500, height: 600 })
+          yield* a.hangUp
+          yield* b.hangUp
+        }),
+      ),
+    TIMEOUT,
+  )
+
+  it.live(
     "a page that didn't load keeps the address it was asked for, not Chrome's error page",
     () =>
       withBrowser(() =>

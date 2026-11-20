@@ -69,3 +69,41 @@ test("in the desktop app, opening the desktop view mounts no browser pane, even 
     assert.equal(await ui.page.locator("[aria-hidden=true] webview").count(), 1)
   })
 })
+
+/**
+ * Something other than the board page gives the task's browser a page: a stand-in for a desktop pane on the server's
+ * socket (no Chrome needed), which answers its commands with nothing and says it's on `url`, until `close` is called.
+ */
+const pageElsewhere = async (task, url) => {
+  const { ticket } = await server.rpc("browser.pane", { task_id: task.id })
+  const ws = new WebSocket(`${server.url.replace(/^http/, "ws")}/api/browser/${ticket}`)
+  ws.addEventListener("message", (e) => {
+    const m = JSON.parse(String(e.data))
+    if (typeof m.id !== "number") return
+    ws.send(JSON.stringify({ id: m.id, result: {} }))
+    if (m.method === "Page.getFrameTree") ws.send(JSON.stringify({ method: "Page.frameNavigated", params: { frame: { id: "F", url } } }))
+  })
+  await new Promise((resolve) => ws.addEventListener("open", resolve))
+  return () => ws.close()
+}
+
+test("in the desktop app, an empty pane takes the page the task's browser opens later", async () => {
+  const task = await server.rpc("tasks.create", { task: { project_id: board.project.id, title: "Empty pane" } })
+  await withBrowser(server, {}, async (ui) => {
+    await ui.context.addInitScript(desktopApp)
+    await ui.run([
+      `goto /p/${board.project.id}?task=${task.id}`,
+      "wait Empty pane",
+      `click [title="The task's browser, beside the thread"]`,
+      "wait Type an address above",
+    ])
+    assert.equal(await ui.page.locator("webview").count(), 0)
+    const close = await pageElsewhere(task, "http://127.0.0.1:9/elsewhere")
+    try {
+      await ui.page.locator("webview").waitFor({ state: "attached", timeout: 10_000 })
+      assert.equal(await ui.page.locator("webview").getAttribute("src"), "http://127.0.0.1:9/elsewhere")
+    } finally {
+      close()
+    }
+  })
+})

@@ -1465,7 +1465,9 @@ take the same code, with no Playwright in the server.
   (`Page.captureScreenshot`) when a new screencast sends nothing within 300 ms (an idle page doesn't repaint). The
   page's address and title go as JSON as they change, and its title is read every 2 seconds while watched (a script's
   title change has no event). The viewer's mouse, wheel, keys and text are replayed with `Input.dispatch*`; its size
-  becomes the page's (`Emulation.setDeviceMetricsOverride`). An address the viewer gives (its socket's `url`, a
+  becomes the page's (`Emulation.setDeviceMetricsOverride`), kept in a `SubscriptionRef` on the tab that every viewer
+  follows: when one gives the page its size, each is sent `viewport` and its screencast starts again at it, so its
+  pointer maps onto the page as it is. An address the viewer gives (its socket's `url`, a
   `navigate` frame) goes through `browserUrl` on the server too: web pages only, never `file:` or `chrome:`, answered
   with an `error` frame. When the page goes (the agent's `close`, a reap, Chrome gone), the relay ends and the socket
   closes with 1012; the viewer asks for a new ticket, which opens the page again where it was. `browser.open` needs

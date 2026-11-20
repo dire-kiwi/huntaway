@@ -80,14 +80,16 @@ const text = (v: unknown, key: string): string => {
 
 export function BrowserWebview({ task, onClose }: { task: Task; onClose: () => void }) {
   const [saved, save] = useAtom(browserUrlAtom(`${task.host_id}:${task.id}`))
-  // A page the agent has open headless, which the pane takes over.
-  const status = resultValue(useAtomValue(query("browser.status", task.host_id, { task_id: task.id })))
+  const known = [saved ?? "", task.preview_url ?? ""].find(isWeb) ?? ""
+  // Where it starts: the first web address it learns of, kept from then on (later pages are loaded into the webview,
+  // so that it isn't made again).
+  const [src, setSrc] = useState(known)
+  // A page the agent has open headless, which the pane takes over: looked for again every 2 seconds while the pane has
+  // no page, since an agent may open one any time (it gets the pane once the pane has a page).
+  const status = resultValue(useAtomValue(query("browser.status", task.host_id, { task_id: task.id }, src === "" ? { refresh: "2 seconds" } : undefined)))
   const agentUrl = status !== undefined && status !== null && isWeb(status.url) ? status.url : null
-  // Where it starts: the first web address it learns of (the one saved, the task's preview, the agent's page; the saved
-  // one comes from storage a moment after the first render), kept from then on (later pages are loaded into the
-  // webview, so that it isn't made again).
-  const first = [saved ?? "", task.preview_url ?? "", agentUrl ?? ""].find(isWeb) ?? ""
-  const [src, setSrc] = useState(first)
+  // The saved one comes from storage a moment after the first render; the agent's when it opens one.
+  const first = known !== "" ? known : (agentUrl ?? "")
   if (src === "" && first !== "") setSrc(first)
   const [went, setWent] = useState("")
   const url = went !== "" ? went : src
