@@ -58,7 +58,9 @@ const parse = (line: string): unknown => {
 }
 const list = (v: unknown): Array<unknown> => (Array.isArray(v) ? [...v] : [])
 const hex = () => randomUUID().replaceAll("-", "").slice(0, 12)
-const send = (v: Json) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...v })}\n`)
+const send = (v: Json): void => {
+  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...v })}\n`)
+}
 const log = (v: unknown) => {
   if (env.FAKE_ACP_LOG) appendFileSync(env.FAKE_ACP_LOG, `${JSON.stringify(v)}\n`)
 }
@@ -139,7 +141,11 @@ const chosen = (a: Json | null): string => {
 /** A permission-asked tool call, completed or failed as the answer says; the option chosen. */
 const permitted = async (call: Json, done: Json): Promise<string> => {
   update({ sessionUpdate: "tool_call", ...call, status: "pending" })
-  const a = await ask("session/request_permission", { sessionId: session, toolCall: { toolCallId: call.toolCallId, title: call.title, kind: call.kind }, options: PERMISSIONS })
+  const a = await ask("session/request_permission", {
+    sessionId: session,
+    toolCall: { toolCallId: call.toolCallId, title: call.title, kind: call.kind },
+    options: PERMISSIONS,
+  })
   const option = chosen(a)
   if (turn?.cancelled === true) return option
   const ok = option.startsWith("allow")
@@ -151,7 +157,10 @@ const permitted = async (call: Json, done: Json): Promise<string> => {
 const callStdio = (server: Json, tool: string, args: unknown): Promise<string> =>
   new Promise((done) => {
     const extra = Object.fromEntries((Array.isArray(server.env) ? server.env : []).map((e: unknown) => [str(field(e, "name")), str(field(e, "value"))]))
-    const child = spawn(str(server.command), Array.isArray(server.args) ? server.args.map(str) : [], { env: { ...env, ...extra }, stdio: ["pipe", "pipe", "inherit"] })
+    const child = spawn(str(server.command), Array.isArray(server.args) ? server.args.map(str) : [], {
+      env: { ...env, ...extra },
+      stdio: ["pipe", "pipe", "inherit"],
+    })
     const write = (m: Json) => child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...m })}\n`)
     let finished = false
     const finish = (text: string) => {
@@ -215,7 +224,16 @@ const runTurn = async (id: unknown, text: string) => {
   }
   if (text.includes("fake-edit") && !t.cancelled) {
     const path = `${process.cwd()}/fake.txt`
-    const option = await permitted({ toolCallId: `call_${hex()}`, title: "Edit fake.txt", kind: "edit", content: [{ type: "diff", path, oldText: "old\n", newText: "new\n" }], locations: [{ path }] }, {})
+    const option = await permitted(
+      {
+        toolCallId: `call_${hex()}`,
+        title: "Edit fake.txt",
+        kind: "edit",
+        content: [{ type: "diff", path, oldText: "old\n", newText: "new\n" }],
+        locations: [{ path }],
+      },
+      {},
+    )
     said.push(`permission edit: ${option}`)
   }
   if (text.includes("fake-question") && !t.cancelled) {
@@ -235,9 +253,21 @@ const runTurn = async (id: unknown, text: string) => {
     const tool = m[1] ?? ""
     const args = parse(m[2] ?? "{}") ?? {}
     const toolCallId = `call_${hex()}`
-    update({ sessionUpdate: "tool_call", toolCallId, title: `mcp__huntaway__${tool}`, kind: "other", status: "in_progress", rawInput: args, _meta: { is_mcp_tool_call: true } })
+    update({
+      sessionUpdate: "tool_call",
+      toolCallId,
+      title: `mcp__huntaway__${tool}`,
+      kind: "other",
+      status: "in_progress",
+      rawInput: args,
+      _meta: { is_mcp_tool_call: true },
+    })
     const server = mcpServers.find((s) => field(s, "name") === "huntaway")
-    const out = !isObject(server) ? "no huntaway MCP server" : field(server, "type") === "http" ? await callHttp(server, tool, args) : await callStdio(server, tool, args)
+    const out = !isObject(server)
+      ? "no huntaway MCP server"
+      : field(server, "type") === "http"
+        ? await callHttp(server, tool, args)
+        : await callStdio(server, tool, args)
     update({ sessionUpdate: "tool_call_update", toolCallId, status: "completed", content: [{ type: "content", content: { type: "text", text: out } }] })
     said.push(`board ${tool}: ${out}`)
   }
@@ -259,7 +289,10 @@ const runTurn = async (id: unknown, text: string) => {
   const usage = text.includes("fake-usage")
   if (usage && !t.cancelled) update({ sessionUpdate: "usage_update", used: 1234, size: 100000 })
   turn = null
-  send({ id, result: { stopReason: t.cancelled ? "cancelled" : "end_turn", ...(usage ? { usage: { inputTokens: 1000, outputTokens: 200, totalTokens: 1200 } } : {}) } })
+  send({
+    id,
+    result: { stopReason: t.cancelled ? "cancelled" : "end_turn", ...(usage ? { usage: { inputTokens: 1000, outputTokens: 200, totalTokens: 1200 } } : {}) },
+  })
 }
 
 const promptText = (params: unknown): string => {
