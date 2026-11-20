@@ -302,6 +302,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           tmp,
           desktopHost: served.desktop ? identity.hostName : null,
           spacesHost: served.spaces === true ? identity.hostName : null,
+          browserTools: served.browser === true,
           docsServer: (served.plugins ?? []).some((p) => p.name === DOCS_SERVER),
           memory: workspace?.memory,
         })
@@ -430,6 +431,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           tmp,
           desktopHost: served.desktop ? identity.hostName : null,
           spacesHost: served.spaces === true ? identity.hostName : null,
+          browserTools: served.browser === true,
           docsServer: (served.plugins ?? []).some((p) => p.name === DOCS_SERVER),
           memory: workspace?.memory,
         })

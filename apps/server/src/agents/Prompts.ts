@@ -44,6 +44,8 @@ export interface RunTold {
   readonly desktopHost?: string | null | undefined
   /** HE-37: it has the `spaces` server: the host's name, whose Spaces they are; none by default. */
   readonly spacesHost?: string | null | undefined
+  /** HE-62: it has the `browser` server; not by default. */
+  readonly browserTools?: boolean | undefined
   /** HE-42: the board serves a `docs` server, the docs plugin's (`docsNote`); not by default. */
   readonly docsServer?: boolean | undefined
   /** 6.7: the assistant's (or a routine thread's) memory as its files say now; none by default. */
@@ -116,6 +118,7 @@ const OFF = {
   docsTools: false,
   desktopHost: null,
   spacesHost: null,
+  browserTools: false,
   tmp: null,
   memory: "",
 } as const
@@ -193,6 +196,7 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           // 6.10: computer use.
           desktopHost: run.desktopHost ?? null,
           spacesHost: run.spacesHost ?? null,
+          browserTools: run.browserTools ?? false,
           // 6.7: the assistant's memory.
           memory: run.memory ?? "",
           task,

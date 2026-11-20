@@ -137,8 +137,8 @@ export const McpControlRegistered = Layer.effectDiscard(
       // HE-34: and the plugins' that have tools.
       // HE-37: the spaces' while theirs says so (on for the host's agents, and Docker answers).
       served: Effect.map(
-        Effect.all([servers.serves("desktop"), servers.serves("spaces"), servers.defined], { concurrency: 1 }),
-        ([desktop, spaces, plugins]) => ({ gh: true, desktop, spaces, plugins }),
+        Effect.all([servers.serves("desktop"), servers.serves("spaces"), servers.serves("browser"), servers.defined], { concurrency: 1 }),
+        ([desktop, spaces, browser, plugins]) => ({ gh: true, desktop, spaces, browser, plugins }),
       ),
     })
   }),

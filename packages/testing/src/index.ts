@@ -21,3 +21,5 @@ export * from "./rehearsal.ts"
 // HE-37: a fake Docker CLI and a fake spacesd, for the spaces server.
 export * from "./fakeDocker.ts"
 export * from "./fakeSpacesd.ts"
+// HE-62: this machine's Chrome or Chromium, for the tasks' browser's tests.
+export * from "./systemChrome.ts"

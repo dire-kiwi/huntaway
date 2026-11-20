@@ -13,7 +13,7 @@ import type { Run } from "../runs/Run.ts"
 // and agents' habits depend on them.
 
 /** The board's own MCP servers: its own tools, GitHub through `gh`, the host's desktop, its Spaces. */
-export const BuiltInServer = Schema.Literals(["huntaway", "gh", "desktop", "spaces"])
+export const BuiltInServer = Schema.Literals(["huntaway", "gh", "desktop", "spaces", "browser"])
 export type BuiltInServer = typeof BuiltInServer.Type
 
 /**

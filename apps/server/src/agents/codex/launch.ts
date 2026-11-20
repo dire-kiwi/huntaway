@@ -3,7 +3,17 @@ import type { PermissionMode, Task } from "@huntaway/contracts"
 import { forMode } from "@huntaway/shared"
 import type { Rules } from "@huntaway/shared"
 import type { LaunchSpec } from "../AgentDriver.ts"
-import { DESKTOP_SERVER, desktopDisallowed, GH_SERVER, GH_WRITES, SPACES_SERVER, spacesDisallowed, toolPrefix, usesServer } from "../claude/access.ts"
+import {
+  BROWSER_SERVER,
+  DESKTOP_SERVER,
+  desktopDisallowed,
+  GH_SERVER,
+  GH_WRITES,
+  SPACES_SERVER,
+  spacesDisallowed,
+  toolPrefix,
+  usesServer,
+} from "../claude/access.ts"
 import type { RunTools } from "../claude/access.ts"
 import { boardServers, mcpRun, pluginServers, TASK_ENV, userInput } from "../claude/launch.ts"
 import type { BoardManifest, ServedServers } from "../claude/launch.ts"
@@ -112,6 +122,7 @@ export const codexLaunch = (input: CodexLaunchInput): Effect.Effect<CodexLaunch,
       gh: usesServer(tools, GH_SERVER, input.served.gh),
       desktop: usesServer(tools, DESKTOP_SERVER, input.served.desktop),
       spaces: usesServer(tools, SPACES_SERVER, input.served.spaces === true),
+      browser: usesServer(tools, BROWSER_SERVER, input.served.browser === true),
       plugins: pluginServers(tools, input.served),
     }
     const ownGh = Object.hasOwn(tools.mcp_servers, GH_SERVER)
@@ -160,6 +171,8 @@ export const codexLaunch = (input: CodexLaunchInput): Effect.Effect<CodexLaunch,
         approved_mcp_servers: [
           ...Object.keys(tools.mcp_servers).filter((n) => tools.allowed.includes(toolPrefix(n))),
           ...(servers.plugins ?? []).filter((p) => p.preApproved).map((p) => p.name),
+          // HE-62: the task's own browser, a sandboxed web page.
+          ...(servers.browser === true ? [BROWSER_SERVER] : []),
         ],
         disabled_mcp_tools: disabled,
         // Codex's reviewer reviews the board's waits on its MCP server; a dynamic tool's call is the board's to ask about.

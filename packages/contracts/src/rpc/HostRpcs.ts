@@ -41,6 +41,8 @@ import { ToolRpcs } from "./tools.ts"
 import { WorkflowRpcs } from "./workflows.ts"
 // HE-34
 import { PluginRpcs } from "./plugins.ts"
+// HE-62: each task's web browser.
+import { BrowserRpcs } from "./browser.ts"
 
 /** Every group a host serves about itself (docs/plan/05-protocol.md, The contract package). */
 export const HostRpcs = HostRpcGroup.merge(
@@ -61,6 +63,8 @@ export const HostRpcs = HostRpcGroup.merge(
   GitRpcs,
   // 6.1
   TerminalRpcs,
+  // HE-62
+  BrowserRpcs,
   // 6.11
   AsanaRpcs,
   ConfigArchiveRpcs,

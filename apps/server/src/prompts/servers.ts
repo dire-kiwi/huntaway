@@ -11,3 +11,5 @@ export const DOCS_SERVER = "docs"
 export const DESKTOP_SERVER = "desktop"
 /** This host's Spaces, Linux desktops in Docker (HE-37). */
 export const SPACES_SERVER = "spaces"
+/** Each task's own web browser (HE-62). */
+export const BROWSER_SERVER = "browser"

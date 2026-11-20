@@ -19,6 +19,8 @@ export const DOCS_SERVER = "docs"
 export const DESKTOP_SERVER = "desktop"
 /** The board's spaces server (HE-37: this host's Spaces). */
 export const SPACES_SERVER = "spaces"
+/** The board's browser server (HE-62: the task's own web browser), whose tools every run uses without asking. */
+export const BROWSER_SERVER = "browser"
 
 /** The gh server's tools that only read, so they run without asking (`--allowedTools mcp__gh__<name>`). */
 export const GH_READ_ONLY: ReadonlyArray<string> = ["pr_view", "pr_list", "pr_checks", "pr_diff", "issue_view", "issue_list", "run_list", "run_view"]
