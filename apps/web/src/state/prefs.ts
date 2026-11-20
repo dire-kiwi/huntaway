@@ -56,3 +56,9 @@ export const usageOpenAtom = storedBare("ia.usageOpen", Flag, "1")
 /** A profile's open pen tab (`ia.pen.<profile>`), and its collapsed lanes (`ia.pen.collapsed.<profile>`). */
 export const penTabAtom = Atom.family((profile: string) => storedBare(`ia.pen.${profile}`, Schema.String, null))
 export const penCollapsedAtom = Atom.family((profile: string) => stored(`ia.pen.collapsed.${profile}`, Keys, []))
+
+/** HE-62: the browser pane's share of the task view's width (`ia.browserShare`, a number as a string). */
+export const browserShareAtom = storedBare("ia.browserShare", Schema.String, null)
+
+/** HE-62: the address a task's browser pane was last on (`ia.browser:<host>:<task>`). */
+export const browserUrlAtom = Atom.family((key: string) => storedBare(`ia.browser:${key}`, Schema.String, null))

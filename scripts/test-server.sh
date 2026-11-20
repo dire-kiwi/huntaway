@@ -83,7 +83,12 @@ launch() {
   mkdir -p "$dir/tmp"
   # 6.11: Asana is the fake a test gives ($HUNTAWAY_ASANA_URL), else none at all: a test server never reaches Asana.
   local asana=${HUNTAWAY_ASANA_URL:-http://127.0.0.1:9/no-asana-on-test-servers}
-  TMPDIR="$dir/tmp" env "${unset[@]}" HUNTAWAY_ASANA_URL="$asana" "${desktop_env[@]}" \
+  # HE-62: the tasks' browser is this machine's Chromium ($CHROMIUM, else /usr/bin/chromium, as ui-check's), without
+  # Chrome's sandbox as Playwright runs it; never a download of chrome-headless-shell.
+  local chrome=${CHROMIUM:-/usr/bin/chromium} chrome_env=()
+  if [[ -x $chrome ]]; then chrome_env=(HUNTAWAY_CHROME="$chrome" HUNTAWAY_CHROME_SANDBOX=0)
+  else chrome_env=(HUNTAWAY_CHROME_RELEASE='{"version":"none","url":"http://127.0.0.1:9/no-chrome-downloads-on-test-servers","bytes":1,"sha256":"0","program":"none"}'); fi
+  TMPDIR="$dir/tmp" env "${unset[@]}" HUNTAWAY_ASANA_URL="$asana" "${desktop_env[@]}" "${chrome_env[@]}" \
     setsid "$bin" serve --host 127.0.0.1 --port "$2" --data-dir "$dir" --name test --no-discovery "${serve[@]}" \
     > "$dir/server.log" 2>&1 < /dev/null &
   pid=$!

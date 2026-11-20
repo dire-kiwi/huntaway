@@ -243,8 +243,8 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   thread that cannot be watched (its task gone) says so with "Try again".
 - **Cut with a note, by milestone**: the background banner's Stop buttons (2.5); turns, checkpoints, rewind marks
   and the rewind dialog (4.3); line comments sent with a message (4.2); the skills menu (6.4, inert); Changes, review,
-  summary and the review's dot (M4); workflows' tabs and list (6.6); the terminal and its tools, the browser pane and
-  the desktop view (M6); documents and plan tabs, document links (M6: links are plain external links); the assistant's
+  summary and the review's dot (M4); workflows' tabs and list (6.6); the terminal and its tools, the browser pane (HE-62,
+  below) and the desktop view (M6); documents and plan tabs, document links (M6: links are plain external links); the assistant's
   memory, brief, routines and action log, and finding a routine's thread on other hosts (M6); Asana links (6.11);
   approval rules in Details (3.6, 6.12); worktree set-up and tear-down (4.1); "Stacked on" and "Landing after" in
   Details (4.8); fix-checks buttons (4.5, 4.6); the context breakdown's lists and "carry on" (2.8); Codex config models
@@ -337,11 +337,35 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 - `task/Desktop.tsx` (`useDesktopOn(hostId)` from `desktop.status`, cached a minute; `DesktopButton`; `DesktopPane`
   polling `desktop.frame` every 700 ms and `desktop.ops` every 3 s) is in the task view: the button beside the tabs on a
   host with computer use on and a driver, the pane beside the main area (half the width while wide, in its place when
-  narrow; it expands a side panel), the column beside the main area giving way. The browser's splitter isn't on this server, so the
-  share is fixed. The old capability check (`hostHas(host, DESKTOP)`) is gone.
+  narrow; it expands a side panel), the column beside the main area giving way. Its share stays fixed; the browser has
+  the splitter (HE-62), and the two are open one at a time. The old capability check (`hostHas(host, DESKTOP)`) is gone.
 - Checks: `tests/ui/desktop.test.mjs` (`--fake-claude --fake-desktop`: a run's desktop calls over its own server, then
   the pane shows the window and what it did; no button with computer use off) and `tests/ui/driver.test.mjs` (the old
   checks of `scripts/ui-check.mjs`; its sandboxed frame is a page of the check's own until documents come, 6.2).
+
+### As built in HE-62: the task's browser
+
+- `task/Browser.tsx`: `BrowserButton` (a globe beside the tabs, on every task) and `BrowserPane`, beside the main area
+  with the old pane's splitter (`BrowserBar.tsx`'s `useBrowserShare`, `ia.browserShare` in `state/prefs.ts`; in the main
+  area's place when narrow). In the desktop app, for a task on the app's own host (`localHostId`), it is
+  `BrowserWebview`; everywhere else `BrowserStream`. `BrowserBar` is the address bar both have (`browserUrl` from
+  `@huntaway/shared`, which the agent's `navigate` uses too).
+- `BrowserWebview.tsx`: the old pane's <webview> (`persist:huntaway-browser`, popups in the pane, DevTools, open in the
+  system's browser, the last address in `ia.browser:<host>:<task>`), which an empty pane starts at the agent's page
+  (`browser.status`). Once the webview is ready it takes its debugger through the preload's `paneDebugger` and opens
+  `/api/browser/<ticket>` as `desktop`: the server's CDP commands go to the debugger and its answers and events come
+  back. A dot in the bar says whether the agent is connected. It stays mounted while the pane is closed, so its page
+  stays and the agent keeps it.
+- `BrowserStream.tsx`: a canvas the socket's JPEG frames are drawn on (`createImageBitmap`), each acknowledged once
+  drawn; the pane's size is the page's (a `ResizeObserver`, after 150 ms); mouse, wheel (a non-passive listener), keys
+  and pasted text go back as JSON. It shows the download of Chrome as it goes, and says so when the desktop app has the
+  page. Unmounted when closed: the page stays on the host.
+- The desktop shell: `main/paneDebugger.ts` (`huntaway:browser-debug`, `-send`, `-undebug`; only the board's own frame,
+  only for a <webview> it embeds; events relayed as `huntaway:browser-event`), and the preload's `paneDebugger`.
+- Looked at in a browser (a test server on this machine's Chromium, `ui-check.mjs`): the pane opens beside the thread,
+  an address typed loads, clicks and keys reach the page, a link and Back work, a second task's page streams beside it,
+  and the phone layout puts the pane in the main area's place. The desktop app's <webview> path has its server side
+  tested (`Browsers.test.ts`) but hasn't been run in Electron here.
 
 ### As built in 4.8 (HE-5): web
 

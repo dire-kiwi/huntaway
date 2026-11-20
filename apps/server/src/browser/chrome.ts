@@ -26,6 +26,10 @@ export const chromeArgs = (launch: ChromeLaunch): ReadonlyArray<string> => [
   "--disable-features=Translate,MediaRouter,OptimizationHints",
   // Software compositing is cheaper on a server and still draws WebGL (SwiftShader).
   "--disable-gpu",
+  // Every task's page draws and runs its timers as if in front: one in the background gives a viewer no frames.
+  "--disable-renderer-backgrounding",
+  "--disable-background-timer-throttling",
+  "--disable-backgrounding-occluded-windows",
   "--hide-scrollbars",
   "--mute-audio",
   "--password-store=basic",

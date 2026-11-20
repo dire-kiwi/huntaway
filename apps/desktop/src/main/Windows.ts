@@ -9,6 +9,7 @@ import type { UpdateKind } from "../shared/versions.ts"
 import { Desktop, releaseUpdatesOff } from "./Desktop.ts"
 import { errorPage } from "./errorPage.ts"
 import { installKindOf } from "./install.ts"
+import { registerPaneDebugger } from "./paneDebugger.ts"
 import { progressPage, progressScript } from "./progressPage.ts"
 import type { ProgressState } from "./progressPage.ts"
 import { Servers, ServerUnavailable } from "./Servers.ts"
@@ -376,8 +377,11 @@ export const runWindows = Effect.gen(function* () {
     event.returnValue = shellUpdateKind
   })
   ipcMain.handle("huntaway:update-shell", (event) => runPromise(updateOwnPackage(event)))
+  // HE-62: the browser pane's <webview>, given to the server to drive for the task's agent.
+  const unregisterPane = registerPaneDebugger(origin, senderOrigin, runPromise)
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
+      unregisterPane()
       for (const channel of ["huntaway:badge", "huntaway:focus", "huntaway:open-window", "huntaway:shell-update-kind"]) ipcMain.removeAllListeners(channel)
       ipcMain.removeHandler("huntaway:update-shell")
     }),

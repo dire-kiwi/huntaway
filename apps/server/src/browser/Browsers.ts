@@ -273,7 +273,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
         Effect.gen(function* () {
           const r = yield* chrome
           const cdp = r.chrome.cdp
-          const made = yield* cdp.send("Target.createTarget", { url: BLANK })
+          const made = yield* cdp.send("Target.createTarget", { url: BLANK, newWindow: true })
           const targetId = str(made, "targetId")
           const page = pageOf(cdp, str(yield* cdp.send("Target.attachToTarget", { targetId, flatten: true }), "sessionId"))
           yield* preparePage(page)

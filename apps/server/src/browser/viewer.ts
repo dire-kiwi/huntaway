@@ -36,6 +36,10 @@ export interface ViewerTab {
 
 /** JPEG quality, and the largest frame sent. */
 const QUALITY = 70
+/** The "frame id" of a still: no frame of Chrome's. */
+const STILL = -1
+/** How long a new screencast is given to send a frame before the viewer gets a still. */
+const STILL_AFTER = "300 millis"
 /** How often a watched page's title is looked at. */
 const TITLE_EVERY = "2 seconds"
 const decodeFrame = Schema.decodeUnknownOption(Schema.fromJsonString(BrowserClientFrame))
@@ -74,21 +78,16 @@ export const relayViewer = Effect.fnUntraced(function* (
   yield* Effect.addFinalizer(() => tab.cdp.send("Target.detachFromTarget", { sessionId }).pipe(Effect.ignore))
 
   const frames = yield* Ref.make<Frames>({ inFlight: null, waiting: null })
-  const ackChrome = (id: number) => page.send("Page.screencastFrameAck", { sessionId: id }).pipe(Effect.ignore)
-  const send = (data: Uint8Array) => writer.write(data).pipe(Effect.ignore)
+  // A still (`STILL`) is no frame of Chrome's: there's nothing to acknowledge.
+  const ackChrome = (id: number) => (id === STILL ? Effect.void : page.send("Page.screencastFrameAck", { sessionId: id }).pipe(Effect.ignore))
+  const sent = yield* Ref.make(false)
+  const send = (data: Uint8Array) => Effect.andThen(Ref.set(sent, true), writer.write(data).pipe(Effect.ignore))
 
   const screencast = (s: { readonly width: number; readonly height: number }) =>
     Effect.andThen(
       page.send("Page.stopScreencast").pipe(Effect.ignore),
       page.send("Page.startScreencast", { format: "jpeg", quality: QUALITY, maxWidth: s.width, maxHeight: s.height, everyNthFrame: 1 }).pipe(Effect.ignore),
     )
-  const resized = (w: number, h: number) =>
-    Effect.gen(function* () {
-      const s = yield* tab.resize(w, h)
-      yield* say({ type: "viewport", width: s.width, height: s.height })
-      yield* screencast(s)
-    })
-
   // Chrome's frames: one on the wire, the newest waiting.
   const onFrame = (data: Uint8Array, ack: number) =>
     Effect.flatten(
@@ -105,6 +104,23 @@ export const relayViewer = Effect.fnUntraced(function* (
       return [Effect.andThen(done, send(f.waiting.data)), { inFlight: f.waiting.ack, waiting: null }]
     }),
   )
+  // An idle page draws nothing for a new screencast: the viewer starts from a still unless a frame beats it.
+  const still = Effect.gen(function* () {
+    yield* Effect.sleep(STILL_AFTER)
+    if (yield* Ref.get(sent)) return
+    const shot = yield* page.send("Page.captureScreenshot", { format: "jpeg", quality: QUALITY }, "5 seconds").pipe(Effect.option)
+    const bytes = Option.isSome(shot) ? Base64.decode(str(shot.value, "data")) : undefined
+    if (bytes?._tag === "Success" && !(yield* Ref.get(sent))) yield* onFrame(bytes.success, STILL)
+  })
+  const resized = (w: number, h: number) =>
+    Effect.gen(function* () {
+      const s = yield* tab.resize(w, h)
+      yield* say({ type: "viewport", width: s.width, height: s.height })
+      yield* screencast(s)
+      yield* Ref.set(sent, false)
+      yield* still.pipe(Effect.forkScoped)
+    })
+
   const sub = yield* tab.cdp.subscribe
   yield* PubSub.take(sub).pipe(
     Effect.flatMap((e) => {
