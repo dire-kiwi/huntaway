@@ -137,6 +137,7 @@ function ConfigRow({
         <div className="w-28 shrink-0 truncate text-[12.5px]">{label}</div>
         <AgentBadge config={config} />
         <div className="min-w-0 flex-1 truncate text-[11.5px] text-faint">
+          {acp && <span className="font-mono">{config.command?.trim() || ACP_DEFAULT_COMMAND} · </span>}
           <span className="font-mono">{configDir(config)}</span>
           {usedBy.length > 0 && ` · ${usedBy.join(", ")}`}
         </div>
