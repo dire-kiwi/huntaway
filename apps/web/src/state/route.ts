@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react"
 import { Atom } from "effect/reactivity"
-import { hasPanel, href, type Panel, panelUrl, parse, parsePanel, parseModal, type Route, withoutModal } from "../router"
+import { hasPanel, href, type Panel, panelUrl, parse, parsePanel, parseModal, pluginQuery, type Route, withoutModal } from "../router"
 import { registry } from "./registry"
 
 // The page's route as an atom over the History API (docs/plan/09-frontend.md, The web app's own state), with the
@@ -56,6 +56,11 @@ export function usePanel(): Panel | null {
 /** Whether task `taskId` is open in the side panel: draws again only when that changes (one card's, not every card's). */
 export function usePanelOpen(taskId: string): boolean {
   return useAtomValue(searchAtom, (search) => parsePanel(search)?.taskId === taskId)
+}
+
+/** The query string a plugin's page is given (`pluginQuery`): draws again only when that changes. */
+export function usePluginQuery(): string {
+  return useAtomValue(searchAtom, pluginQuery)
 }
 
 /** The task open in a dialog over whatever page is open (`modal=<id>`), beside the side panel's task if there is one. */

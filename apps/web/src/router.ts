@@ -133,6 +133,16 @@ export function parsePanel(search: string): Panel | null {
 /** The task open in a dialog over the page (`modal=<id>`), beside the side panel's task if there is one. */
 export const parseModal = (search: string): string | null => new URLSearchParams(search).get("modal")
 
+/** The board's own query parameters (the side panel's, the task dialog's), which a plugin's page isn't given. */
+const BOARD_PARAMS = ["task", "side", "compare", "modal"]
+
+/** A plugin page's query string (`?details=1`), without the board's own parameters: '' when it has none. */
+export function pluginQuery(search: string): string {
+  const q = new URLSearchParams(search)
+  for (const name of BOARD_PARAMS) q.delete(name)
+  return q.toString()
+}
+
 /** `pathAndSearch` without its task dialog (see parseModal). */
 export const withoutModal = (pathAndSearch: string): string => pathAndSearch.replace(/([?&])modal=[^&]*&?/, "$1").replace(/[?&]$/, "")
 

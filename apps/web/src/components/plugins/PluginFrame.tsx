@@ -22,6 +22,7 @@ export function PluginFrame({
   plugin,
   slot,
   path = "",
+  search = "",
   taskId = null,
   fill = false,
   onTitle,
@@ -31,6 +32,8 @@ export function PluginFrame({
   plugin: string
   slot: FrameContext["slot"]
   path?: string
+  /** The page's query string without its `?` (`details=1`; HE-63), as `render`'s `query`. */
+  search?: string
   taskId?: string | null
   /** Fills its container (the plugin's page); otherwise it's as tall as its page says. */
   fill?: boolean
@@ -38,7 +41,16 @@ export function PluginFrame({
   /** Whether the plugin has nothing to show (a task's panel). */
   onEmpty?: (empty: boolean) => void
 }) {
-  const payload = useMemo(() => ({ plugin, slot, path, query: NO_QUERY, task_id: taskId === null ? null : TaskId.make(taskId) }), [plugin, slot, path, taskId])
+  const payload = useMemo(
+    () => ({
+      plugin,
+      slot,
+      path,
+      query: search === "" ? NO_QUERY : Object.fromEntries(new URLSearchParams(search)),
+      task_id: taskId === null ? null : TaskId.make(taskId),
+    }),
+    [plugin, slot, path, search, taskId],
+  )
   const result = useAtomValue(query("plugins.page", host, payload))
   return (
     <Loading result={result}>

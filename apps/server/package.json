@@ -14,7 +14,7 @@
     "test:e2e": "vp test --config tests/e2e/vitest.config.ts"
   },
   "dependencies": {
-    "@dire-kiwi/docs-huntaway": "https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.1.0/dire-kiwi-docs-huntaway-0.1.0.tgz",
+    "@dire-kiwi/docs-huntaway": "https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.3.0/dire-kiwi-docs-huntaway-0.3.0.tgz",
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
     "@huntaway/contracts": "workspace:*",
