@@ -670,7 +670,7 @@ and the override went with the last one.
 ### Step 2 as done (M10, HE-9)
 
 - **The shared layer.** `packages/client`: `query(method, host, payload, { refresh, focus })` (`queries.ts`), one atom
-  per method, host and payload (payloads compared by value), shared by its readers and kept ten seconds after the last;
+  per method, host and payload (payloads compared by value), shared by its readers and kept ten seconds after the last (`plugins.page` not at all, HE-63: 15-plugins.md, Pages);
   `mutate(method, host, payload)`, which reads again every query of the method's group on that host once it has run;
   `invalidate.ts`, the `invalidates` table (other groups a mutation reads again: a rewind or a fan-out's pick the
   `git` queries, a host's settings its `admin` and `settingsSync`, removing merged worktrees the disk usage) and the

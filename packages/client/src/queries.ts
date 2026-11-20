@@ -7,7 +7,7 @@ import { type AnyError, type AnySuccess, callOnClient, callRpc, type CallError, 
 import { hostRuntime } from "./session/sessions.ts"
 
 // Queries and mutations (docs/plan/09-frontend.md): a read that is not in the board snapshot is an atom, read while
-// something shows it (and ten seconds after), again when a mutation of its group on its host runs or what it follows on
+// something shows it (and ten seconds after, but for a plugin's page), again when a mutation of its group on its host runs or what it follows on
 // the board changes (invalidate.ts); a change is a mutation, whose answer is not written into the board (the event that
 // follows it is).
 
@@ -44,14 +44,22 @@ const triggerOf = Atom.family((key: Source) =>
   }),
 )
 
-const read = Atom.family((key: Source) =>
-  hostRuntime(HostId.make(key.host))
-    .atom((get) => {
-      get(triggerOf(key))
-      return callOnClient(key.method, key.payload)
-    })
-    .pipe(Atom.withReactivity([groupKey(key.host, key.method.slice(0, key.method.indexOf(".")))]), Atom.setIdleTTL("10 seconds")),
-)
+/**
+ * Whether a read is dropped as soon as nothing shows it, rather than kept for 10 seconds. A plugin's page is (HE-63): a
+ * plugin can change its pages without an event that says so (the docs editor's Save, before it goes to the document),
+ * so a page opened again is read again, and its new frame is given one render rather than an old one and then the new.
+ */
+const unkept = (method: keyof Methods): boolean => method === "plugins.page"
+
+const read = Atom.family((key: Source) => {
+  const call = hostRuntime(HostId.make(key.host)).atom((get) => {
+    get(triggerOf(key))
+    return callOnClient(key.method, key.payload)
+  })
+  const reactive = Atom.withReactivity([groupKey(key.host, key.method.slice(0, key.method.indexOf(".")))])
+  // `withReactivity` reads `call` as an atom of its own, which the registry would keep for its own idle time.
+  return unkept(key.method) ? reactive(Atom.setIdleTTL(call, 0)).pipe(Atom.setIdleTTL(0)) : reactive(call).pipe(Atom.setIdleTTL("10 seconds"))
+})
 
 const kept = Atom.family((key: Key) => {
   const { refresh, focus, ...source } = key

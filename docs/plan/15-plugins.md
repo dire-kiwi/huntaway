@@ -62,15 +62,18 @@ the run, its task (id, key, title, kind, status), project and profile, whether i
 | `settings` | Settings → Plugins, under the plugin's name                            | `settings` is set       |
 | `task`     | a section of a task's key items and Details (HE-31), on its host; left out when `empty` | `task` is true |
 
-The web app reads a page with `plugins.page` on the plugin's host and shows its HTML in a frame as documents are
+The web app reads a page with `plugins.page` on the plugin's host, with the address's query string as `query` less the
+board's own parameters (`task`, `side`, `compare`, `modal`; `router.ts`'s `pluginQuery`, HE-63). A page isn't kept
+once nothing shows it, as other reads are for 10 seconds (`queries.ts`): a plugin can change its pages without an event
+that says so (the docs editor's Save, before it goes to the document), so a page opened again is read again, and a new
+frame gets one render, not an old one and then the new (Chromium leaves a sandboxed frame whose `srcdoc` is set twice
+within a few milliseconds without a layout). It shows the HTML in a frame as documents are
 (`components/plugins/frameSource.ts`): `sandbox="allow-scripts"` with no same origin, under `FRAME_CSP` (no network:
 images are `data:`/`blob:` URLs, data comes through the bridge), WebRTC taken away. The frame's `:root` has the
 board's theme as its own CSS variables (`--color-*`, `--font-*`), and `window.huntaway` is the bridge:
 
 - `huntaway.call(method, payload)` → a promise of the plugin's call's result, over `plugins.call` on its host;
-- `huntaway.navigate(path)` and `huntaway.openTask(id)`, after the user's own click in the frame; a page of the
-  plugin's own it navigates to is read again (`plugins.page` keeps a render for 10 seconds once nothing shows it), as
-  the plugin may have just changed it (HE-63: the docs editor's Save goes to the document);
+- `huntaway.navigate(path)` and `huntaway.openTask(id)`, after the user's own click in the frame;
 - `huntaway.onEvent(listener)` for the plugin's events;
 - `huntaway.context`: `{ host, plugin, slot, path, task_id }`.
 
@@ -164,8 +167,10 @@ stays the board's:
 
 At 0.3.0 (HE-63; DOC-17 to DOC-23) it also has: form fields' answers saved on the board, a document editor with
 drafts, mockups (HTML pages) in a design editor, and image files uploaded over HTTP (`create_upload_url`, then the
-plugin's public route `/plugins/docs/uploads/<token>`) and named by id in a publish. None of it needed more from the
-plugin API: the design editor's frames for mockups are `srcdoc` frames inside the plugin's, which `FRAME_CSP`'s
+plugin's public route `/plugins/docs/uploads/<token>`) and named by id in a publish. The plugin API is the same; the
+board had to give pages their query string (a mockup's `?details=1` is its document's page, the design editor without
+it), read a page again each time it opens, and make `boardUrl` from the port it listens on. The design editor's frames
+for mockups are `srcdoc` frames inside the plugin's, which `FRAME_CSP`'s
 `frame-src 'none'` doesn't hold (they load nothing), each under its own nonce policy on top of the inherited one
 (`tests/e2e/docs.test.ts` uploads an image and publishes it; the editors were tried in a browser).
 
@@ -179,6 +184,6 @@ check that the lockfile has it, and that it matches.)
 ## What's next
 
 - `@huntaway/plugin` published as a tarball on releases, so a plugin outside this repository has its types.
-- A page's query string (`render`'s `query` is empty from the web app for now), a plugin's pages on another host than
+- A plugin's pages on another host than
   the page's own other than by a profile's id in the path (the frame takes a `host`; the menu shows the page's own
   host's), plugins in backups, and the phone app.
