@@ -80,7 +80,10 @@ export const DEFAULT_ACP_ARGS: ReadonlyArray<string> = ["acp"]
 
 /** A config's command line (`AgentConfig.command`) as a program and its arguments; null or blank is the default. */
 export const commandLine = (command: string | null | undefined): { readonly program: string; readonly args: ReadonlyArray<string> } => {
-  const words = (command ?? "").trim().split(/\s+/).filter((w) => w !== "")
+  const words = (command ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w !== "")
   const [program, ...args] = words
   return program === undefined ? { program: DEFAULT_ACP_PROGRAM, args: DEFAULT_ACP_ARGS } : { program, args }
 }
