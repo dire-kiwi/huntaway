@@ -14,8 +14,11 @@ export const AgentConfig = Schema.Struct({
   /** May start with `~`. Empty is the agent's default (`~/.claude`, `~/.codex`; an ACP agent's own, `~/.gemini` for Antigravity). */
   config_dir: Schema.String,
   agent: Agent,
-  /** An ACP config's command line (program and arguments, split on whitespace); null for the default, `agy acp`, and for Claude and Codex configs. */
-  command: Schema.NullOr(Schema.String),
+  /**
+   * An ACP config's command line (program and arguments, split on whitespace); null for the default, `agy acp`, and for
+   * Claude and Codex configs. Absent from older servers.
+   */
+  command: Schema.optional(Schema.NullOr(Schema.String)),
   /** The host fetches and shows its plan's usage limits. */
   show_usage: Schema.Boolean,
   /** The host starts its plan's next 5-hour window as soon as one ends. */
