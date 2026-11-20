@@ -72,6 +72,36 @@ describe("Codex's requests", () => {
     })
   })
 
+  // HE-69
+  it("an ACP agent's permission request is a prompt of the tool its kind names, its title as what it's for", () => {
+    const acp = (params: unknown) => classify({ id: 7, method: "acp/requestPermission", params })
+    assert.deepStrictEqual(acp({ itemId: "tc1", tool: "read", title: "Read src/a.ts", input: { path: "src/a.ts" } }), {
+      _tag: "Prompt",
+      tool_name: "Read",
+      input: { path: "src/a.ts", description: "Read src/a.ts" },
+      tool_use_id: "tc1",
+      ask: { id: 7, method: "acp/requestPermission" },
+    })
+    const tool = (kind: string) => {
+      const c = acp({ itemId: "x", tool: kind, title: "t", input: {} })
+      return c._tag === "Prompt" ? c.tool_name : c._tag
+    }
+    assert.deepStrictEqual(
+      ["read", "edit", "delete", "move", "search", "fetch", "execute", "think", "switch_mode", "other", ""].map(tool),
+      ["Read", "Edit", "Edit", "Edit", "Grep", "WebFetch", "Bash", "Think", "switch_mode", "other", "tool"],
+    )
+    // A command without one in its input is its title; what isn't an object is kept as it is; its own description stays.
+    const run = acp({ itemId: "c", tool: "execute", title: "ls -la", input: null })
+    assert.deepStrictEqual(run._tag === "Prompt" ? run.input : null, { command: "ls -la", description: "ls -la" })
+    const odd = acp({ itemId: "c", tool: "fetch", title: "Fetch", input: "https://x" })
+    assert.deepStrictEqual(odd._tag === "Prompt" ? odd.input : null, { input: "https://x", description: "Fetch" })
+    const own = acp({ itemId: "c", tool: "execute", input: { command: "make", description: "Build" }, title: "make" })
+    assert.deepStrictEqual(own._tag === "Prompt" ? own.input : null, { command: "make", description: "Build" })
+    // Answered as Codex's approvals are: the adapter picks the agent's allow_once or reject_once.
+    assert.deepStrictEqual(promptAnswer({ id: 7, method: "acp/requestPermission" }, { behavior: "allow" }), { decision: "accept" })
+    assert.deepStrictEqual(promptAnswer({ id: 7, method: "acp/requestPermission" }, { behavior: "deny" }), { decision: "decline" })
+  })
+
   it("answers as Codex takes them", () => {
     const allow = { behavior: "allow", updatedInput: { answers: { q: { answers: ["a"] } } } } as const
     const deny = { behavior: "deny" } as const

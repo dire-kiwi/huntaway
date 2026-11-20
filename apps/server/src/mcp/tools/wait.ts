@@ -142,6 +142,8 @@ export const waitTools = Effect.gen(function* () {
   const reviewsOwnWaits = Effect.fnUntraced(function* (caller: LocalCaller) {
     const codex = yield* dirs.codexSpec(caller.run.id)
     if (codex !== null) return codex.review_waits
+    // HE-69: an ACP agent has no reviewer of its own: its waits are the board's to ask about.
+    if (yield* dirs.isAcp(caller.run.id)) return false
     const spec = yield* dirs.spec(caller.run.id)
     return spec !== null && approvesOwnWaits(spec.args)
   })

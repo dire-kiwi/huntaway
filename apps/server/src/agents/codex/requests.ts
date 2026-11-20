@@ -14,6 +14,8 @@ import { displayCommand, field, fileChanges, strField, toolPrefix } from "./item
 //   Bash, ApplyPatch, Permissions, or the MCP tool, so the thread's request and `permission_requests` are those of a
 //   Claude run's.
 // - **Questions** (`item/tool/requestUserInput`) are the `request_user_input` prompt, answered with Codex's answers.
+// - **An ACP agent's other permission requests** (HE-69: `acp/requestPermission`, which its adapter writes for a tool
+//   call that is neither a command nor an edit) are permission prompts of the tool its kind names (`acpTool`).
 // - **The board's tools** are Codex dynamic tools (`boardTools`, a namespace named for the board's server, given to a new
 //   thread), each `item/tool/call` a call through `ToolCalls`, as Claude's in-process server's are.
 
@@ -113,6 +115,28 @@ const elicitation = (r: CodexRequest, prompt: (tool: string, input: unknown) => 
   return prompt(`${toolPrefix(server)}__${tool}`, isRecord(params) ? { message, arguments: params } : { message })
 }
 
+/** The tool an ACP tool call's kind is asked as (`acp/requestPermission`'s `tool`): Claude Code's name for it, else the kind. */
+export const acpTool = (kind: string): string => {
+  switch (kind) {
+    case "read":
+      return "Read"
+    case "edit":
+    case "delete":
+    case "move":
+      return "Edit"
+    case "search":
+      return "Grep"
+    case "fetch":
+      return "WebFetch"
+    case "execute":
+      return "Bash"
+    case "think":
+      return "Think"
+    default:
+      return kind === "" ? "tool" : kind
+  }
+}
+
 /** What request `r` (as the adapter wrote it to the run's output) is to the board. */
 export const classify = (r: CodexRequest): Classified => {
   const p = r.params
@@ -169,6 +193,16 @@ export const classify = (r: CodexRequest): Classified => {
         }
       })
       return prompt(CODEX_QUESTIONS, { questions })
+    }
+    // HE-69: an ACP agent's tool call: what it is called with, and its title as what it's for. A command is shown as one.
+    case "acp/requestPermission": {
+      const tool = acpTool(strField(p, "tool") ?? "")
+      const title = strField(p, "title")
+      const given = field(p, "input")
+      const input: Record<string, unknown> = isRecord(given) ? { ...given } : given === undefined || given === null ? {} : { input: given }
+      if (tool === "Bash" && typeof input["command"] !== "string") input["command"] = title ?? ""
+      if (title !== null && title !== "" && input["description"] === undefined) input["description"] = title
+      return prompt(tool, input)
     }
     case "item/tool/call": {
       const tool = strField(p, "tool") ?? ""
