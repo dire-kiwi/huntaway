@@ -48,6 +48,9 @@ export const mergeQueued = (t: Task): boolean => t.merging && t.status === "read
 /** Stepped out of the merge queue to make changes, and rejoins it when its agent is done. */
 export const rejoinsMerge = (t: Pick<Task, "remerge" | "status">): boolean => t.remerge && (t.status === "in_progress" || t.status === "needs_attention")
 
+/** It came into In review and the user hasn't opened it since (HE-65): the board marks it until they do. */
+export const unreadInReview = (t: Pick<Task, "status" | "review_unread">): boolean => t.status === "in_review" && t.review_unread === true
+
 /** Its agent is running but waiting for something (the `wait` tool), not working. */
 export const agentWaiting = (t: Pick<Task, "running" | "agent_wait">): Task["agent_wait"] => (t.running ? t.agent_wait : null)
 

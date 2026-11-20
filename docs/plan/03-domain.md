@@ -140,6 +140,7 @@ export const Task = Schema.Struct({
   claude_config_id: Schema.NullOr(AgentConfigId),
   auto_allow: Schema.Array(Schema.String),
   review: Schema.NullOr(Review),
+  review_unread: Schema.optional(Schema.Boolean), // HE-65: came into In review and not opened since
   summaries: Schema.Array(ChangeSummary),
   rewind: Schema.NullOr(Rewind)
 })
