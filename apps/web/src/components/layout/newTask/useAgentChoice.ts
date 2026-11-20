@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { agentOf } from "@huntaway/client"
+import { agentOf, listsModels } from "@huntaway/client"
 import { inheritedModel, modelOptions, useConfigsModels, type ConfigsModels } from "../../../agents"
 import { useAvailableConfigs } from "../../boardHelpers"
 import { asEffort, configKey, effortKey, modelKey } from "./draft"
@@ -22,8 +22,9 @@ export function useAgentChoice({ target, inProject, prefId }: Where) {
   const config = configs.some((c) => c.id === configPref) ? configPref : (configs[0]?.id ?? "")
   const pickConfig = configs.length > 1
   const configObj = configs.find((c) => c.id === config)
-  const codex = agentOf(configObj) === "codex"
-  // Every config's models, as a `!` can send the task to any of them (IA-227): a Codex config's are its host's
+  // Codex and ACP agents list their own models, and don't run Claude's.
+  const ownModels = listsModels(agentOf(configObj))
+  // Every config's models, as a `!` can send the task to any of them (IA-227): a Codex or ACP config's are its host's
   // (`configs.models`), a Claude config offers Claude's aliases.
   const discovery: ConfigsModels = useConfigsModels(target.host_id, configs)
   const configModels = discovery.models
@@ -52,7 +53,7 @@ export function useAgentChoice({ target, inProject, prefId }: Where) {
     config,
     pickConfig,
     configObj,
-    codex,
+    ownModels,
     discovery,
     configModels,
     modelList,

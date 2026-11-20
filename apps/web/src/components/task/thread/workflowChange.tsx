@@ -40,7 +40,7 @@ function WorkflowSteps({ w, tone = "to" }: { w: WorkflowView; tone?: "from" | "t
                 {n.kind === "agent" && (
                   <div className="mt-1 space-y-1 text-[12px] text-muted">
                     <div>
-                      {config ? `${config.name}${config.agent === "codex" ? " (Codex)" : ""}` : "The task's config"}
+                      {config ? `${config.name}${config.agent === "codex" ? " (Codex)" : config.agent === "acp" ? " (ACP)" : ""}` : "The task's config"}
                       {n.model ? ` · ${n.model}` : ""}
                       {n.effort ? ` · ${n.effort} effort` : ""}
                       {n.skills?.length ? ` · skills: ${n.skills.join(", ")}` : ""}

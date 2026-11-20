@@ -41,8 +41,8 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
 
   const agent = data?.agent
   const m = /^\s*([/$])(\S*)$/.exec(text)
-  // `$` is Codex's, but until the host says which agent the task has, it loads the list too.
-  const query = m && (m[1] === "/" || agent !== "claude") ? (m[2] ?? "").toLowerCase() : null
+  // `$` is Codex's (Claude Code and ACP agents take `/`), but until the host says which agent the task has, it loads the list too.
+  const query = m && (m[1] === "/" || (agent !== "claude" && agent !== "acp")) ? (m[2] ?? "").toLowerCase() : null
   const trigger = m?.[1]
 
   // A new query starts at the top of the list, and one that's gone lets the menu open again.
@@ -55,13 +55,18 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
   if (query !== null && asked !== key) setAsked(key)
 
   const all: SkillItem[] = [
-    {
-      name: "compact",
-      description: task.session_id ? "Summarise the conversation so far to free up context" : "Nothing to compact until the agent has started",
-      prefix: "/",
-      builtin: true,
-      args: "[instructions]",
-    },
+    // An ACP agent's conversation is never compacted.
+    ...(agent === "acp"
+      ? []
+      : [
+          {
+            name: "compact",
+            description: task.session_id ? "Summarise the conversation so far to free up context" : "Nothing to compact until the agent has started",
+            prefix: "/" as const,
+            builtin: true,
+            args: "[instructions]",
+          },
+        ]),
     ...(plans
       ? [
           {

@@ -163,7 +163,7 @@ function SystemPromptPreview({ project }: { project: Project }) {
           })}
         </div>
         {type === "task" && <Toggle checked={worktrees} onChange={setWorktree} label="Own worktree" />}
-        {shownRuntime === "codex" && <Toggle checked={plan ?? preview?.permission_mode === "plan"} onChange={setPlan} label="Plan mode" />}
+        {shownRuntime !== "claude" && <Toggle checked={plan ?? preview?.permission_mode === "plan"} onChange={setPlan} label="Plan mode" />}
       </div>
       {err ? (
         <div className="text-xs text-red-400">Couldn&apos;t load the system prompt: {err}</div>

@@ -1,11 +1,11 @@
 import { useAtomValue } from "@effect/atom-react"
-import { agentOf, query, type HostAgentConfig as ClaudeConfig, type QueryResult } from "@huntaway/client"
+import { agentSuffix, query, type HostAgentConfig as ClaudeConfig, type QueryResult } from "@huntaway/client"
 import { AgentConfigId, ProjectId, type Reviewer } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { AsyncResult, Atom } from "effect/reactivity"
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
-import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../../agents"
+import { effortOptions, inheritedModel, modelOptions, modelPlaceholder, useAgentModels } from "../../agents"
 import { useBoard } from "../../state/board"
 import { ModelPicker } from "../layout/newTask/ModelPicker"
 import { Button, IconButton, Input, resultValue, Textarea } from "../ui"
@@ -312,7 +312,7 @@ export function ReviewerRow({
           {configs.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
-              {agentOf(c) === "codex" ? " (Codex)" : ""}
+              {agentSuffix(c)}
             </option>
           ))}
           {value.claude_config_id && !config && <option value={value.claude_config_id}>Deleted config (uses the task's)</option>}
@@ -321,7 +321,7 @@ export function ReviewerRow({
           value={model}
           onChange={(m) => onChange(Object.assign({}, value, { model: m || null }))}
           options={modelOptions(config, models)}
-          placeholder={agentOf(config) === "codex" ? "model id, e.g. gpt-6.1-sol" : undefined}
+          placeholder={modelPlaceholder(config)}
           inherited={inheritedModel(config, models, inherit.project, inherit.profile, hostSettings?.default_model)}
         />
         <select

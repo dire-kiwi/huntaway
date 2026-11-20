@@ -273,15 +273,15 @@ export function Analytics({ profile }: { profile: string | null }) {
                 <p className="text-[11.5px] leading-relaxed text-faint">
                   Tokens are counted from each agent run's output once it ends, for the model that used them (subagents' included), and go to the day the run
                   started. A review or summary thread's tokens count towards the task it's for. Tokens are uncached input, cache reads and writes, and output.
-                  Cost is what Claude Code reports; Codex doesn't say. Runs from before this version are counted from the output the board still keeps (two
-                  weeks of it); older runs show only what they cost, marked *. Reviews count each reviewer's verdict in a round once. A task's first round and
-                  its rounds of fixes are all of its rounds, those outside the range too, for the tasks reviewed in it; a round found issues if any of its
-                  reviewers did. Minor issues are listed by reviews from this version on; earlier ones count as noting minor issues when their summary mentions
-                  some. Follow-ups are tasks the reviewed task's agent created after such a review. The cache hit rate is the share of the input fed to models
-                  (uncached input, cache reads and writes) that was read from the prompt cache; a thread under {Math.round(POOR_HIT * 100)}% on{" "}
+                  Cost is what Claude Code reports; Codex and ACP agents don't say. Runs from before this version are counted from the output the board still
+                  keeps (two weeks of it); older runs show only what they cost, marked *. Reviews count each reviewer's verdict in a round once. A task's first
+                  round and its rounds of fixes are all of its rounds, those outside the range too, for the tasks reviewed in it; a round found issues if any of
+                  its reviewers did. Minor issues are listed by reviews from this version on; earlier ones count as noting minor issues when their summary
+                  mentions some. Follow-ups are tasks the reviewed task's agent created after such a review. The cache hit rate is the share of the input fed to
+                  models (uncached input, cache reads and writes) that was read from the prompt cache; a thread under {Math.round(POOR_HIT * 100)}% on{" "}
                   {tokens(POOR_HIT_MIN)} or more is flagged, as its cache was written or missed more than read. Which cache writes went to (1 hour or 5 minutes)
-                  is kept from this version on, for Claude: older runs' are unknown, and Codex doesn't say. What the cache saved isn't shown, as the board
-                  doesn't keep models' prices (Claude Code reports only the cost).
+                  is kept from this version on, for Claude: older runs' are unknown, and Codex and ACP agents don't say. What the cache saved isn't shown, as
+                  the board doesn't keep models' prices (Claude Code reports only the cost).
                 </p>
               ) : tab === "context" ? (
                 <p className="text-[11.5px] leading-relaxed text-faint">
