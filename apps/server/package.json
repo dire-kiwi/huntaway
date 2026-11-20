@@ -22,7 +22,8 @@
     "@huntaway/shared": "workspace:*",
     "effect": "catalog:",
     "sharp": "catalog:",
-    "tldts": "catalog:"
+    "tldts": "catalog:",
+    "undici": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

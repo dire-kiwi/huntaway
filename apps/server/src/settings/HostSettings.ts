@@ -6,6 +6,7 @@ import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { SettingsRepo } from "./SettingsRepo.ts"
 import { JsonColumn, toJson } from "../platform/columns.ts"
+import { checkSocksProxy } from "../platform/socks.ts"
 
 // The host's settings (docs/plan/06-server.md, Settings): typed over the `settings` table, as the old `api/host.ts`
 // get_settings / update_settings, without `thread_items` (threads are always items now).
@@ -18,6 +19,7 @@ const KEY = {
   scratch_host: "scratch_host",
   terminal_tools: "terminal_tools",
   public_url: "public_url",
+  socks_proxy: "socks_proxy",
   release_prereleases: "release_prereleases",
   settings_sync: "settings_sync",
   role: "host_role",
@@ -97,6 +99,7 @@ export class HostSettings extends Context.Service<HostSettings, HostSettingsShap
           terminal_tools: yield* Schema.decodeEffect(TerminalTools)(text(KEY.terminal_tools)).pipe(Effect.orElseSucceed(() => [])),
           public_url: text(KEY.public_url),
           release_prereleases: text(KEY.release_prereleases) === "true",
+          socks_proxy: text(KEY.socks_proxy),
           // On unless switched off (HE-46).
           settings_sync: text(KEY.settings_sync) !== "false",
           experiments: EXPERIMENTS.flatMap((e) => (text(experimentKey(e.id)) === "true" ? [e.id] : [])),
@@ -111,6 +114,7 @@ export class HostSettings extends Context.Service<HostSettings, HostSettingsShap
           return yield* new Invalid({ field: "scratch_host", reason: "scratch_host must be a linked host" })
         }
         const publicUrl = patch.public_url == null ? patch.public_url : yield* checkPublicUrl(patch.public_url)
+        const socksProxy = patch.socks_proxy == null ? patch.socks_proxy : yield* checkSocksProxy(patch.socks_proxy)
         const newId = Effect.map(random.uuidV4(), (id) => id.slice(0, 8)).pipe(Effect.orDie)
         const tools = patch.terminal_tools === undefined ? undefined : yield* checkTerminalTools(patch.terminal_tools, newId)
         const toolsText = tools === undefined ? undefined : tools.length === 0 ? null : yield* toJson(tools)
@@ -122,6 +126,7 @@ export class HostSettings extends Context.Service<HostSettings, HostSettingsShap
               [KEY.default_permission_mode]: patch.default_permission_mode,
               [KEY.scratch_host]: patch.scratch_host,
               [KEY.public_url]: publicUrl,
+              [KEY.socks_proxy]: socksProxy,
               [KEY.terminal_tools]: toolsText,
             }
             for (const [key, value] of Object.entries(strings)) {

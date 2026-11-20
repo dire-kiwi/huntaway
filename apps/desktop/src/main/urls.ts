@@ -54,3 +54,10 @@ export const BROWSER_PERMISSIONS: ReadonlySet<string> = new Set(["clipboard-sani
  * one's network, so its board streams the browser instead.
  */
 export const paneIsLocal = (file: { readonly serverUrl: string | null }): boolean => file.serverUrl === null
+
+/**
+ * HE-67: the proxy the browser pane's pages go through, as the board gives it (its host's `socks_proxy`, which the
+ * server stores as `socks5://host:port`): that, null for none, or undefined for anything else, which is refused.
+ */
+export const paneProxy = (v: unknown): string | null | undefined =>
+  v === null ? null : typeof v === "string" && /^socks5:\/\/(?:\[[0-9a-f:.]+\]|[a-z0-9.-]+):\d{1,5}$/iu.test(v) ? v : undefined

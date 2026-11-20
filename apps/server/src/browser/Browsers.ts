@@ -14,6 +14,7 @@ import {
   Schema,
   Scope,
   Semaphore,
+  Stream,
   SubscriptionRef,
 } from "effect"
 import { SecureRandom } from "effect/crypto"
@@ -22,7 +23,9 @@ import type { Socket } from "effect/socket"
 import type { BrowserPage, BrowserRole, TaskId } from "@huntaway/contracts"
 import { toJson } from "../platform/columns.ts"
 import { browserUrl } from "@huntaway/shared"
+import { Events } from "../platform/Events.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
+import { HostSettings } from "../settings/HostSettings.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import type { TaskNotFound } from "../tasks/Tasks.ts"
 import { isRecord, makeCdp, pageOf, str } from "./cdp.ts"
@@ -47,6 +50,9 @@ import { relayViewer, socketText } from "./viewer.ts"
 // was on (and that page closes); once the pane goes, the next use opens a headless page at the pane's last address.
 // Cookies and storage don't carry over (the pane has the app's own session, the headless browser its profile in the
 // data folder). A headless page nobody has used or watched for `IDLE` closes; Chrome exits once it has no pages.
+//
+// The headless Chrome reaches pages through the host's SOCKS proxy (HE-67, `socks_proxy`) when it has one. Changing it
+// closes Chrome: each page opens again, in a Chrome with the new one, where it was when it's next used or watched.
 
 /** A socket's ticket that was never given, was used already, or expired. */
 export class BrowserTicketInvalid extends Schema.TaggedError<BrowserTicketInvalid, { readonly brand: unique symbol }>()("BrowserTicketInvalid", {}) {}
@@ -136,6 +142,8 @@ interface Running {
   readonly id: number
   readonly chrome: ChromeProcess
   readonly scope: Scope.Closeable
+  /** The SOCKS proxy it was started with. */
+  readonly proxy: string | null
 }
 
 const setSize = (page: CdpPage, s: { readonly width: number; readonly height: number }) =>
@@ -168,6 +176,8 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
       const config = yield* ServerConfig
       const install = yield* ChromeInstall
       const tasks = yield* Tasks
+      const settings = yield* HostSettings
+      const events = yield* Events
       const fs = yield* FileSystem.FileSystem
       const random = yield* SecureRandom.SecureRandom
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
@@ -211,12 +221,13 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
       const chrome = chromeLock.withPermits(1)(
         Effect.gen(function* () {
           const now = yield* Ref.get(running)
-          if (now !== null && (yield* now.chrome.cdp.status) === null) return now
+          const proxy = (yield* settings.get).socks_proxy ?? null
+          if (now !== null && (yield* now.chrome.cdp.status) === null && now.proxy === proxy) return now
           if (now !== null) yield* Scope.close(now.scope, Exit.void)
           const executable = yield* install.executable
           yield* fs.makeDirectory(profileDir, { recursive: true }).pipe(Effect.ignore)
           const scope = yield* Scope.fork(layerScope)
-          const started = yield* startChrome({ executable, profileDir, sandbox: config.chromeSandbox }).pipe(
+          const started = yield* startChrome({ executable, profileDir, sandbox: config.chromeSandbox, proxy }).pipe(
             Scope.provide(scope),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           )
@@ -229,7 +240,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
               reason: `The headless browser didn't start: ${alive.failure.reason}${said === "" ? "" : ` (${said})`}.${sandbox}`,
             })
           }
-          const r: Running = { id: yield* Ref.updateAndGet(chromeIds, (n) => n + 1), chrome: started, scope }
+          const r: Running = { id: yield* Ref.updateAndGet(chromeIds, (n) => n + 1), chrome: started, scope, proxy }
           yield* Ref.set(running, r)
           // A task's page that opens a window (a `target="_blank"` link, `window.open`) gets its address instead, as the
           // desktop pane does: the window would otherwise run unseen until Chrome closes.
@@ -357,9 +368,16 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           return h
         })
 
-      /** Whether a headless page is still there (Chrome may have exited, or the page closed). */
+      /**
+       * Whether a headless page is still there (Chrome may have exited, or the page closed), in a Chrome with the host's
+       * SOCKS proxy now (one with another is closed for it, which a change of the setting does too: `followProxy`).
+       */
       const alive = (h: Headless) =>
-        Effect.flatMap(Ref.get(running), (r) => (r === null || r.id !== h.chrome ? Effect.succeed(false) : Effect.map(r.chrome.cdp.status, (s) => s === null)))
+        Effect.gen(function* () {
+          const r = yield* Ref.get(running)
+          if (r === null || r.id !== h.chrome || r.proxy !== ((yield* settings.get).socks_proxy ?? null)) return false
+          return (yield* r.chrome.cdp.status) === null
+        })
 
       const touch = (task: TaskId) => Effect.flatMap(Clock.currentTimeMillis, (now) => setTab(task, (t) => ({ ...t, usedAt: now })))
 
@@ -421,6 +439,27 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
         )
       })
       yield* reap.pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.forkScoped)
+
+      /** A Chrome started with another SOCKS proxy than the host's now closes: its pages open again in one with this one. */
+      const followProxy = lock.withPermits(1)(
+        chromeLock.withPermits(1)(
+          Effect.gen(function* () {
+            const r = yield* Ref.get(running)
+            if (r === null || r.proxy === ((yield* settings.get).socks_proxy ?? null)) return
+            yield* Ref.set(running, null)
+            yield* Scope.close(r.scope, Exit.void)
+          }),
+        ),
+      )
+      // Subscribed before the first look, so no change falls between; again (and another look) if it falls behind.
+      yield* Effect.gen(function* () {
+        const watch = yield* events.watch(undefined)
+        yield* followProxy
+        yield* watch.live.pipe(
+          Stream.filter((e) => e.type === "settings_changed"),
+          Stream.runForEach(() => followProxy),
+        )
+      }).pipe(Effect.scoped, Effect.forever, Effect.forkScoped)
 
       const ticket: BrowsersShape["ticket"] = (task, role) =>
         Effect.gen(function* () {

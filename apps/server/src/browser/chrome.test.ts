@@ -20,7 +20,7 @@ describe.skipIf(systemChrome === null)("startChrome", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
         const profileDir = yield* fs.makeTempDirectoryScoped()
-        const chrome = yield* startChrome({ executable: systemChrome ?? "", profileDir, sandbox: false })
+        const chrome = yield* startChrome({ executable: systemChrome ?? "", profileDir, sandbox: false, proxy: null })
         const version = yield* chrome.cdp.send("Browser.getVersion")
         assert.include(str(version, "product"), "Chrome")
         const { targetId } = yield* chrome.cdp.send("Target.createTarget", { url: "about:blank" })
@@ -36,7 +36,7 @@ describe.skipIf(systemChrome === null)("startChrome", () => {
   it.live("a program that isn't there fails its commands with why", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const chrome = yield* startChrome({ executable: "/nonexistent/chrome", profileDir: "/tmp", sandbox: false })
+        const chrome = yield* startChrome({ executable: "/nonexistent/chrome", profileDir: "/tmp", sandbox: false, proxy: null })
         const r = yield* Effect.flip(chrome.cdp.send("Browser.getVersion"))
         assert.include(r.reason, "Chrome")
       }),

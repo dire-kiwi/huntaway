@@ -6,8 +6,10 @@ import { TaskBase } from "../git/TaskBase.ts"
 import { expandHome } from "../git/paths.ts"
 import { Actor } from "../platform/Changes.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
+import { proxiedTo, socksClient } from "../platform/socks.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
+import { HostSettings } from "../settings/HostSettings.ts"
 import type { PrApproval } from "../tasks/decide.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { Tasks } from "../tasks/Tasks.ts"
@@ -112,6 +114,7 @@ export class PullRequests extends Context.Service<PullRequests, PullRequestsShap
       const projects = yield* ProjectRepo
       const profiles = yield* ProfileRepo
       const config = yield* ServerConfig
+      const settings = yield* HostSettings
       const client = yield* HttpClient.HttpClient
       const background = yield* FiberSet.make()
 
@@ -174,9 +177,14 @@ export class PullRequests extends Context.Service<PullRequests, PullRequestsShap
       })
 
       const previewStatus = Effect.fn("PullRequests.previewStatus")(function* (url: string) {
-        const res = yield* client.execute(HttpClientRequest.get(url)).pipe(Effect.scoped, Effect.timeout("5 seconds"), Effect.result)
+        // HE-67: through the host's SOCKS proxy, if it has one, as its tasks' browser opens the preview.
+        const proxy = (yield* settings.get).socks_proxy
+        const proxied = proxiedTo(proxy, url) ? proxy : null
+        const via = proxied !== null ? socksClient(proxied) : Effect.succeed(client)
+        const res = yield* Effect.flatMap(via, (c) => c.execute(HttpClientRequest.get(url))).pipe(Effect.scoped, Effect.timeout("5 seconds"), Effect.result)
         if (Result.isSuccess(res)) return { up: res.success.status === 200, status: res.success.status } satisfies PreviewStatus
-        const error = res.failure._tag === "TimeoutError" ? "timed out after 5 seconds" : res.failure.message
+        const why = res.failure._tag === "TimeoutError" ? "timed out after 5 seconds" : res.failure.message
+        const error = proxied !== null ? `${why}, through the SOCKS proxy ${proxied}` : why
         return { up: false, status: null, error } satisfies PreviewStatus
       })
 

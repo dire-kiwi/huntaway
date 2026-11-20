@@ -370,6 +370,9 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 - The desktop shell: `main/paneDebugger.ts` (`huntaway:browser-debug`, `-send`, `-undebug`; only the board's own frame,
   only for a <webview> it embeds, and refused in remote mode; events relayed as `huntaway:browser-event`), and the
   preload's `paneDebugger`, given to the board only when `huntaway:pane-local` (`paneIsLocal`) says its server is here.
+  HE-67: and `setBrowserProxy` (`huntaway:browser-proxy`), which `BrowserWebview` calls with its host's `socks_proxy`
+  before it mounts the webview and whenever it changes; the main process sets it on the pane's session
+  (`paneProxy` checks it) and closes its open connections.
 - Looked at in a browser (a test server on this machine's Chromium, `ui-check.mjs`): the pane opens beside the thread,
   an address typed loads, clicks and keys reach the page, a link and Back work, a second task's page streams beside it,
   and the phone layout puts the pane in the main area's place. The desktop app's <webview> path has its server side

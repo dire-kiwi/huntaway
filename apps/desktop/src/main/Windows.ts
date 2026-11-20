@@ -24,6 +24,7 @@ import {
   isWebUrl,
   originOf,
   paneIsLocal,
+  paneProxy,
   relaunchHeading,
   RETRY_URL,
   SKIP_BACKUP_URL,
@@ -374,6 +375,21 @@ export const runWindows = Effect.gen(function* () {
     const page = URL.canParse(at, board) ? boardUrlPath(new URL(at, board).href, board) : null
     if (page !== null) run(createWindow(page))
   })
+  // HE-67: the board's host's SOCKS proxy (or none) for the browser pane's pages, when that host is this machine.
+  ipcMain.handle("huntaway:browser-proxy", (event, given: unknown) => {
+    const board = origin()
+    const proxy = paneProxy(given)
+    if (!paneIsLocal(desktop.file) || board === null || senderOrigin(event) !== board || proxy === undefined) return false
+    const pages = session.fromPartition(BROWSER_PARTITION)
+    // Connections already open would go on the old way.
+    return pages
+      .setProxy(proxy === null ? { mode: "direct" } : { mode: "fixed_servers", proxyRules: proxy })
+      .then(() => pages.closeAllConnections())
+      .then(
+        () => true,
+        () => false,
+      )
+  })
   ipcMain.on("huntaway:shell-update-kind", (event) => {
     event.returnValue = shellUpdateKind
   })
@@ -385,6 +401,7 @@ export const runWindows = Effect.gen(function* () {
       unregisterPane()
       for (const channel of ["huntaway:badge", "huntaway:focus", "huntaway:open-window", "huntaway:shell-update-kind"]) ipcMain.removeAllListeners(channel)
       ipcMain.removeHandler("huntaway:update-shell")
+      ipcMain.removeHandler("huntaway:browser-proxy")
     }),
   )
 

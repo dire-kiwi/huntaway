@@ -17,6 +17,7 @@ import { TerminalToolsRow } from "./hosts/TerminalTools"
 import { HostVersion } from "./hosts/HostRow"
 import { hubRpc } from "./hosts/hub"
 import { SettingsSyncRow } from "./hosts/SettingsSync"
+import { SocksProxyRow } from "./hosts/SocksProxy"
 import { HostService, RemoteServer } from "./server/RemoteServer"
 import { HostTelemetry } from "./Telemetry"
 import { useMutation } from "../../state/mutation"
@@ -84,7 +85,7 @@ export function HostPage({ hostId }: { hostId: string }) {
                     On unless switched off: the board&apos;s settings are the same on every host, whichever one you use. The agent defaults, terminal tools,
                     experiments, global skills, MCP servers and skill sources, the profiles themselves with their settings, skill switches and approvals, and
                     agent configs&apos; options sync; profiles and configs are matched by name. A profile removed elsewhere stays on a host where it still has
-                    projects or tasks. Folders, logins, tokens and links stay each host&apos;s own.
+                    projects or tasks. Folders, logins, tokens, links and the SOCKS proxy stay each host&apos;s own.
                   </p>
                   <SettingsSyncRow host={host} />
                 </section>
@@ -99,6 +100,7 @@ export function HostPage({ hostId }: { hostId: string }) {
                 </p>
                 <TerminalToolsRow host={host} />
               </section>
+              <SocksProxyRow host={host} />
               <HostTelemetry hostId={host.id} />
               {host.local ? <ServerPanel small /> : <RemoteServer hostId={host.id} />}
               <HostService hostId={host.id} />

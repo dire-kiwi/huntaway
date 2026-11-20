@@ -51,6 +51,9 @@ catalogs:
     typescript:
       specifier: 7.0.2
       version: 7.0.2
+    undici:
+      specifier: 8.12.4
+      version: 8.12.4
     vite:
       specifier: npm:@voidzero-dev/vite-plus-core@1.5.0
       version: 1.5.0
@@ -238,6 +241,9 @@ importers:
       tldts:
         specifier: 'catalog:'
         version: 7.5.4
+      undici:
+        specifier: 'catalog:'
+        version: 8.12.4
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'

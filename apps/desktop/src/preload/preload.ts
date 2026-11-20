@@ -7,8 +7,8 @@ import type { IpcRendererEvent } from "electron"
 // (RTCPeerConnection, which Chromium doesn't hold to their Content-Security-Policy), so that a page can't send data to a
 // STUN or TURN server of its choosing (HA-269). Taken away in each frame, including the srcdoc frames a page makes
 // itself, it can't be got back from another. The main process checks the sender's origin for the members that act on
-// the board (openWindow, updateShell, paneDebugger). The six members are the old shell's, unchanged; `onServerProgress` is new
-// (HE-44), and `paneDebugger` (HE-62).
+// the board (openWindow, updateShell, paneDebugger, setBrowserProxy). The six members are the old shell's, unchanged;
+// `onServerProgress` is new (HE-44), `paneDebugger` (HE-62), and `setBrowserProxy` (HE-67).
 
 /** What `updateShell` reports as it goes. */
 interface Progress {
@@ -59,6 +59,11 @@ if (process.isMainFrame) {
     browserPane: true,
     /** HE-62: the browser pane given to the server to drive (above), only when the board's server is on this machine. */
     ...(paneLocal ? { paneDebugger } : {}),
+    /**
+     * HE-67: the SOCKS proxy (`socks5://host:port`, or null for none) the browser pane's pages go through: the board's
+     * host's, when that host is this machine. Resolves whether it was taken.
+     */
+    ...(paneLocal ? { setBrowserProxy: (proxy: unknown): Promise<unknown> => ipcRenderer.invoke("huntaway:browser-proxy", proxy) } : {}),
     /** Opens page `path` of the board (`/profile/work`) in a new window of the app (HA-298). */
     openWindow: (path: unknown) => ipcRenderer.send("huntaway:open-window", String(path)),
     /** Brings the window to the front, as clicking a notification does. */

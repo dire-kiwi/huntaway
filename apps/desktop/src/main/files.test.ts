@@ -13,7 +13,18 @@ import { errorPage } from "./errorPage.ts"
 import { refused } from "./health.ts"
 import { backupFailure, readyToken } from "./ServerProcess.ts"
 import { frameStamp, shellStamp } from "./stamp.ts"
-import { badgeCount, boardUrlPath, isBrowsable, isWebUrl, paneIsLocal, relaunchHeading, RETRY_URL, SKIP_BACKUP_URL, windowsToReopen } from "./urls.ts"
+import {
+  badgeCount,
+  boardUrlPath,
+  isBrowsable,
+  isWebUrl,
+  paneIsLocal,
+  paneProxy,
+  relaunchHeading,
+  RETRY_URL,
+  SKIP_BACKUP_URL,
+  windowsToReopen,
+} from "./urls.ts"
 
 // The main process's smaller parts: state.json as both writers keep it, the stamps, what the server prints, the
 // windows' address rules and the error page.
@@ -127,6 +138,10 @@ describe("the windows' addresses", () => {
     // HE-62: the browser pane is handed to the board's server only when that server is on this machine.
     assert.isTrue(paneIsLocal({ serverUrl: null }))
     assert.isFalse(paneIsLocal({ serverUrl: "https://board.example.invalid/" }))
+    // HE-67: the pane's pages go through the host's SOCKS proxy, as the server stores it, and nothing else.
+    assert.deepStrictEqual(["socks5://127.0.0.1:1080", "socks5://[::1]:1080", null].map(paneProxy), ["socks5://127.0.0.1:1080", "socks5://[::1]:1080", null])
+    for (const bad of ["http://proxy:3128", "socks5://proxy:1080;direct://", "socks5://a b:1", "", 3, undefined])
+      assert.isUndefined(paneProxy(bad), String(bad))
   })
 
   it("a relaunch reopens the board pages it saved, else one window on the home page", () => {

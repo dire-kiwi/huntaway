@@ -23,3 +23,5 @@ export * from "./fakeDocker.ts"
 export * from "./fakeSpacesd.ts"
 // HE-62: this machine's Chrome or Chromium, for the tasks' browser's tests.
 export * from "./systemChrome.ts"
+// HE-67: a SOCKS5 proxy, for the preview checks' and the tasks' browser's.
+export * from "./fakeSocks.ts"
