@@ -44,6 +44,7 @@ import { AgentTools } from "./agents/AgentTools.ts"
 import { AgentToolsRepo } from "./agents/AgentToolsRepo.ts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
+import { AcpQueries } from "./agents/AcpQueries.ts"
 import { CodexQueries } from "./agents/CodexQueries.ts"
 import { ContextMeter } from "./agents/ContextMeter.ts"
 import { ContextStatsRepo } from "./agents/ContextStatsRepo.ts"
@@ -274,7 +275,7 @@ const AgentsArea = Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.lay
   ),
   Layer.provideMerge(WorkflowFacts.layer),
   // No Codex is started: its models, skills and rate limits are unavailable.
-  Layer.provideMerge(CodexQueries.readOnly),
+  Layer.provideMerge(Layer.merge(CodexQueries.readOnly, AcpQueries.readOnly)),
   Layer.provideMerge(Layer.mergeAll(GithubRemote.layer, PrWatch.layer, PullRequests.layer, GithubRepos.layer).pipe(Layer.provideMerge(PrWatchRepo.layer))),
   Layer.provideMerge(GitArea),
 )

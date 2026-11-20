@@ -1,5 +1,6 @@
 import { NodeServices } from "@effect/platform-node"
 import { Effect, FileSystem, Layer } from "effect"
+import { AcpQueries } from "huntaway-server/src/agents/AcpQueries.ts"
 import { CodexQueries } from "huntaway-server/src/agents/CodexQueries.ts"
 import { TitleModel } from "huntaway-server/src/agents/TitleModel.ts"
 import { WindowPrompt } from "huntaway-server/src/agents/WindowPrompt.ts"
@@ -28,9 +29,9 @@ export const TestPlatform = (overrides: Partial<ServerConfigShape> = {}) =>
  * The whole server's services (docs/plan/10-testing.md, `packages/testing`): every area on an in-memory database and
  * a scoped temp data folder. Replace a service by providing its layer over this one. No model is ever asked: titles
  * come from `TitleScript` (`TitleModel.layerScripted`, which the board provides), window restarts fail, and Codex is never
- * started (`CodexQueries.layerTest`: the models `CodexModelsScript` sets). It runs `plugins` (HE-34), none by default.
+ * started (`CodexQueries.layerTest`: the models `CodexModelsScript` sets), nor is an ACP agent (`AcpQueries.layerTest`, `AcpModelsScript`). It runs `plugins` (HE-34), none by default.
  */
 export const TestBoard = (overrides: Partial<ServerConfigShape> = {}, plugins: ReadonlyArray<Plugin> = []) =>
-  areasLayer({ titles: TitleModel.layerScripted, window: WindowPrompt.layerNone, codex: CodexQueries.layerTest }, InstalledPlugins.layer(plugins)).pipe(
+  areasLayer({ titles: TitleModel.layerScripted, window: WindowPrompt.layerNone, codex: CodexQueries.layerTest, acp: AcpQueries.layerTest }, InstalledPlugins.layer(plugins)).pipe(
     Layer.provideMerge(TestPlatform(overrides)),
   )
