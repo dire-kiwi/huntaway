@@ -6,10 +6,11 @@ import { Effect, Fiber, FileSystem, Layer, Option, PubSub, Queue, Schema } from 
 import { SecureRandom } from "effect/crypto"
 import { Socket } from "effect/socket"
 import { CallId } from "@huntaway/contracts"
-import { fakeAgent, fakeSocket, systemChrome, TestBoard } from "@huntaway/testing"
+import { fakeAgent, fakeSocket, fakeSocks, hostEcho, systemChrome, TestBoard } from "@huntaway/testing"
 import type { FakeAgent, FakeSocket } from "@huntaway/testing"
 import { callResult } from "../mcp/jsonrpc.ts"
 import { BROWSER_INSTRUCTIONS, McpServers } from "../mcp/McpServers.ts"
+import { HostSettings } from "../settings/HostSettings.ts"
 import { ToolCalls } from "../mcp/ToolCalls.ts"
 import { Browsers } from "./Browsers.ts"
 import { ChromeInstall } from "./ChromeInstall.ts"
@@ -207,7 +208,7 @@ describe.skipIf(systemChrome === null)("a task's browser", () => {
           yield* nextJson(watcher, "viewport")
 
           // The "desktop app": a page of another Chromium, whose session's commands and events go over the socket.
-          const desk = yield* startChrome({ executable: systemChrome ?? "", profileDir: yield* fs.makeTempDirectoryScoped(), sandbox: false })
+          const desk = yield* startChrome({ executable: systemChrome ?? "", profileDir: yield* fs.makeTempDirectoryScoped(), sandbox: false, proxy: null })
           const { targetId } = yield* desk.cdp.send("Target.createTarget", { url: "about:blank" })
           const sessionId = str(yield* desk.cdp.send("Target.attachToTarget", { targetId, flatten: true }), "sessionId")
           const pane = pageOf(desk.cdp, sessionId)
@@ -481,6 +482,37 @@ describe.skipIf(systemChrome === null)("a task's browser", () => {
           // The next page opens blank.
           yield* call(agent, "snapshot", {})
           assert.strictEqual((yield* browsers.state(task))?.url, "about:blank")
+        }),
+      ),
+    TIMEOUT,
+  )
+})
+
+describe.skipIf(systemChrome === null)("a task's browser through the host's SOCKS proxy (HE-67)", () => {
+  it.live(
+    "opens pages through it, this machine's without, and again through a new one once it changes",
+    () =>
+      withBrowser((url) =>
+        Effect.gen(function* () {
+          const echo = yield* hostEcho
+          const [first, second] = [yield* fakeSocks(echo.port), yield* fakeSocks(echo.port)]
+          const settings = yield* HostSettings
+          yield* settings.update({ socks_proxy: first.url }).pipe(Effect.orDie)
+          const agent = yield* fakeAgent()
+          // The name is the proxy's to resolve: this machine knows no preview.test.
+          assert.include((yield* call(agent, "navigate", { url: "http://pr-3.preview.test/" })).text, "The page is now pr-3.preview.test")
+          assert.include((yield* call(agent, "navigate", { url })).text, `The page is now Form (${url}/)`)
+          assert.include((yield* call(agent, "navigate", { url: "http://pr-3.preview.test/" })).text, "The page is now pr-3.preview.test")
+          // (Chrome's own requests to Google go through it as well.)
+          assert.include(first.asked, "pr-3.preview.test:80")
+          assert.isFalse(
+            first.asked.some((a) => a.startsWith("127.0.0.1:")),
+            "this machine's page",
+          )
+          // Another proxy: the page opens again where it was, through it.
+          yield* settings.update({ socks_proxy: second.url }).pipe(Effect.orDie)
+          assert.include((yield* call(agent, "snapshot", {})).text, "pr-3.preview.test")
+          assert.include(second.asked, "pr-3.preview.test:80")
         }),
       ),
     TIMEOUT,

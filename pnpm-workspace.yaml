@@ -22,6 +22,8 @@ catalog:
   sharp: 0.35.5
   # HE-49: the public suffix list, to group a browser's cookies by site.
   tldts: 7.5.4
+  # HE-67: the SOCKS5 proxy agent the preview checks go through (the version @effect/platform-node's HTTP client has).
+  undici: 8.12.4
   # The desktop shell (apps/desktop): Electron and its packager, as the old app had them or newer.
   electron: 45.3.0
   electron-builder: 26.18.0

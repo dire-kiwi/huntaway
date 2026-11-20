@@ -26,7 +26,7 @@ const withPage = <A, E>(body: (page: ReturnType<typeof pageOf>, form: string) =>
       yield* fs.writeFileString(`${dir}/form.html`, FORM_HTML)
       yield* fs.writeFileString(`${dir}/second.html`, "<title>Second</title><p>second page</p>")
       yield* fs.makeDirectory(`${dir}/profile`)
-      const chrome = yield* startChrome({ executable: systemChrome ?? "", profileDir: `${dir}/profile`, sandbox: false })
+      const chrome = yield* startChrome({ executable: systemChrome ?? "", profileDir: `${dir}/profile`, sandbox: false, proxy: null })
       const { targetId } = yield* chrome.cdp.send("Target.createTarget", { url: "about:blank" })
       const page = pageOf(chrome.cdp, str(yield* chrome.cdp.send("Target.attachToTarget", { targetId, flatten: true }), "sessionId"))
       yield* preparePage(page)

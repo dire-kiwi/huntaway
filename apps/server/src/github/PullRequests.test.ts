@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest"
 import { Effect, FileSystem } from "effect"
 import { SqlClient } from "effect/sql"
 import type { Project, Task } from "@huntaway/contracts"
-import { fakeGitHub, fakePull, git, tempDir, TestBoard } from "@huntaway/testing"
+import { fakeGitHub, fakePull, fakeSocks, git, hostEcho, tempDir, TestBoard } from "@huntaway/testing"
 import type { FakeGitHub, FakeGitHubState } from "@huntaway/testing"
 import { Worktrees } from "../git/Worktrees.ts"
 import { Reactor } from "../lifecycle/Reactor.ts"
@@ -11,6 +11,7 @@ import { change, reload } from "../mcp/tools/tests/wait.ts"
 import { Actor } from "../platform/Changes.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { Projects } from "../projects/Projects.ts"
+import { HostSettings } from "../settings/HostSettings.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { PullRequests } from "./PullRequests.ts"
 
@@ -174,6 +175,20 @@ describe("a task's pull request", () => {
           [(yield* reload(t.id)).preview_url, (yield* reload(own.id)).preview_url, (yield* reload(done.id)).preview_url],
           ["https://preview.example/pr/12", "https://mine.example", null],
         )
+      }),
+    ),
+  )
+
+  it.effect("a preview is asked for through the host's SOCKS proxy, except one on this machine (HE-67)", () =>
+    onBoard({}, () =>
+      Effect.gen(function* () {
+        const site = yield* hostEcho
+        const proxy = yield* fakeSocks(site.port)
+        yield* (yield* HostSettings).update({ socks_proxy: proxy.url }).pipe(Effect.orDie)
+        const prs = yield* PullRequests
+        assert.deepStrictEqual(yield* prs.previewStatus("http://pr-3.preview.test/"), { up: true, status: 200 })
+        assert.deepStrictEqual(yield* prs.previewStatus(`http://127.0.0.1:${site.port}/`), { up: true, status: 200 })
+        assert.deepStrictEqual(proxy.asked, ["pr-3.preview.test:80"])
       }),
     ),
   )

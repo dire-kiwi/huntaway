@@ -1,6 +1,7 @@
 import { Effect, Fiber, Queue, Ref, Stream } from "effect"
 import type { Cause, Scope } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { chromeProxyArgs } from "../platform/socks.ts"
 import { makeCdp } from "./cdp.ts"
 import type { Cdp } from "./cdp.ts"
 
@@ -9,11 +10,13 @@ import type { Cdp } from "./cdp.ts"
 // another program could reach. It lives as long as the scope it is started in: closing that asks Chrome to close
 // (so its profile is written out), then kills it.
 
-/** How Chrome is started: the program, its profile folder, and whether it keeps its sandbox. */
+/** How Chrome is started: the program, its profile folder, whether it keeps its sandbox, and the host's SOCKS proxy. */
 export interface ChromeLaunch {
   readonly executable: string
   readonly profileDir: string
   readonly sandbox: boolean
+  /** HE-67: `socks5://host:port`, or null for none. */
+  readonly proxy: string | null
 }
 
 export const chromeArgs = (launch: ChromeLaunch): ReadonlyArray<string> => [
@@ -35,6 +38,7 @@ export const chromeArgs = (launch: ChromeLaunch): ReadonlyArray<string> => [
   "--password-store=basic",
   "--use-mock-keychain",
   ...(launch.sandbox ? [] : ["--no-sandbox"]),
+  ...chromeProxyArgs(launch.proxy),
   "about:blank",
 ]
 

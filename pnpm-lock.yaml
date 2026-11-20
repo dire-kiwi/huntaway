@@ -51,6 +51,9 @@ catalogs:
     typescript:
       specifier: 7.0.2
       version: 7.0.2
+    undici:
+      specifier: 8.12.4
+      version: 8.12.4
     vite:
       specifier: npm:@voidzero-dev/vite-plus-core@1.5.0
       version: 1.5.0
@@ -238,6 +241,9 @@ importers:
       tldts:
         specifier: 'catalog:'
         version: 7.5.4
+      undici:
+        specifier: 'catalog:'
+        version: 8.12.4
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
@@ -895,7 +901,7 @@ packages:
       effect: ^4.1.4
 
   '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.6.0/dire-kiwi-docs-render-0.6.0.tgz':
-    resolution: {integrity: sha512-WimT2+GB2cqo0co5mYxBxvC/5jL3915Bcm2Hkc90/lZFu4JNQCZUZSjHCenBYbqZsKju6Z+4LxAf1M+oC6ZUXw==, tarball: https://github.com/dire-kiwi/docs/releases/download/render-v0.6.0/dire-kiwi-docs-render-0.6.0.tgz}
+    resolution: {tarball: https://github.com/dire-kiwi/docs/releases/download/render-v0.6.0/dire-kiwi-docs-render-0.6.0.tgz}
     version: 0.6.0
     engines: {node: '>=20'}
 

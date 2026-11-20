@@ -4,6 +4,7 @@ import { clsx } from "clsx"
 import { Exit } from "effect"
 import { Bug, ExternalLink } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
+import { useBoard } from "../../state/board"
 import { useAction } from "../../state/mutation"
 import { browserUrlAtom } from "../../state/prefs"
 import { after } from "../../state/timers"
@@ -62,6 +63,16 @@ export function paneDebugger(): PaneDebugger | null {
   }
 }
 
+/**
+ * HE-67: the desktop app's way to send the pane's pages through a SOCKS proxy (`socks5://host:port`, or null for none),
+ * or null in an app too old to have it.
+ */
+export function paneProxySetter(): ((proxy: string | null) => Promise<unknown>) | null {
+  const bridge: unknown = Reflect.get(window, "huntawayDesktop")
+  const set: unknown = typeof bridge === "object" && bridge !== null ? Reflect.get(bridge, "setBrowserProxy") : undefined
+  return isFn(set) ? (proxy) => Promise.resolve(Reflect.apply(set, bridge, [proxy])) : null
+}
+
 // React has no `allowpopups` (its types say boolean, and it drops `true` for an attribute it doesn't know): Electron
 // looks for the attribute, whatever its value. Popups open in the pane (the main process's window-open handler).
 const ALLOW_POPUPS = { allowpopups: "true" } as object
@@ -101,11 +112,20 @@ export function BrowserWebview({ task, onClose }: { task: Task; onClose: () => v
   const [relay, setRelay] = useState<{ readonly on: boolean; readonly problem: string | null }>({ on: false, problem: null })
   const ref = useRef<WebviewElement>(null)
   const [, run] = useAction()
+  // HE-67: the pane's pages go through the host's SOCKS proxy, as its headless browser's do: given to the app before the
+  // first page loads, and again whenever it changes.
+  const proxy = useBoard((s) => s.hostSettings[task.host_id]?.socks_proxy) ?? null
+  const [proxied, setProxied] = useState(() => paneProxySetter() === null)
+  useEffect(() => {
+    const setProxy = paneProxySetter()
+    if (setProxy === null) return
+    void setProxy(proxy).finally(() => setProxied(true))
+  }, [proxy])
 
   // The webview's events: its address, title, loading, and the pages it couldn't load.
   useEffect(() => {
     const wv = ref.current
-    if (!wv || src === "") return undefined
+    if (!wv || src === "" || !proxied) return undefined
     const navState = () => {
       try {
         setNav({ back: wv.canGoBack(), forward: wv.canGoForward() })
@@ -146,13 +166,13 @@ export function BrowserWebview({ task, onClose }: { task: Task; onClose: () => v
     return () => {
       for (const [type, f] of Object.entries(on)) wv.removeEventListener(type, f)
     }
-  }, [src, save])
+  }, [src, save, proxied])
 
   // The webview given to the server to drive, once it's ready, for as long as the pane is here.
   useEffect(() => {
     const wv = ref.current
     const bridge = paneDebugger()
-    if (!wv || !bridge || src === "") return undefined
+    if (!wv || !bridge || src === "" || !proxied) return undefined
     const at: {
       disposed: boolean
       id: number | null
@@ -247,7 +267,7 @@ export function BrowserWebview({ task, onClose }: { task: Task; onClose: () => v
       at.ws?.close()
       if (at.id !== null) bridge.detach(at.id)
     }
-  }, [src, task.host_id, task.id, run])
+  }, [src, task.host_id, task.id, run, proxied])
 
   const go = (to: string) => {
     setError(null)
@@ -290,13 +310,16 @@ export function BrowserWebview({ task, onClose }: { task: Task; onClose: () => v
       />
       <div className="relative min-h-0 flex-1">
         {src !== "" ? (
-          <webview
-            ref={ref}
-            src={src}
-            partition={PARTITION}
-            {...ALLOW_POPUPS}
-            className={clsx("absolute inset-0 h-full w-full bg-white", error !== null && "invisible")}
-          />
+          // Mounted once the app has the proxy, which its first page goes through.
+          proxied && (
+            <webview
+              ref={ref}
+              src={src}
+              partition={PARTITION}
+              {...ALLOW_POPUPS}
+              className={clsx("absolute inset-0 h-full w-full bg-white", error !== null && "invisible")}
+            />
+          )
         ) : (
           <NoPage />
         )}

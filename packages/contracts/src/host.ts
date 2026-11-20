@@ -37,6 +37,11 @@ export const HostSettings = Schema.Struct({
   public_url: Schema.NullOr(Schema.String),
   /** Release checks include prereleases. */
   release_prereleases: Schema.Boolean,
+  /**
+   * HE-67: the SOCKS5 proxy (`socks5://host:port`) this host's preview checks and tasks' browser reach pages through,
+   * or null for none. Not synced: each host says its own. Absent from hosts before it.
+   */
+  socks_proxy: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** Keep this host's settings the same as the board's other hosts that have this on: on unless switched off (HE-46). */
   settings_sync: Schema.Boolean,
   /**
@@ -61,6 +66,8 @@ export const HostSettingsPatch = Schema.Struct({
   public_url: Schema.optional(Schema.NullOr(Schema.String)),
   /** Changing it checks for releases again. */
   release_prereleases: Schema.optional(Schema.Boolean),
+  /** `socks5://host:port` (`socks5h://` and `socks://` are taken as that); blank clears it. */
+  socks_proxy: Schema.optional(Schema.NullOr(Schema.String)),
   settings_sync: Schema.optional(Schema.Boolean),
   /** The experiments to have on, all of them: the rest are switched off. */
   experiments: Schema.optional(Schema.Array(ExperimentId)),
