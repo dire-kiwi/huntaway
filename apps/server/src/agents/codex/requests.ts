@@ -15,7 +15,8 @@ import { displayCommand, field, fileChanges, strField, toolPrefix } from "./item
 //   Claude run's.
 // - **Questions** (`item/tool/requestUserInput`) are the `request_user_input` prompt, answered with Codex's answers.
 // - **An ACP agent's other permission requests** (HE-69: `acp/requestPermission`, which its adapter writes for a tool
-//   call that is neither a command nor an edit) are permission prompts of the tool its kind names (`acpTool`).
+//   call that is neither a command nor an edit) are permission prompts of the tool its kind names (`acpTool`), or of
+//   the MCP tool (`mcp__<server>__<tool>`); the board's own server's are allowed at once, as Codex is told to.
 // - **The board's tools** are Codex dynamic tools (`boardTools`, a namespace named for the board's server, given to a new
 //   thread), each `item/tool/call` a call through `ToolCalls`, as Claude's in-process server's are.
 
@@ -115,8 +116,15 @@ const elicitation = (r: CodexRequest, prompt: (tool: string, input: unknown) => 
   return prompt(`${toolPrefix(server)}__${tool}`, isRecord(params) ? { message, arguments: params } : { message })
 }
 
-/** The tool an ACP tool call's kind is asked as (`acp/requestPermission`'s `tool`): Claude Code's name for it, else the kind. */
-export const acpTool = (kind: string): string => {
+/** The adapter's namespace for an ACP agent's own tools (`mcp__acp__<kind>`, a dynamic tool's name as `toolUse` gives it). */
+const ACP_TOOL_PREFIX = "mcp__acp__"
+
+/**
+ * The tool an ACP tool call is asked as, from `acp/requestPermission`'s `tool` (the adapter's `mcp__acp__<kind or title>`,
+ * an MCP tool's `mcp__<server>__<tool>`, or a bare kind): Claude Code's name for its kind, else as it is.
+ */
+export const acpTool = (tool: string): string => {
+  const kind = tool.startsWith(ACP_TOOL_PREFIX) ? tool.slice(ACP_TOOL_PREFIX.length) : tool
   switch (kind) {
     case "read":
       return "Read"
@@ -197,6 +205,7 @@ export const classify = (r: CodexRequest): Classified => {
     // HE-69: an ACP agent's tool call: what it is called with, and its title as what it's for. A command is shown as one.
     case "acp/requestPermission": {
       const tool = acpTool(strField(p, "tool") ?? "")
+      if (BOARD_SERVER_NAMES.some((n) => tool.startsWith(`mcp__${n}__`))) return { _tag: "Answer", answer: { result: { decision: "accept" } } }
       const title = strField(p, "title")
       const given = field(p, "input")
       const input: Record<string, unknown> = isRecord(given) ? { ...given } : given === undefined || given === null ? {} : { input: given }

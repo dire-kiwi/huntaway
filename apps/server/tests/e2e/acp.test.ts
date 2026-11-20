@@ -6,7 +6,7 @@ import { RpcClient } from "effect/rpc"
 import { SqlClient } from "effect/sql"
 import { applyEvent, ItemAdded, RequestId, RequestOpened, TaskChanged, ThreadEvent, ThreadSnapshot } from "@huntaway/contracts"
 import type { Snapshot } from "@huntaway/contracts"
-import { ensureShim, REPO_ROOT } from "@huntaway/testing"
+import { ensureShim, FAKE_ACP } from "@huntaway/testing"
 import { specFromJson } from "../../src/agents/acp/spec.ts"
 import { CliRpcs, httpRpcClientLayer } from "../../src/cli/rpc.ts"
 import { socketRpcClientLayer, startServer } from "./launch.ts"
@@ -18,9 +18,6 @@ import { socketRpcClientLayer, startServer } from "./launch.ts"
 // server (the `huntaway` server of its `session/new`, reached through `huntaway mcp-stdio`); its reply and the turn's
 // result come into the thread; the board closes the run's input, the adapter ends, and the task goes to In review. The
 // run's folder has the `acp.json` the adapter read.
-
-/** `FAKE_ACP` of `@huntaway/testing` (agent A's `fakeAgent.ts`); named here so this file needs nothing but its path. */
-const FAKE_ACP = `${REPO_ROOT}packages/testing/bin/fake-acp`
 
 const isSnapshot = Schema.is(ThreadSnapshot)
 const isEvent = Schema.is(ThreadEvent)
@@ -42,6 +39,15 @@ describe.skipIf(shim === null)("an ACP agent's run on a whole server", () => {
       const repo = yield* fs.makeTempDirectoryScoped({ prefix: "huntaway-e2e-repo-" })
       const config = yield* http["configs.create"]({ config: { name: "Gemini", agent: "acp", config_dir: home, command: FAKE_ACP } })
       assert.deepStrictEqual([config.agent, config.command], ["acp", FAKE_ACP])
+      // Its models, as the agent lists them (`acp-run --list-models`): fake-acp's, the first current.
+      const models = yield* http["configs.models"]({ id: config.id })
+      assert.deepStrictEqual(
+        models.map((m) => [m.id, m.is_default, m.efforts]),
+        [
+          ["fake-flash", true, ["low", "high"]],
+          ["fake-pro", false, ["low", "high"]],
+        ],
+      )
       const profile = yield* http["profiles.create"]({ profile: { name: "me", claude_config_ids: [config.id] } })
       // A project for the board call to name.
       yield* http["projects.create"]({ project: { profile_id: profile.id, repo_path: repo, name: "Web" } })
@@ -126,6 +132,17 @@ describe.skipIf(shim === null)("an ACP agent's run on a whole server", () => {
       const bearer = own !== undefined && "headers" in own ? own.headers.find((h) => h.name === "Authorization")?.value : undefined
       assert.isTrue(bearer?.startsWith("Bearer ") === true && bearer.length > "Bearer ".length, bearer)
       assert.isFalse(yield* fs.exists(`${runDir}/codex.json`))
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+
+  it.live("an agent that isn't signed in has no models to list, and says how to sign in", () =>
+    Effect.gen(function* () {
+      const { port, token } = yield* startServer([], { FAKE_ACP_SIGNED_OUT: "1" })
+      const http = yield* RpcClient.make(CliRpcs).pipe(Effect.provide(httpRpcClientLayer(`http://127.0.0.1:${port}`, token)))
+      const config = yield* http["configs.create"]({ config: { name: "Gemini", agent: "acp", command: FAKE_ACP } })
+      const e = yield* Effect.flip(http["configs.models"]({ id: config.id }))
+      assert.strictEqual(e._tag, "Unavailable")
+      assert.include(e._tag === "Unavailable" ? e.reason : "", "sign in by running it once by itself")
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })

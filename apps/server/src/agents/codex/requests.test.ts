@@ -101,6 +101,18 @@ describe("Codex's requests", () => {
       "other",
       "tool",
     ])
+    // As the adapter names them: its own namespace's (a kind, or a title), and an MCP server's tool as it is.
+    assert.deepStrictEqual(["mcp__acp__read", "mcp__acp__fetch", "mcp__acp__Open the docs", "mcp__gh__pr_view"].map(tool), [
+      "Read",
+      "WebFetch",
+      "Open the docs",
+      "mcp__gh__pr_view",
+    ])
+    // The board's own server's tools are allowed at once.
+    assert.deepStrictEqual(acp({ itemId: "b", tool: "mcp__huntaway__list_projects", title: "t", input: {} }), {
+      _tag: "Answer",
+      answer: { result: { decision: "accept" } },
+    })
     // A command without one in its input is its title; what isn't an object is kept as it is; its own description stays.
     const run = acp({ itemId: "c", tool: "execute", title: "ls -la", input: null })
     assert.deepStrictEqual(run._tag === "Prompt" ? run.input : null, { command: "ls -la", description: "ls -la" })
