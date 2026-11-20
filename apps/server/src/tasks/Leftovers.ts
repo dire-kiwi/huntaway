@@ -17,12 +17,13 @@ import { Proc } from "../platform/Proc.ts"
 //   what it started (HE-68): an Electron app built there, a browser with its profile there. Chromium clears its
 //   environment as it starts (`/proc/<pid>/environ` reads as zeros, or the tail of its command line), so
 //   `DevServers.stopLeft`, which goes by `HUNTAWAY_TASK_ID` in it, can't tell these are the task's; left running
-//   headless they each kept a core busy. Only one an agent may have started (`agentMayHaveStarted`): its environment
-//   names a task, or is wiped, or can't be read (macOS). Every agent run has `HUNTAWAY_TASK_ID` and what it starts
-//   inherits it, so a process with an intact environment without it is the user's (an editor or viewer opened on a
-//   file in the folder) and is left alone. The user's own Chromium or Electron app first opened on a file in the folder
-//   (`chromium /tmp/ha-…/x.html`) still matches, as its environment is wiped too. Not anything under another server or
-//   shim (a live agent, of this board or another, may name the folder in a command).
+//   headless they each kept a core busy. Only on Linux, and only one an agent may have started
+//   (`agentMayHaveStarted`): its environment names a task, is wiped, or couldn't be read (it went as it was read).
+//   Every agent run has `HUNTAWAY_TASK_ID` and what it starts inherits it, so a process with an intact environment
+//   without it is the user's (an editor or viewer opened on a file in the folder) and is left alone. The user's own
+//   Chromium or Electron app first opened on a file in the folder (`chromium /tmp/ha-…/x.html`) still matches, as its
+//   environment is wiped too. Without `/proc` (macOS) environments can't be read, so none of these is taken. Not
+//   anything under another server or shim (a live agent, of this board or another, may name the folder in a command).
 //
 // Never the board itself or what runs its own agents: not this process or its parents, no server on the board's data
 // dir, and no shim with a run in the board's `runs` folder. Processes are found by what `/proc` says of them (their
@@ -126,7 +127,7 @@ const ancestors = (pid: number, byPid: ReadonlyMap<number, LeftoverProc>): Set<n
 const TASK_ENV = "HUNTAWAY_TASK_ID"
 
 /**
- * Whether a process with environment `environ` (`/proc/<pid>/environ`, null where it can't be read) may have been
+ * Whether a process with environment `environ` (`/proc/<pid>/environ`, null if reading it failed) may have been
  * started by an agent: its environment names a task, or isn't intact (no `HOME` or `PATH`, as Chromium leaves it), or
  * is unknown. One with an intact environment without `HUNTAWAY_TASK_ID` was started by the user.
  */
@@ -262,14 +263,12 @@ export class Leftovers extends Context.Service<Leftovers, LeftoversShape>()("hun
               Effect.orElseSucceed(() => null),
             )
 
-      /** `p`'s environment as it started, its variables separated by NULs; null without `/proc` or if it can't be read. */
+      /** `p`'s environment as it started (`/proc`, so Linux only), its variables separated by NULs; null if it can't be read. */
       const readEnviron = (p: LeftoverProc): Effect.Effect<string | null> =>
-        linux
-          ? fs.readFile(`/proc/${p.pid}/environ`).pipe(
-              Effect.map((raw) => new TextDecoder().decode(raw)),
-              Effect.orElseSucceed(() => null),
-            )
-          : Effect.succeed(null)
+        fs.readFile(`/proc/${p.pid}/environ`).pipe(
+          Effect.map((raw) => new TextDecoder().decode(raw)),
+          Effect.orElseSucceed(() => null),
+        )
 
       const variants = (p: string) =>
         Effect.gen(function* () {
@@ -355,8 +354,9 @@ export class Leftovers extends Context.Service<Leftovers, LeftoversShape>()("hun
         }
 
         // Other programs run from the temp folder or naming it, and what they started; never under a server or shim
-        // that isn't the task's.
-        if (tmp.length === 0) return [...servers, ...under, ...shims]
+        // that isn't the task's. Only where environments can be read (Linux): without them the user's own programs
+        // naming the folder (`vim …/server.log`) can't be told from an agent's, and nothing took these there before.
+        if (tmp.length === 0 || !linux) return [...servers, ...under, ...shims]
         const taken = new Set([...picked, ...under.map((p) => p.pid)])
         const others = new Set(candidates.filter((p) => !picked.has(p.pid) && (serverWords(p) !== null || shimOf(p) !== null)).map((p) => p.pid))
         const free = candidates.filter((p) => !taken.has(p.pid) && !others.has(p.pid) && ![...ancestors(p.pid, byPid)].some((a) => others.has(a)))
