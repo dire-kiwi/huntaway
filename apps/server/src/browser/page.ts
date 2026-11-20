@@ -29,6 +29,12 @@ const isSettled = (e: CdpEvent) => isLoad(e) || e.method === "Page.frameStoppedL
 const isMainStart = (e: CdpEvent) =>
   e.method === "Page.frameStartedLoading" || (e.method === "Page.frameRequestedNavigation" && str(e.params, "disposition") === "currentTab")
 
+/** The main frame's new document has committed. */
+const isMainCommit = (e: CdpEvent) => e.method === "Page.frameNavigated" && isRecord(e.params["frame"]) && e.params["frame"]["parentId"] === undefined
+
+/** Stop the page's loading (best effort). */
+const stop = (page: CdpPage) => page.send("Page.stopLoading", {}, "5 seconds").pipe(Effect.ignore)
+
 /** What a page needs on before it's driven (each call is safe to repeat). */
 export const preparePage = (page: CdpPage) =>
   Effect.all([page.send("Page.enable"), page.send("Runtime.enable"), page.send("DOM.enable"), page.send("Accessibility.enable")], {
@@ -50,7 +56,12 @@ const settling = <A, E>(page: CdpPage, action: Effect.Effect<A, E>) =>
       const sub = yield* page.subscribe
       const out = yield* action
       const started = yield* nextEvent(page, sub, (e) => isMainStart(e) || isLoad(e), NAVIGATION_START)
-      if (Option.isSome(started) && !isLoad(started.value)) yield* nextEvent(page, sub, isSettled, LOAD_TIMEOUT)
+      if (Option.isNone(started) || isLoad(started.value)) return out
+      // Until a navigation commits, Chrome holds every later command of the page's: one to a host that never answers
+      // is stopped, so the page doesn't stay stuck.
+      const next = yield* nextEvent(page, sub, (e) => isSettled(e) || isMainCommit(e), LOAD_TIMEOUT)
+      if (Option.isNone(next)) yield* stop(page)
+      else if (!isSettled(next.value)) yield* nextEvent(page, sub, isSettled, LOAD_TIMEOUT)
       return out
     }),
   )
@@ -60,7 +71,15 @@ export const navigate = (page: CdpPage, url: string) =>
   Effect.scoped(
     Effect.gen(function* () {
       const sub = yield* page.subscribe
-      const r = yield* page.send("Page.navigate", { url }, LOAD_TIMEOUT)
+      // Chrome answers once the navigation commits, and holds the page's other commands until then: one that doesn't
+      // in time (a host that never answers) is stopped, so the page doesn't stay stuck.
+      const r = yield* page
+        .send("Page.navigate", { url }, LOAD_TIMEOUT)
+        .pipe(
+          Effect.catchTag("CdpError", (e) =>
+            Effect.andThen(stop(page), Effect.fail(new PageRefused({ reason: `${url} didn't load: ${e.reason}, so it was stopped.` }))),
+          ),
+        )
       const failed = str(r, "errorText")
       if (failed !== "") return yield* new PageRefused({ reason: `${url} didn't load: ${failed}` })
       // A same-document navigation (only the #fragment changed) has no loader and fires no load event.

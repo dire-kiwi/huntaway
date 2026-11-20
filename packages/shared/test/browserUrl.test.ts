@@ -5,6 +5,7 @@ describe("browserUrl", () => {
   it("reads a port as localhost's, and a host without a scheme as a browser's address bar does", () => {
     expect(browserUrl("5173")).toBe("http://localhost:5173/")
     expect(browserUrl(":3000")).toBe("http://localhost:3000/")
+    expect(browserUrl("8080/api/health")).toBe("http://localhost:8080/api/health")
     expect(browserUrl("localhost:8080/x")).toBe("http://localhost:8080/x")
     expect(browserUrl("192.168.1.4:9000")).toBe("http://192.168.1.4:9000/")
     expect(browserUrl("example.com")).toBe("https://example.com/")

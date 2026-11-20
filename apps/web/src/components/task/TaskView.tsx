@@ -197,7 +197,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // HE-62: the task's browser beside the main area, mounted from when it's first opened, so closing it keeps the desktop
   // app's page; one of it and the desktop view at a time.
   const [browser, setBrowser] = useState(false)
-  const [browserMounted, setBrowserMounted] = useState(false)
+  // The task whose pane stays mounted while closed: only one the user opened it on, never one viewed after.
+  const [keptFor, setKeptFor] = useState<string | null>(null)
   const [share, splitter] = useBrowserShare()
   // 6.6: the task's workflow runs.
   const workflows = useWorkflowRuns(task)
@@ -300,17 +301,24 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     else if (project) navigate(mode === "page" ? href({ name: "board", projectId: project.id }) : boardTaskUrl(project.id, task.id))
   }
 
+  const paneKey = task ? `${task.host_id}:${task.id}` : null
+  const browserMounted = browser || (keptFor !== null && keptFor === paneKey)
+  const closeBrowser = () => {
+    setBrowser(false)
+    setKeptFor(paneKey)
+  }
+
   // 6.10: it needs the room.
   const toggleDesktop = () => {
     if (!desktop && mode === "panel") setPanelExpanded(true)
-    if (!desktop) setBrowser(false)
+    if (!desktop) closeBrowser()
     setDesktop(!desktop)
   }
   const toggleBrowser = () => {
     if (!browser && mode === "panel") setPanelExpanded(true)
     if (!browser) setDesktop(false)
     setBrowser(!browser)
-    setBrowserMounted(true)
+    setKeptFor(paneKey)
   }
 
   // Errors show under the header, with the marks'.
@@ -526,8 +534,14 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
         {browserMounted && (
           <>
             {browser && wide && splitter}
-            <div className={clsx("min-w-0", !browser && "hidden", wide ? "shrink-0" : "flex-1")} style={wide ? { width: `${share * 100}%` } : undefined}>
-              <BrowserPane key={`${task.host_id}:${task.id}`} task={task} visible={browser} onClose={() => setBrowser(false)} />
+            {/* Closed, the desktop app's page is kept off-screen at a page's size rather than with display: none, so it
+                still draws for the agent (Electron's advice for a <webview>). */}
+            <div
+              className={clsx("min-w-0", browser ? (wide ? "shrink-0" : "flex-1") : "pointer-events-none fixed top-0 -left-[300vw] h-[800px] w-[1280px]")}
+              aria-hidden={!browser}
+              style={browser && wide ? { width: `${share * 100}%` } : undefined}
+            >
+              <BrowserPane key={`${task.host_id}:${task.id}`} task={task} visible={browser} onClose={closeBrowser} />
             </div>
           </>
         )}

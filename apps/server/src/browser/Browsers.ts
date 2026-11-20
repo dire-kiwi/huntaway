@@ -21,6 +21,7 @@ import { ChildProcessSpawner } from "effect/process"
 import type { Socket } from "effect/socket"
 import type { BrowserPage, BrowserRole, TaskId } from "@huntaway/contracts"
 import { toJson } from "../platform/columns.ts"
+import { browserUrl } from "@huntaway/shared"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import type { TaskNotFound } from "../tasks/Tasks.ts"
@@ -75,6 +76,10 @@ export interface BrowsersShape {
   readonly state: (task: TaskId) => Effect.Effect<BrowserState | null>
   /** Close the task's headless page (a desktop pane is the app's to close). */
   readonly close: (task: TaskId) => Effect.Effect<void>
+  /** The dialog the task's headless page showed since this was last asked, once: the agent is told of each one once. */
+  readonly takeDialog: (task: TaskId) => Effect.Effect<string | null>
+  /** Close the headless pages nobody has used or watched for 30 minutes, and Chrome when none is left (a loop runs it every minute). */
+  readonly reap: Effect.Effect<void>
   /** The download of the headless Chrome going, if one is. */
   readonly installing: Effect.Effect<ChromeInstalling | null>
   /** A ticket for the task's browser's socket (single use, for a minute). */
@@ -105,6 +110,8 @@ interface Headless {
   readonly page: CdpPage
   /** Its page's tracking, closed with it. */
   readonly scope: Scope.Closeable
+  /** Done once the page is gone (closed, or its Chrome closed): its viewers are let go. */
+  readonly gone: Deferred.Deferred<void>
 }
 interface Pane {
   readonly id: number
@@ -230,8 +237,12 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
               const frame = isRecord(e.params["frame"]) ? e.params["frame"] : undefined
               switch (e.method) {
                 case "Page.frameNavigated":
+                  // A new page: a dialog of the last one isn't news any more.
                   return frame !== undefined && frame["parentId"] === undefined
-                    ? SubscriptionRef.update(info, (p) => ({ ...p, url: `${str(frame, "url")}${str(frame, "urlFragment")}` }))
+                    ? Effect.andThen(
+                        SubscriptionRef.update(info, (p) => ({ ...p, url: `${str(frame, "url")}${str(frame, "urlFragment")}` })),
+                        setTab(task, (t) => ({ ...t, dialog: null })),
+                      )
                     : Effect.void
                 case "Page.navigatedWithinDocument":
                   return str(e.params, "frameId") === mainFrame
@@ -281,7 +292,10 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           const scope = yield* Scope.fork(r.scope)
           yield* track(task, page, tab.info, true).pipe(Scope.provide(scope))
           yield* Scope.addFinalizer(scope, cdp.send("Target.closeTarget", { targetId }).pipe(Effect.ignore))
-          const h: Headless = { chrome: r.id, targetId, page, scope }
+          const gone = yield* Deferred.make<void>()
+          // Closing the page, or its Chrome (whose scope this one is forked from), lets its viewers go.
+          yield* Scope.addFinalizer(scope, Deferred.succeed(gone, undefined))
+          const h: Headless = { chrome: r.id, targetId, page, scope, gone }
           yield* setTab(task, (t) => ({ ...t, headless: h }))
           return h
         })
@@ -323,7 +337,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           Effect.gen(function* () {
             const tab = yield* getTab(task)
             if (tab?.headless == null) return
-            yield* setTab(task, (t) => ({ ...t, headless: null }))
+            yield* setTab(task, (t) => ({ ...t, headless: null, dialog: null }))
             yield* Scope.close(tab.headless.scope, Exit.void)
           }),
         )
@@ -334,15 +348,17 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
         for (const [task, t] of yield* Ref.get(tabs)) {
           if (t.headless !== null && t.viewers === 0 && now - t.usedAt > IDLE_MS) yield* closeHeadless(task)
         }
-        const left = [...(yield* Ref.get(tabs)).values()].some((t) => t.headless !== null)
-        if (!left) {
-          yield* chromeLock.withPermits(1)(
+        // Decided under `lock`, which a page being opened holds until it's in `tabs` (Chrome's download and start
+        // included), so a Chrome just started for a page is never taken for an idle one.
+        yield* lock.withPermits(1)(
+          chromeLock.withPermits(1)(
             Effect.gen(function* () {
+              if ([...(yield* Ref.get(tabs)).values()].some((t) => t.headless !== null)) return
               const r = yield* Ref.getAndSet(running, null)
               if (r !== null) yield* Scope.close(r.scope, Exit.void)
             }),
-          )
-        }
+          ),
+        )
       })
       yield* reap.pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.forkScoped)
 
@@ -383,7 +399,9 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
             const p = yield* install.installing
             if (p !== null) yield* say(yield* toJson({ type: "installing", ...p }))
           }).pipe(Effect.repeat(Schedule.spaced("1 second")), Effect.forkScoped)
-          const got = yield* page(task, query.url ?? undefined).pipe(Effect.result)
+          // Web pages only: a viewer may not open the host's files (`file:`) or Chrome's own pages.
+          const start = query.url === null ? null : browserUrl(query.url)
+          const got = yield* page(task, start ?? undefined).pipe(Effect.result)
           yield* Fiber.interrupt(progress)
           if (got._tag === "Failure") {
             const reason = got.failure._tag === "TaskNotFound" ? `There's no task ${got.failure.id}.` : got.failure.reason
@@ -409,6 +427,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
               main: h.page,
               info: now.info,
               taken: Deferred.await(now.taken),
+              gone: Effect.raceFirst(Deferred.await(h.gone), r.chrome.cdp.closed.pipe(Effect.asVoid)),
               // A script may change the title with no event of the page's: it's looked at while someone watches.
               refresh: refresh(h.page, now.info),
               resize: (w, hgt) =>
@@ -418,7 +437,11 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
                   yield* setSize(h.page, s)
                   return s
                 }),
-              navigate: (url) => Effect.andThen(touch(task), navigate(h.page, url).pipe(Effect.mapError(reasonOf))),
+              navigate: (url) => {
+                const to = browserUrl(url)
+                if (to === null) return Effect.fail({ reason: `${url} isn't a web address: only http: and https: pages open here.` })
+                return Effect.andThen(touch(task), navigate(h.page, to).pipe(Effect.mapError(reasonOf)))
+              },
               go: (go) => Effect.andThen(touch(task), history(h.page, go).pipe(Effect.mapError(reasonOf))),
             },
             reader,
@@ -480,6 +503,12 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
             return { ...p, backend: t.desktop !== null ? "desktop" : "headless", watching: t.viewers + (t.desktop !== null ? 1 : 0), dialog: t.dialog }
           }),
         close: closeHeadless,
+        takeDialog: (task) =>
+          Ref.modify(tabs, (m) => {
+            const t = m.get(task)
+            return t === undefined || t.dialog === null ? [null, m] : [t.dialog, new Map([...m, [task, { ...t, dialog: null }]])]
+          }),
+        reap,
         installing: install.installing,
         ticket,
         serve,

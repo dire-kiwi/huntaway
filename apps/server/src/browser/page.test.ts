@@ -1,3 +1,4 @@
+import { createServer, type Server } from "node:net"
 import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, FileSystem } from "effect"
@@ -108,5 +109,30 @@ describe.skipIf(systemChrome === null)("a page", () => {
         assert.include(e.reason, "didn't load: net::ERR_")
       }),
     ),
+  )
+
+  it.live(
+    "a host that never answers is stopped, and the page goes on working",
+    () =>
+      withPage((page) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            // A server that takes the connection and never answers.
+            const server = yield* Effect.acquireRelease(
+              Effect.callback<Server>((resume) => {
+                const s = createServer(() => undefined)
+                s.listen(0, "127.0.0.1", () => resume(Effect.succeed(s)))
+              }),
+              (s) => Effect.sync(() => s.close()),
+            )
+            const a = server.address()
+            const port = typeof a === "object" && a !== null ? a.port : 0
+            const e = yield* Effect.flip(navigate(page, `http://127.0.0.1:${port}/`))
+            assert.include(e.reason, "so it was stopped")
+            assert.strictEqual((yield* evaluate(page, "1 + 1")).text, "2")
+          }),
+        ),
+      ),
+    40_000,
   )
 })

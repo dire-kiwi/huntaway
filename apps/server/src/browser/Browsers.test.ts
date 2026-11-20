@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process"
 import { createServer } from "node:http"
 import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Fiber, FileSystem, Layer, Option, PubSub, Queue, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
+import { Socket } from "effect/socket"
 import { CallId } from "@huntaway/contracts"
 import { fakeAgent, fakeSocket, systemChrome, TestBoard } from "@huntaway/testing"
 import type { FakeAgent, FakeSocket } from "@huntaway/testing"
@@ -23,6 +25,7 @@ const PAGES: Readonly<Record<string, string>> = {
 <button style="position:absolute;left:10px;top:200px;width:200px;height:60px" onclick="document.title = 'Hello ' + document.getElementById('name').value">Greet</button>
 <a href="/second">Next page</a>`,
   "/second": "<!doctype html><title>Second</title><p>second page</p>",
+  "/alert": `<!doctype html><title>Alerts</title><button onclick="alert('hi')">Alert</button><input id="field">`,
 }
 
 /** A web server of `PAGES` on a free port of 127.0.0.1, for as long as the scope lasts. */
@@ -42,9 +45,9 @@ const site = Effect.acquireRelease(
 )
 
 /** The whole board with this machine's Chromium as the tasks' browser. */
-const withBrowser = <A, E, R>(body: (url: string) => Effect.Effect<A, E, R>) =>
+const withBrowser = <A, E, R>(body: (url: string) => Effect.Effect<A, E, R>, chromeBin = systemChrome ?? "") =>
   Effect.scoped(Effect.flatMap(site, (s) => body(s.url))).pipe(
-    Effect.provide(TestBoard({ chromeBin: systemChrome ?? "", chromeSandbox: false }).pipe(Layer.provideMerge(NodeServices.layer))),
+    Effect.provide(TestBoard({ chromeBin, chromeSandbox: false }).pipe(Layer.provideMerge(NodeServices.layer))),
   )
 
 const Said = Schema.Struct({ content: Schema.Array(Schema.Unknown), isError: Schema.optional(Schema.Boolean) })
@@ -254,6 +257,122 @@ describe.skipIf(systemChrome === null)("a task's browser", () => {
           assert.strictEqual((yield* browsers.state(task))?.backend, "headless")
         }),
       ),
+    TIMEOUT,
+  )
+
+  it.live(
+    "a viewer opens web pages only: not the host's files",
+    () =>
+      withBrowser(() =>
+        Effect.gen(function* () {
+          const browsers = yield* Browsers
+          const agent = yield* fakeAgent()
+          const task = agent.run.task_id
+          const sock = yield* fakeSocket
+          const ticket = yield* browsers.ticket(task, "view")
+          // The start address is passed over, and the page opens blank.
+          yield* browsers
+            .serve(ticket, { width: 640, height: 480, url: "file:///etc/hostname" }, Effect.succeed(sock.socket))
+            .pipe(Effect.scoped, Effect.forkChild)
+          yield* nextJson(sock, "viewport")
+          assert.strictEqual((yield* browsers.state(task))?.url, "about:blank")
+          yield* sock.send('{"type":"navigate","url":"file:///etc/hostname"}')
+          assert.include(str(yield* nextJson(sock, "error"), "message"), "isn't a web address")
+          yield* sock.send('{"type":"navigate","url":"chrome://version"}')
+          assert.include(str(yield* nextJson(sock, "error"), "message"), "isn't a web address")
+          assert.strictEqual((yield* browsers.state(task))?.url, "about:blank")
+          yield* sock.hangUp
+        }),
+      ),
+    TIMEOUT,
+  )
+
+  it.live(
+    "a dialog the page shows is told to the agent once",
+    () =>
+      withBrowser((url) =>
+        Effect.gen(function* () {
+          const agent = yield* fakeAgent()
+          yield* call(agent, "navigate", { url: `${url}/alert` })
+          const outline = (yield* call(agent, "snapshot", {})).text
+          const clicked = yield* call(agent, "click", { ref: refOf(outline, 'button "Alert"') })
+          assert.include(clicked.text, "The page showed a dialog, which was accepted: alert: hi")
+          const next = yield* call(agent, "type", { ref: refOf(outline, "textbox"), text: "x" })
+          assert.notInclude(next.text, "dialog")
+        }),
+      ),
+    TIMEOUT,
+  )
+
+  it.live(
+    "a viewer is let go when its page closes, and connects again to the new one",
+    () =>
+      withBrowser((url) =>
+        Effect.gen(function* () {
+          const browsers = yield* Browsers
+          const agent = yield* fakeAgent()
+          const task = agent.run.task_id
+          yield* call(agent, "navigate", { url })
+          const sock = yield* fakeSocket
+          const viewer = yield* browsers
+            .serve(yield* browsers.ticket(task, "view"), { width: 640, height: 480, url: null }, Effect.succeed(sock.socket))
+            .pipe(Effect.scoped, Effect.forkChild)
+          yield* nextFrame(sock)
+          yield* call(agent, "close", {})
+          // The socket closes as "service restart", and the relay ends.
+          for (;;) {
+            const f = yield* Queue.take(sock.sent)
+            if (Socket.isCloseEvent(f)) {
+              assert.strictEqual(f.code, 1012)
+              break
+            }
+          }
+          yield* Fiber.join(viewer)
+          assert.strictEqual((yield* browsers.state(task))?.watching ?? 0, 0)
+          // The agent opens the page again; a new viewer gets its frames.
+          yield* call(agent, "navigate", { url: `${url}/second` })
+          const again = yield* fakeSocket
+          yield* browsers
+            .serve(yield* browsers.ticket(task, "view"), { width: 640, height: 480, url: null }, Effect.succeed(again.socket))
+            .pipe(Effect.scoped, Effect.forkChild)
+          const frame = yield* nextFrame(again)
+          assert.deepStrictEqual([frame[0], frame[1]], [0xff, 0xd8])
+          assert.strictEqual((yield* browsers.state(task))?.title, "Second")
+          yield* again.hangUp
+        }),
+      ),
+    TIMEOUT,
+  )
+
+  it.live(
+    "a reap while Chrome is starting for a page leaves that Chrome alone",
+    () =>
+      Effect.gen(function* () {
+        // A Chrome that says it has started (into one FIFO) and waits for the test (on another) before it runs.
+        const fs = yield* FileSystem.FileSystem
+        const dir = yield* fs.makeTempDirectoryScoped()
+        execFileSync("mkfifo", [`${dir}/started`, `${dir}/go`])
+        const bin = `${dir}/chrome`
+        yield* fs.writeFileString(bin, `#!/bin/sh\necho started > ${dir}/started\nread line < ${dir}/go\nexec ${systemChrome ?? ""} "$@"\n`)
+        yield* fs.chmod(bin, 0o755)
+        return yield* withBrowser(
+          (url) =>
+            Effect.gen(function* () {
+              const browsers = yield* Browsers
+              const agent = yield* fakeAgent()
+              const opening = yield* browsers.page(agent.run.task_id, url).pipe(Effect.forkChild)
+              yield* fs.readFileString(`${dir}/started`)
+              // The reap waits for the page being opened, then sees it.
+              const reaping = yield* browsers.reap.pipe(Effect.forkChild)
+              yield* fs.writeFileString(`${dir}/go`, "go\n")
+              yield* Fiber.join(opening)
+              yield* Fiber.join(reaping)
+              assert.strictEqual((yield* browsers.state(agent.run.task_id))?.backend, "headless")
+              assert.include((yield* call(agent, "snapshot", {})).text, "Form")
+            }),
+          bin,
+        )
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     TIMEOUT,
   )
 })

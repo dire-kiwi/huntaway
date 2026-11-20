@@ -25,11 +25,11 @@ type Failure = ChromeUnavailable | CdpError | PageRefused | { readonly _tag: "Ta
 const reason = (e: Failure) => (e._tag === "TaskNotFound" ? `The task ${e.id} is gone.` : e.reason)
 
 /** Where the page is, as the agent is told after an action. */
-const where = (s: BrowserState | null, url: string, title: string) => {
+const where = (s: BrowserState | null, url: string, title: string, dialog: string | null) => {
   const place = s?.backend === "desktop" ? " (in the user's desktop app, beside the thread)" : ""
   const shown = title === "" ? url : `${title} (${url})`
-  const dialog = s?.dialog == null ? "" : `\nThe page showed a dialog, which was accepted: ${s.dialog}`
-  return `The page is now ${shown}${place}.${dialog}`
+  const said = dialog === null ? "" : `\nThe page showed a dialog, which was accepted: ${dialog}`
+  return `The page is now ${shown}${place}.${said}`
 }
 
 export const browserTools = Effect.gen(function* () {
@@ -46,7 +46,7 @@ export const browserTools = Effect.gen(function* () {
       const said = yield* body(page)
       if (typeof said === "object") return said
       const info = yield* pageInfo(page).pipe(Effect.orElseSucceed(() => ({ url: "", title: "" })))
-      const now = where(yield* browsers.state(task), info.url, info.title)
+      const now = where(yield* browsers.state(task), info.url, info.title, yield* browsers.takeDialog(task))
       return text(typeof said === "string" ? `${said}\n${now}` : now)
     }).pipe(Effect.catch((e) => Effect.succeed(text(reason(e), true))))
 

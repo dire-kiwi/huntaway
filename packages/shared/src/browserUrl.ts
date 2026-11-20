@@ -14,7 +14,8 @@ export function browserUrl(input: string): string | null {
   const s = input.trim()
   if (!s || /\s/.test(s)) return null
   let full = s
-  if (/^:?\d{1,5}$/.test(s)) full = `http://localhost:${s.replace(/^:/, "")}/`
+  // A port, and maybe a path: "5173", ":3000", "8080/api/health".
+  if (/^:?\d{1,5}(\/|$)/.test(s)) full = `http://localhost:${s.replace(/^:/, "")}${s.includes("/") ? "" : "/"}`
   else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
     // Not a scheme: "localhost:5173" and "example.com:8080/x" are a host and port.
     if (/^[a-z][a-z0-9+.-]*:(?!\d)/i.test(s)) return null

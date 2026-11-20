@@ -1,7 +1,7 @@
 import { Effect, Option, PubSub, Ref, Schedule, Schema, Stream, SubscriptionRef } from "effect"
 import type { Scope } from "effect"
 import { Base64 } from "effect/encoding"
-import type { Socket } from "effect/socket"
+import { Socket } from "effect/socket"
 import { BrowserClientFrame } from "@huntaway/contracts"
 import type { BrowserPage, BrowserServerFrame } from "@huntaway/contracts"
 import { toJson } from "../platform/columns.ts"
@@ -32,6 +32,8 @@ export interface ViewerTab {
   readonly go: (go: "back" | "forward" | "reload") => Effect.Effect<void, { readonly reason: string }>
   /** Done once the desktop app's pane takes the tab: the viewer is told, and its socket closes. */
   readonly taken: Effect.Effect<void>
+  /** Done once the page is gone (closed, or Chrome gone): the socket closes, and the viewer connects again to a new one. */
+  readonly gone: Effect.Effect<void>
 }
 
 /** JPEG quality, and the largest frame sent. */
@@ -195,5 +197,7 @@ export const relayViewer = Effect.fnUntraced(function* (
 
   const input = socketText(reader).pipe(Stream.runForEach(onMessage))
   const taken = Effect.andThen(tab.taken, say({ type: "desktop" }))
-  return yield* Effect.raceFirst(input, taken)
+  // 1012, "service restart": the viewer asks for a new ticket, which opens the task's page again where it was.
+  const gone = Effect.andThen(tab.gone, writer.write(new Socket.CloseEvent(1012, "the page closed")).pipe(Effect.ignore))
+  return yield* Effect.raceAll([input, taken, gone])
 })

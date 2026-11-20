@@ -1452,8 +1452,10 @@ take the same code, with no Playwright in the server.
   `SubscriptionRef`, its viewers, the size viewers asked for, the last dialog). `page(task)` is the desktop pane while
   one is attached, else the headless page, opened (with Chrome, if it isn't running) at the tab's last address. Each
   Chrome start has an id, and a page of an earlier one counts as gone. A headless page nobody used or watched for 30
-  minutes closes (a loop every minute), and Chrome closes when no page is left. A headless page's dialogs are accepted
-  and remembered for the agent. Profile: `<data>/browser/profile`, cookies shared by every task.
+  minutes closes (a loop every minute, `reap`), and Chrome closes when no page is left: decided under the lock a page
+  being opened holds until it's in `tabs` (Chrome's download and start included), so a Chrome just started for a page
+  is never closed as idle. A headless page's dialogs are accepted, and each is told to the agent once (`takeDialog`;
+  forgotten on a new page). Profile: `<data>/browser/profile`, cookies shared by every task.
 - **Tickets and the socket**: `browser.open {task_id, role}` gives a ticket (single use, a minute, as `terminal.open`)
   for `GET /api/browser/<ticket>` (`http/browser.ts`). Role `view`: `relayViewer` attaches a CDP session of its own to
   the page, starts its screencast (JPEG 70, the viewer's size), and sends one frame at a time: the next after the
@@ -1461,7 +1463,12 @@ take the same code, with no Playwright in the server.
   (`Page.captureScreenshot`) when a new screencast sends nothing within 300 ms (an idle page doesn't repaint). The
   page's address and title go as JSON as they change, and its title is read every 2 seconds while watched (a script's
   title change has no event). The viewer's mouse, wheel, keys and text are replayed with `Input.dispatch*`; its size
-  becomes the page's (`Emulation.setDeviceMetricsOverride`). Role `desktop`: the socket carries CDP itself, the
+  becomes the page's (`Emulation.setDeviceMetricsOverride`). An address the viewer gives (its socket's `url`, a
+  `navigate` frame) goes through `browserUrl` on the server too: web pages only, never `file:` or `chrome:`, answered
+  with an `error` frame. When the page goes (the agent's `close`, a reap, Chrome gone), the relay ends and the socket
+  closes with 1012; the viewer asks for a new ticket, which opens the page again where it was. `browser.open` needs
+  `operate`, so a paired phone can watch and use a task's browser: it reaches what the host's network does, web pages
+  only. Role `desktop`: the socket carries CDP itself, the
   server's commands to the app's pane and its answers and events back (`attachDesktop`, a `makeCdp` over the socket).
   On attach the pane loads the address the headless page was on, the headless page closes, and its viewers are told
   `desktop` and let go. When the pane's socket closes, the tab falls back to headless at the pane's last address.
@@ -1471,7 +1478,8 @@ take the same code, with no Playwright in the server.
   `evaluate`, `screenshot`, `close`. Every run gets it without asking (`--allowedTools mcp__browser`, Codex's approved
   servers); reviewers and plan mode too: the page is a sandboxed web page, not the task's work. A call's timeout is 15
   minutes (the first downloads Chrome). An action waits for a navigation it starts (to its load, or the main frame
-  stopping, for a back/forward-cache page). The run's system prompt says the browser is there (`prompts/browserNote.ts`).
+  stopping, for a back/forward-cache page). Chrome holds a page's commands until a navigation commits, so one that
+  doesn't commit in 15 seconds (a host that never answers) is stopped (`Page.stopLoading`), and the page goes on. The run's system prompt says the browser is there (`prompts/browserNote.ts`).
 - **Tests**: `chrome.test.ts`, `page.test.ts` (the actions on a real page) and `Browsers.test.ts` (the tools through
   `ToolCalls`, a viewer over `fakeSocket`, and the desktop pane played by a second Chromium's page relayed as the app
   relays its <webview>) run in this machine's Chromium (`systemChrome` in `@huntaway/testing`: `$CHROMIUM`, else
