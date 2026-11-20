@@ -72,6 +72,7 @@ const McpRunFile = Schema.Struct({
   in_process: Schema.optional(Schema.Unknown),
   desktop: Schema.optional(Schema.Unknown),
   spaces: Schema.optional(Schema.Unknown),
+  browser: Schema.optional(Schema.Unknown),
 })
 
 /** The markers of a kill to carry on after a restart: of a launch given up on (`reap`), of a vanished shim's agent (`orphan`). */
@@ -382,6 +383,7 @@ export class RunDir extends Context.Service<RunDir, RunDirShape>()("huntaway-ser
             in_process: Schema.Boolean,
             desktop: Schema.Boolean,
             spaces: Schema.optional(Schema.Boolean),
+            browser: Schema.optional(Schema.Boolean),
           }),
           settings,
         )
@@ -446,6 +448,7 @@ export class RunDir extends Context.Service<RunDir, RunDirShape>()("huntaway-ser
                     in_process: v.in_process === true,
                     desktop: v.desktop === true,
                     ...(v.spaces === true ? { spaces: true } : {}),
+                    ...(v.browser === true ? { browser: true } : {}),
                   },
             ),
           ),

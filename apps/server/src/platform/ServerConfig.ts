@@ -161,6 +161,10 @@ export const SERVE_ENV = [
   // HE-35: the Docker CLI Spaces run, and the image they are built on.
   "HUNTAWAY_DOCKER",
   "HUNTAWAY_SPACES_IMAGE",
+  // HE-62: the tasks' browser's Chrome, its download, and its sandbox.
+  "HUNTAWAY_CHROME",
+  "HUNTAWAY_CHROME_RELEASE",
+  "HUNTAWAY_CHROME_SANDBOX",
   // The task an agent works on, which a server started by another board's agent (a test server) has.
   "HUNTAWAY_TASK_ID",
 ] as const
@@ -305,6 +309,12 @@ export interface ServerConfigShape {
   readonly dockerBin: string
   /** HE-35: `HUNTAWAY_SPACES_IMAGE`, the image Spaces are built on (default Cua's Linux image with spacesd). */
   readonly spacesImage: string
+  /** HE-62: `HUNTAWAY_CHROME`, a Chrome or Chromium for the tasks' browser instead of the chrome-headless-shell it downloads. */
+  readonly chromeBin: string | null
+  /** HE-62: `HUNTAWAY_CHROME_RELEASE` (JSON), the chrome-headless-shell archive to download instead of the pinned one (tests). */
+  readonly chromeRelease: ChromeReleaseConfig | null
+  /** HE-62: `HUNTAWAY_CHROME_SANDBOX=0` runs the tasks' browser without Chrome's sandbox (a root or container host). */
+  readonly chromeSandbox: boolean
   /** 6.10: `HUNTAWAY_DESKTOP_LOCKED` (`1` or `0`), whether the screen is locked, instead of asking the session (tests). */
   readonly desktopLocked: boolean | null
   /** 6.9: `--telemetry-url`/`HUNTAWAY_TELEMETRY_URL`, used while the host's settings name no ClickHouse. */
@@ -321,6 +331,16 @@ export interface ServerConfigShape {
 /** 6.10: a Cua Driver release archive: where it is, and what it must be. */
 export const CuaReleaseConfig = Schema.Struct({ version: Schema.String, url: Schema.String, bytes: Schema.Int, sha256: Schema.String })
 export type CuaReleaseConfig = typeof CuaReleaseConfig.Type
+
+/** HE-62: a chrome-headless-shell archive: where it is, what it must be, and the program's path inside it. */
+export const ChromeReleaseConfig = Schema.Struct({
+  version: Schema.String,
+  url: Schema.String,
+  bytes: Schema.Int,
+  sha256: Schema.String,
+  program: Schema.String,
+})
+export type ChromeReleaseConfig = typeof ChromeReleaseConfig.Type
 
 /** What a release package says of itself in `build.json`, beside its launcher. */
 const ReleaseBuild = Schema.fromJsonString(Schema.Struct({ version: Schema.String, commit: Schema.optional(Schema.NullOr(Schema.String)) }))
@@ -464,6 +484,10 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         // HE-35
         const dockerBin = yield* Config.String("HUNTAWAY_DOCKER").pipe(Config.withDefault(""))
         const spacesImage = yield* Config.String("HUNTAWAY_SPACES_IMAGE").pipe(Config.withDefault(""))
+        // HE-62
+        const chromeBin = yield* Config.String("HUNTAWAY_CHROME").pipe(Config.withDefault(""))
+        const chromeRelease = yield* Config.schema(Schema.fromJsonString(ChromeReleaseConfig), "HUNTAWAY_CHROME_RELEASE").pipe(Config.option)
+        const chromeSandbox = yield* Config.String("HUNTAWAY_CHROME_SANDBOX").pipe(Config.withDefault("1"))
         // 6.9
         const claudeConfigDir = yield* Config.String("CLAUDE_CONFIG_DIR").pipe(Config.option)
         const codexHome = yield* Config.String("CODEX_HOME").pipe(Config.option)
@@ -514,6 +538,9 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           ),
           dockerBin: dockerBin === "" ? "docker" : expand(dockerBin),
           spacesImage: spacesImage === "" ? SPACES_IMAGE : spacesImage,
+          chromeBin: chromeBin === "" ? null : expand(chromeBin),
+          chromeRelease: Option.getOrNull(chromeRelease),
+          chromeSandbox: chromeSandbox !== "0",
           hubs: Option.match(args.hub ?? Option.none(), {
             onNone: () => [],
             onSome: (list) =>
@@ -578,6 +605,10 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         // HE-35: never this machine's Docker: a test gives its own `Docker` layer.
         dockerBin: `${config.dataDir}/no-docker-in-tests`,
         spacesImage: SPACES_IMAGE,
+        // HE-62: never a download, nor this machine's Chrome: a test that drives a browser gives one.
+        chromeBin: `${config.dataDir}/no-chrome-in-tests`,
+        chromeRelease: null,
+        chromeSandbox: false,
         hubs: [],
         hubToken: null,
         noDiscovery: true,

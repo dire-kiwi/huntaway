@@ -52,6 +52,8 @@ import {
   TaskRpcs,
   // 6.1
   TerminalRpcs,
+  // HE-62
+  BrowserRpcs,
   ThreadRpcs,
   WorkflowRpcs,
 } from "@huntaway/contracts"
@@ -131,6 +133,9 @@ import { Spaces } from "./spaces/Spaces.ts"
 import { Teleport } from "./spaces/Teleport.ts"
 import { TeleportRepo } from "./spaces/TeleportRepo.ts"
 import { SpacesTools } from "./spaces/SpacesTools.ts"
+import { BrowserTools } from "./browser/BrowserTools.ts"
+import { Browsers } from "./browser/Browsers.ts"
+import { ChromeInstall } from "./browser/ChromeInstall.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
@@ -254,6 +259,7 @@ import { CheckpointHandlers } from "./rpc/checkpoints.ts"
 // 6.10: computer use.
 import { DesktopHandlers } from "./rpc/desktop.ts"
 import { SpacesHandlers } from "./rpc/spaces.ts"
+import { BrowserHandlers } from "./rpc/browser.ts"
 import { TeleportHandlers } from "./rpc/teleport.ts"
 import { GitHandlers } from "./rpc/git.ts"
 import { HostHandlers } from "./rpc/host.ts"
@@ -297,6 +303,7 @@ import { AnalyticsHandlers } from "./rpc/analytics.ts"
 import { TelemetryHandlers } from "./rpc/telemetry.ts"
 // 6.1: terminals.
 import { TerminalRoute } from "./http/terminal.ts"
+import { BrowserRoute } from "./http/browser.ts"
 import { SpacesRoute } from "./http/spaces.ts"
 import { TerminalHandlers } from "./rpc/terminal.ts"
 import { Pty } from "./terminal/Pty.ts"
@@ -655,6 +662,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(
         Layer.provideMerge(Docker.layer),
       ),
     ),
+    // HE-62: each task's web browser, and the `browser` MCP server's tools, over the MCP area.
+    Layer.provideMerge(BrowserTools.pipe(Layer.provideMerge(Browsers.layer), Layer.provideMerge(ChromeInstall.layer))),
     // 6.8: push, watching the board's events for what devices want.
     Layer.provideMerge(PushLive),
     // HE-34: the plugins, over the MCP area they define their servers with.
@@ -729,6 +738,8 @@ export const Served = PublicRpcs.merge(
   // 6.3
   // 6.1
   TerminalRpcs,
+  // HE-62
+  BrowserRpcs,
   // 6.11
   AsanaRpcs,
   ConfigArchiveRpcs,
@@ -781,6 +792,8 @@ export const HandlersLive = Layer.mergeAll(
   // 6.3
   // 6.1
   TerminalHandlers,
+  // HE-62
+  BrowserHandlers,
   // 6.11
   AsanaHandlers,
   ConfigArchiveHandlers,
@@ -823,6 +836,7 @@ export const RoutesLive = Layer.mergeAll(
   McpHttpRoute,
   OtlpRoute /* 6.9 */,
   TerminalRoute /* 6.1 */,
+  BrowserRoute /* HE-62 */,
   SpacesRoute /* HE-35 */,
   // 6.5: automations' webhooks.
   WebhookRoute,

@@ -29,6 +29,8 @@ them in service units and deploy scripts.)
 | `--no-discovery` / `HUNTAWAY_NO_DISCOVERY`       | off                              | Neither advertise this host over mDNS (`_huntaway._tcp.local`) for other boards' Settings → Hosts → Nearby hosts nor look for others (see _Nearby hosts_ in `hosts.md`)       |
 | `--no-agents` / `HUNTAWAY_NO_AGENTS`             | off                              | Run no agent at all (test servers)                                                                                                                                            |
 | `--skip-db-backup` / `HUNTAWAY_SKIP_DB_BACKUP`   | off                              | Start even when the database can't be backed up before it's migrated (see _Release builds_ in `desktop.md`)                                                                   |
+| `HUNTAWAY_CHROME`                                | downloaded                       | A Chrome or Chromium for the tasks' browsers, instead of the chrome-headless-shell the server downloads the first time a task opens one (see `browser.md`)                    |
+| `HUNTAWAY_CHROME_SANDBOX`                        | `1`                              | `0` runs the tasks' browser without Chrome's sandbox, for a host running as root or in a container, or Ubuntu 23.10 and later where AppArmor blocks it                        |
 | `--telemetry-url` / `HUNTAWAY_TELEMETRY_URL`     |                                  | The ClickHouse this host sends telemetry to (`http://USER:PASSWORD@HOST:8123/DATABASE`) when its Telemetry settings have none; see _Telemetry_                                |
 
 The other commands: `huntaway token` prints the board's token (`--hub` the hub token), `huntaway install-service`

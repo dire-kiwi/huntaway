@@ -38,6 +38,7 @@ hosts         Links · LinkConnections · Relay · Discovery · Ssh · Uplink ·
 terminal      Terminals · Pty
 desktop       CuaDriver · DesktopClaims
 spaces        Docker · Spaces · TeleportRepo · Teleport · SpacesTools
+browser       ChromeInstall · Browsers · BrowserTools
 update        Supervisor · Restarts · Systemd · Releases · Service · Updater
 analytics     Analytics · Disk
 board         Board
@@ -1433,6 +1434,74 @@ section 2.
   agent tool through `ToolCalls` over `fakeSpacesd`'s teleport service: asked in Bypass, denied, trimmed, removed);
   `tests/ui/signInsCard.test.mjs` draws the card. The wire and bundle were checked end to end against the real
   spacesd receiver in the image.
+
+### Browser<a id="browser"></a> (HE-62)
+
+Each task has a web browser of its own, which its agent drives with the `browser` MCP server and the board shows beside
+the thread. **Decided** (HE-62, after reading T3 Code's, which does the same: a downloaded chrome-headless-shell on the
+host, streamed to the app as screencast JPEGs, and the desktop app's own <webview> for its own host): one page per task;
+the board's desktop app shows its <webview> and gives it to the server to drive, and every other client watches the
+host's headless Chrome as a stream. Everything is driven over the DevTools protocol (CDP) alone, so the two kinds of page
+take the same code, with no Playwright in the server.
+
+- **`browser/`** (below `spaces/`): `cdp.ts` (a CDP connection over any carrier of whole JSON messages: commands by id,
+  events to a `PubSub`; gone when its messages end), `chrome.ts` (one Chrome over `--remote-debugging-pipe`, its fd 3
+  and 4 through `effect/process`' `additionalFds`, NUL-ended messages; no port another program could reach; the
+  flags that keep every page painting), `ChromeInstall` (the program: `HUNTAWAY_CHROME`, else Chrome for Testing's
+  chrome-headless-shell pinned in `CHROME_VERSION` with each platform's size and SHA-256, downloaded on first use into
+  `<data>/browser/chrome/<version>`, unpacked with `unzip` into a folder of its own and renamed into place, older
+  versions removed; `HUNTAWAY_CHROME_RELEASE` replaces the pin in tests; a failed install isn't tried again for five minutes, as each try
+  downloads it again), `page.ts` (the agent's actions on a `CdpPage`),
+  `snapshot.ts` (the accessibility tree as an outline with refs `e<backend node id>`), `keys.ts` (key names as CDP's
+  events), `Browsers` (below), `viewer.ts` (one viewer's stream), `tools.ts` and `BrowserTools` (the MCP server).
+- **`Browsers`**: a `Tab` per task in a `Ref` (its headless page or the desktop pane, its address and title in a
+  `SubscriptionRef`, its viewers, the size viewers asked for, the last dialog). `page(task)` is the desktop pane while
+  one is attached, else the headless page, opened (with Chrome, if it isn't running) at the tab's last address. Each
+  Chrome start has an id, and a page of an earlier one counts as gone. A headless page nobody used or watched for 30
+  minutes closes (a loop every minute, `reap`), and Chrome closes when no page is left: decided under the lock a page
+  being opened holds until it's in `tabs` (Chrome's download and start included), so a Chrome just started for a page
+  is never closed as idle. A window a headless page opens (a `target="_blank"` link, `window.open`) is closed once it
+  has a web address, which then loads in the task's page, as the desktop pane does (`popups`, over
+  `Target.setDiscoverTargets`). A headless page's dialogs are accepted, and each is told to the agent once (`takeDialog`;
+  forgotten on a new page). Profile: `<data>/browser/profile`, cookies shared by every task.
+- **Tickets and the socket**: `browser.open {task_id}` (`operate`) gives a viewer's ticket and `browser.pane {task_id}`
+  (`terminal`, as the host's desktop view: only the board's own app hands over a pane) the desktop pane's (single use, a
+  minute, as `terminal.open`), for `GET /api/browser/<ticket>` (`http/browser.ts`). Role `view`: `relayViewer` attaches a CDP session of its own to
+  the page, starts its screencast (JPEG 70, the viewer's size), and sends one frame at a time: the next after the
+  viewer's `ack`, only the newest waiting, and Chrome's own ack after the viewer's, as T3 Code does; a still
+  (`Page.captureScreenshot`) when a new screencast sends nothing within 300 ms (an idle page doesn't repaint). The
+  page's address and title go as JSON as they change, and its title is read every 2 seconds while watched (a script's
+  title change has no event). The viewer's mouse, wheel, keys and text are replayed with `Input.dispatch*`; its size
+  becomes the page's (`Emulation.setDeviceMetricsOverride`), kept in a `SubscriptionRef` on the tab that every viewer
+  follows: when one gives the page its size, each is sent `viewport` and its screencast starts again at it, so its
+  pointer maps onto the page as it is. An address the viewer gives (its socket's `url`, a
+  `navigate` frame) goes through `browserUrl` on the server too: web pages only, never `file:` or `chrome:`, answered
+  with an `error` frame. When the page goes (the agent's `close`, a reap, Chrome gone), the relay ends and the socket
+  closes with 1012; the viewer asks for a new ticket, which opens the page again where it was. `browser.open` needs
+  `operate`, so a paired phone can watch and use a task's browser: it reaches what the host's network does, web pages
+  only. The tab keeps only a web page's address (`keptAddress`): Chrome's error page records the address that failed
+  (`unreachableUrl`), and an address a pane reports that isn't a web page's (`file:`) is dropped, since a page opened
+  again loads the tab's address. Role `desktop`: the socket carries CDP itself, the
+  server's commands to the app's pane and its answers and events back (`attachDesktop`, a `makeCdp` over the socket).
+  On attach the pane loads the address the headless page was on, the headless page closes, and its viewers are told
+  `desktop` and let go. When the pane's socket closes, the tab falls back to headless at the pane's last address.
+- **The `browser` MCP server** (`BuiltInServer`, served while `HUNTAWAY_CHROME` is set or Chrome for Testing has a build
+  for the platform; `mcp-run.json`'s `browser`): `navigate` (a URL, a host, or a port on this host; or back, forward,
+  reload; waits for the load), `snapshot`, `click` (a ref, or x and y), `type`, `press`, `hover`, `scroll`,
+  `evaluate`, `screenshot`, `close`. Every run gets it without asking (`--allowedTools mcp__browser`, Codex's approved
+  servers); reviewers and plan mode too: the page is a sandboxed web page, not the task's work. A call's timeout is 15
+  minutes (the first downloads Chrome). An action waits for a navigation it starts (to its load, or the main frame
+  stopping, for a back/forward-cache page). Chrome holds a page's commands until a navigation commits, so one that
+  doesn't commit in 15 seconds (a host that never answers) is stopped (`Page.stopLoading`), and the page goes on. The run's system prompt says the browser is there (`prompts/browserNote.ts`).
+- **Tests**: `chrome.test.ts`, `page.test.ts` (the actions on a real page) and `Browsers.test.ts` (the tools through
+  `ToolCalls`, a viewer over `fakeSocket`, and the desktop pane played by a second Chromium's page relayed as the app
+  relays its <webview>) run in this machine's Chromium (`systemChrome` in `@huntaway/testing`: `$CHROMIUM`, else
+  `/usr/bin/chromium`) and are skipped without one; nothing downloads Chrome in a test. Test servers
+  (`scripts/test-server.sh`) run the same Chromium without its sandbox.
+- **Not yet**: copy from the page to the viewer's clipboard, file uploads and downloads through the viewer, touch
+  scrolling on a phone (taps work: the browser makes them mouse events), input methods, more than one tab a task,
+  `t3 browser setup`'s AppArmor profile for Ubuntu's blocked sandbox (`HUNTAWAY_CHROME_SANDBOX=0` instead), and a task on
+  another host from a board that isn't its own (as with terminals, the socket goes to the page's own server).
 
 ## Hook commands<a id="hook-commands"></a>
 

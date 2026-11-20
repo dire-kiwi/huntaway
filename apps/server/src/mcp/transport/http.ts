@@ -17,7 +17,7 @@ import { ToolCalls } from "../ToolCalls.ts"
 // The board's MCP servers over HTTP, MCP's streamable HTTP transport (docs/plan/inventory/03-mcp.md 2.2;
 // docs/plan/05-protocol.md, Plain HTTP): `/api/mcp/<run id>/<server>` on the host's internal URL, each run with a
 // secret of its own as its bearer token (`Identity.runSecret`), so a run can only act as itself and never holds the
-// board token. Every run reaches gh's, desktop's, spaces' and the plugins' servers here; the board's own only compactions and Codex
+// board token. Every run reaches gh's, desktop's, spaces', browser's and the plugins' servers here; the board's own only compactions and Codex
 // sessions that took no dynamic tools (Claude runs that take input call it on their output, `control.ts`).
 //
 // A call is answered as a server-sent event stream that starts with an event that has an id and no data (MCP's priming
@@ -155,7 +155,8 @@ export const McpHttpRoute = HttpRouter.use(
       if (
         (settings.in_process && server.value === BOARD_SERVER) ||
         (!settings.desktop && server.value === "desktop") ||
-        (settings.spaces !== true && server.value === "spaces")
+        (settings.spaces !== true && server.value === "spaces") ||
+        (settings.browser !== true && server.value === "browser")
       )
         return notFound
 

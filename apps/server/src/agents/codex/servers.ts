@@ -3,6 +3,7 @@ import type { Decision, Rule, Rules } from "@huntaway/shared"
 import { Predicate } from "effect"
 import {
   BOARD_SERVER,
+  BROWSER_SERVER,
   DESKTOP_READS,
   DESKTOP_SERVER,
   GH_SERVER,
@@ -72,6 +73,10 @@ export const mcpServerConfig = (
     // Space builds its image, which takes minutes.
     out["tool_timeout_sec"] = 3600
     out["tools"] = Object.fromEntries([...SPACES_READS, ...SPACES_ASKS_ITSELF].map((tool) => [tool, { approval_mode: "approve" }]))
+  }
+  if (name === BROWSER_SERVER) {
+    // HE-62: its first call on a host downloads Chrome (it is approved, `codexLaunch`: it asks nothing).
+    out["tool_timeout_sec"] = 900
   }
   if (disabled.length > 0) out["disabled_tools"] = [...disabled]
   return out

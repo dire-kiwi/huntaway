@@ -64,6 +64,7 @@ export * from "./rpc/settingsSync.ts"
 export * from "./rpc/tasks.ts"
 // 6.1
 export * from "./rpc/terminal.ts"
+export * from "./rpc/browser.ts"
 export * from "./rpc/taskDocuments.ts"
 export * from "./rpc/telemetry.ts"
 export * from "./rpc/threads.ts"

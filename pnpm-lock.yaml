@@ -272,6 +272,9 @@ importers:
       '@huntaway/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@huntaway/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@xterm/addon-fit':
         specifier: 0.11.0
         version: 0.11.0

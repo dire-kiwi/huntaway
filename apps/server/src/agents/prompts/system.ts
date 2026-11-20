@@ -4,6 +4,7 @@ import { codeTask } from "../../prompts/codeTask.ts"
 import { codexPlanMode } from "../../prompts/codexPlanMode.ts"
 import { desktopNote } from "../../prompts/desktopNote.ts"
 import { spacesNote } from "../../prompts/spacesNote.ts"
+import { browserNote } from "../../prompts/browserNote.ts"
 import { docsNote } from "../../prompts/docsNote.ts"
 import { documentsOnly } from "../../prompts/documentsOnly.ts"
 import { codexGithubNote, githubNote } from "../../prompts/github.ts"
@@ -105,6 +106,7 @@ export const instructions = (base: string, kind: ThreadKind, c: PromptContext): 
   if (c.docsTools && !isUnderTask(kind)) s += docsNote(c.codex)
   if (c.desktopHost !== null && c.desktopHost !== "") s += desktopNote(c.codex, c.desktopHost)
   if (c.spacesHost !== null && c.spacesHost !== "") s += spacesNote(c.codex, c.spacesHost)
+  if (c.browserTools) s += browserNote(c.codex)
   if (c.tmp !== null) s += tempFolder(c.tmp, isUnderTask(kind))
   // Which profiles' boards it can't use, so it asks rather than make a project that may be there.
   if (!isUnderTask(kind)) {

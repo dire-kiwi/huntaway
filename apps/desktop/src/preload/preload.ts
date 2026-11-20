@@ -7,7 +7,8 @@ import type { IpcRendererEvent } from "electron"
 // (RTCPeerConnection, which Chromium doesn't hold to their Content-Security-Policy), so that a page can't send data to a
 // STUN or TURN server of its choosing (HA-269). Taken away in each frame, including the srcdoc frames a page makes
 // itself, it can't be got back from another. The main process checks the sender's origin for the members that act on
-// the board (openWindow, updateShell). The six members are the old shell's, unchanged; `onServerProgress` is new (HE-44).
+// the board (openWindow, updateShell, paneDebugger). The six members are the old shell's, unchanged; `onServerProgress` is new
+// (HE-44), and `paneDebugger` (HE-62).
 
 /** What `updateShell` reports as it goes. */
 interface Progress {
@@ -19,12 +20,45 @@ interface Progress {
 
 const isResult = (value: unknown): value is { readonly version?: string; readonly error?: string } => typeof value === "object" && value !== null
 
+/**
+ * HE-62: the browser pane's <webview> (by its `getWebContentsId()`), given to the server to drive for the task's agent:
+ * `attach` takes its debugger, `send` sends a DevTools protocol command and answers `{result}` or `{error}`, `onEvent`
+ * gets its events (`onDetached` when the debugger is let go), `detach` lets it go. Only when the board's server runs on
+ * this machine (`huntaway:pane-local`): a remote server's board streams its tasks' browser instead.
+ */
+const paneDebugger = {
+  attach: (id: unknown): Promise<unknown> => ipcRenderer.invoke("huntaway:browser-debug", id),
+  send: (id: unknown, method: unknown, params: unknown): Promise<unknown> => ipcRenderer.invoke("huntaway:browser-send", id, method, params),
+  detach: (id: unknown) => ipcRenderer.send("huntaway:browser-undebug", id),
+  onEvent: (listener: (id: unknown, method: unknown, params: unknown) => void) => {
+    const relay = (_event: IpcRendererEvent, id: unknown, method: unknown, params: unknown) => {
+      if (typeof listener === "function") listener(id, method, params)
+    }
+    ipcRenderer.on("huntaway:browser-event", relay)
+    return () => {
+      ipcRenderer.removeListener("huntaway:browser-event", relay)
+    }
+  },
+  onDetached: (listener: (id: unknown) => void) => {
+    const relay = (_event: IpcRendererEvent, id: unknown) => {
+      if (typeof listener === "function") listener(id)
+    }
+    ipcRenderer.on("huntaway:browser-detached", relay)
+    return () => {
+      ipcRenderer.removeListener("huntaway:browser-detached", relay)
+    }
+  },
+}
+
 if (process.isMainFrame) {
+  const paneLocal = ipcRenderer.sendSync("huntaway:pane-local") === true
   contextBridge.exposeInMainWorld("huntawayDesktop", {
     /** The number on the dock or taskbar icon: the tasks that need attention. */
     setBadgeCount: (n: number) => ipcRenderer.send("huntaway:badge", n),
     /** The board may show web pages in a <webview> (the main process's will-attach-webview), for its browser pane (HA-275). */
     browserPane: true,
+    /** HE-62: the browser pane given to the server to drive (above), only when the board's server is on this machine. */
+    ...(paneLocal ? { paneDebugger } : {}),
     /** Opens page `path` of the board (`/profile/work`) in a new window of the app (HA-298). */
     openWindow: (path: unknown) => ipcRenderer.send("huntaway:open-window", String(path)),
     /** Brings the window to the front, as clicking a notification does. */

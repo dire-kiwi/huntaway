@@ -16,6 +16,8 @@ export interface McpRunSettings {
   readonly desktop: boolean
   /** HE-37: and with the spaces server (written only when it was). */
   readonly spaces?: boolean | undefined
+  /** HE-62: and with the browser server (written only when it was). */
+  readonly browser?: boolean | undefined
 }
 
 /** The process to start under ia-shim. */

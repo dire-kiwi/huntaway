@@ -13,6 +13,7 @@ export const GUIDE_PAGES = [
   { page: "server", title: "Running a server" },
   { page: "hosts", title: "Hosts" },
   { page: "spaces", title: "Spaces" },
+  { page: "browser", title: "A task's browser" },
   { page: "desktop", title: "The desktop app and releases" },
   { page: "switching", title: "Switching from the old server" },
   { page: "mobile", title: "Phones" },

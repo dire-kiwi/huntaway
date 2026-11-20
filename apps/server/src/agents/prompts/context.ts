@@ -66,6 +66,8 @@ export interface PromptContext {
   readonly desktopHost: string | null
   /** It has the `spaces` server: the host's name, whose Spaces they are (HE-37). */
   readonly spacesHost: string | null
+  /** It has the `browser` server, the task's own web browser (HE-62). */
+  readonly browserTools: boolean
   /** Its temp folder, its `$TMPDIR`. null until plan task 2.8 (`TaskTmp`). */
   readonly tmp: string | null
   /** For the assistant and its routines, its memory as its files say now, last. "" until plan task 6.7 (`Memory`). */

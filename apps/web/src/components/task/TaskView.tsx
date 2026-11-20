@@ -48,14 +48,16 @@ import { ReviewThreadView } from "./view/ReviewThreadView"
 import { useOpenTools } from "./terminalTools"
 // 6.10: the desktop view.
 import { DesktopButton, DesktopPane, useDesktopOn } from "./Desktop"
+// HE-62: the task's browser.
+import { BrowserButton, BrowserPane, useBrowserShare } from "./Browser"
 // 6.7: a routine's thread, which the board's snapshot leaves out.
 import { useSoughtTask } from "./view/useSoughtTask"
 // 6.6: a workflow's tabs and runs.
 import { isWorkflowTab, useWorkflowRuns, workflowRunning, workflowTab, workflowTabs } from "./Workflows"
 
 // Step 1 (docs/plan/09-frontend.md, "Step 1 as done for task/"): what the task view has that needs a later milestone is
-// left out here, each with a note: the browser pane (M6; the desktop view, 6.10, has a fixed half of the width until the
-// browser's splitter comes). Subprojects are a legacy branch, deleted. The assistant's brief, memory, routines and action log tabs, and finding a routine's thread,
+// left out here, each with a note: none of the browser pane any more (HE-62, which brought its splitter; the desktop view,
+// 6.10, still has a fixed half of the width). Subprojects are a legacy branch, deleted. The assistant's brief, memory, routines and action log tabs, and finding a routine's thread,
 // are 6.7's.
 
 /** The column beside the main area, where there's room: the key items, or beside the Details tab the rest of the details. */
@@ -210,6 +212,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // 6.10: the desktop view (HA-273), beside the main area, on a host whose agents may use its desktop.
   const [desktop, setDesktop] = useState(false)
   const desktopOn = useDesktopOn(task?.host_id)
+  // HE-62: the task's browser beside the main area, mounted from when it's first opened, so closing it keeps the desktop
+  // app's page; one of it and the desktop view at a time.
+  const [browser, setBrowser] = useState(false)
+  // The task whose pane stays mounted while closed: only one the user opened it on, never one viewed after.
+  const [keptFor, setKeptFor] = useState<string | null>(null)
+  const [share, splitter] = useBrowserShare()
   // 6.6: the task's workflow runs.
   const workflows = useWorkflowRuns(task)
   // The opening tab is picked when the task opens (or once it's loaded), not again as its status moves on.
@@ -312,10 +320,25 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     else if (project) navigate(mode === "page" ? href({ name: "board", projectId: project.id }) : boardTaskUrl(project.id, task.id))
   }
 
+  const paneKey = task ? `${task.host_id}:${task.id}` : null
+  const browserMounted = browser || (keptFor !== null && keptFor === paneKey)
+  const closeBrowser = () => {
+    setBrowser(false)
+    setKeptFor(paneKey)
+  }
+
   // 6.10: it needs the room.
   const toggleDesktop = () => {
     if (!desktop && mode === "panel") setPanelExpanded(true)
+    // Only a browser that was open stays mounted (closed) for the task: opening the desktop view mounts none.
+    if (!desktop && browser) closeBrowser()
     setDesktop(!desktop)
+  }
+  const toggleBrowser = () => {
+    if (!browser && mode === "panel") setPanelExpanded(true)
+    if (!browser) setDesktop(false)
+    setBrowser(!browser)
+    setKeptFor(paneKey)
   }
 
   // Errors show under the header, with the marks'.
@@ -414,6 +437,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           ))}
         </div>
       )}
+      <BrowserButton open={browser} onClick={toggleBrowser} />
       {desktopOn && <DesktopButton open={desktop} onClick={toggleDesktop} />}
       {!narrow && run}
     </>
@@ -492,8 +516,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
         )}
       </header>
       <div className="flex min-h-0 flex-1">
-        {/* Too narrow for both: the desktop takes the main area's place. */}
-        <main className={clsx("min-w-0 flex-1", desktop && !wide && "hidden")}>
+        {/* Too narrow for both: the desktop or the browser takes the main area's place. */}
+        <main className={clsx("min-w-0 flex-1", (desktop || browser) && !wide && "hidden")}>
           {mounted.includes("terminal") && (
             <div className={clsx("h-full", tab !== "terminal" && "hidden")}>
               <Suspense fallback={null}>
@@ -527,9 +551,24 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             <DesktopPane key={`${task.host_id}:${task.id}`} task={task} onClose={() => setDesktop(false)} />
           </div>
         )}
-        {/* A document, the changes' panels and the terminals get the room; so do the desktop, the memory and the brief. */}
+        {browserMounted && (
+          <>
+            {browser && wide && splitter}
+            {/* Closed, the desktop app's page is kept off-screen at a page's size rather than with display: none, so it
+                still draws for the agent (Electron's advice for a <webview>). */}
+            <div
+              className={clsx("min-w-0", browser ? (wide ? "shrink-0" : "flex-1") : "pointer-events-none fixed top-0 -left-[300vw] h-[800px] w-[1280px]")}
+              aria-hidden={!browser}
+              style={browser && wide ? { width: `${share * 100}%` } : undefined}
+            >
+              <BrowserPane key={`${task.host_id}:${task.id}`} task={task} visible={browser} onClose={closeBrowser} />
+            </div>
+          </>
+        )}
+        {/* A document, the changes' panels and the terminals get the room; so do the desktop, the browser, the memory and the brief. */}
         {wide &&
           !desktop &&
+          !browser &&
           !docShown &&
           shown !== "changes" &&
           shown !== "memory" &&

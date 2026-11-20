@@ -42,6 +42,8 @@ const order: ReadonlyArray<ReadonlyArray<string>> = [
   ["desktop"],
   // HE-35: Spaces, Linux desktops in Docker.
   ["spaces"],
+  // HE-62: each task's web browser, with its MCP server's tools.
+  ["browser"],
   ["update"],
   ["analytics"],
   // The board's subscription, which reads every area (moved out of lifecycle/ in 9.1, so a read-only server serves it).

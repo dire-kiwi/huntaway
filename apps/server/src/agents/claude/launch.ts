@@ -21,6 +21,7 @@ import {
   SPACES_SERVER,
   spacesAllowed,
   spacesDisallowed,
+  BROWSER_SERVER,
   usesServer,
 } from "./access.ts"
 import type { RunTools } from "./access.ts"
@@ -44,6 +45,8 @@ export const BOARD_TIMEOUT_MS = 86_400_000
 export const GH_TIMEOUT_MS = 900_000
 /** A desktop call's own limit, but for its permission prompt, which Claude Code asks before it. */
 export const DESKTOP_TIMEOUT_MS = 300_000
+/** HE-62: a browser call: the first one on a host downloads Chrome (about 120 MB). */
+export const BROWSER_TIMEOUT_MS = 900_000
 /** A Spaces call: making the first Space on a host downloads and builds its image, which can take many minutes. */
 export const SPACES_TIMEOUT_MS = 3_600_000
 
@@ -73,6 +76,8 @@ export interface ServedServers {
   readonly desktop: boolean
   /** HE-37: Spaces are on for this host's agents and it has Docker. None when missing. */
   readonly spaces?: boolean | undefined
+  /** HE-62: the task's own web browser (Chrome can run on this host). None when missing. */
+  readonly browser?: boolean | undefined
   /** HE-34: the plugins' servers (docs/plan/15-plugins.md), by their plugins' ids. None when missing. */
   readonly plugins?: ReadonlyArray<PluginServer> | undefined
 }
@@ -185,6 +190,7 @@ export const boardServers = (input: Pick<ClaudeLaunchInput, "mcp" | "tools">, se
   if (servers.gh) out[GH_SERVER] = { type: "http", url: url(GH_SERVER), headers, timeout: GH_TIMEOUT_MS }
   if (servers.desktop) out[DESKTOP_SERVER] = { type: "http", url: url(DESKTOP_SERVER), headers, timeout: DESKTOP_TIMEOUT_MS }
   if (servers.spaces === true) out[SPACES_SERVER] = { type: "http", url: url(SPACES_SERVER), headers, timeout: SPACES_TIMEOUT_MS }
+  if (servers.browser === true) out[BROWSER_SERVER] = { type: "http", url: url(BROWSER_SERVER), headers, timeout: BROWSER_TIMEOUT_MS }
   // HE-34: the plugins' (already narrowed to the run's, `pluginServers`).
   for (const p of servers.plugins ?? []) out[p.name] = { type: "http", url: url(p.name), headers }
   // The project's own (which may replace any but the board's).
@@ -192,8 +198,12 @@ export const boardServers = (input: Pick<ClaudeLaunchInput, "mcp" | "tools">, se
   return out
 }
 
-/** `mcp-run.json`, with `spaces` only for a run that has the server (so a run without is written as before). */
-export const mcpRun = (settings: McpRunSettings, servers: ServedServers): McpRunSettings => (servers.spaces === true ? { ...settings, spaces: true } : settings)
+/** `mcp-run.json`, with `spaces` and `browser` only for a run that has the server (so a run without is written as before). */
+export const mcpRun = (settings: McpRunSettings, servers: ServedServers): McpRunSettings => ({
+  ...settings,
+  ...(servers.spaces === true ? { spaces: true } : {}),
+  ...(servers.browser === true ? { browser: true } : {}),
+})
 
 /** What to run for a Claude Code run, and what goes in its folder. */
 export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec> =>
@@ -212,6 +222,7 @@ export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec
       gh: usesServer(tools, GH_SERVER, input.served.gh),
       desktop: usesServer(tools, DESKTOP_SERVER, input.served.desktop),
       spaces: usesServer(tools, SPACES_SERVER, input.served.spaces === true),
+      browser: usesServer(tools, BROWSER_SERVER, input.served.browser === true),
       plugins: pluginServers(tools, input.served),
     }
     const args = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
@@ -239,6 +250,8 @@ export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec
     args.push("--allowedTools", ...boardToolsAllowed(input.permissionMode, toolNames(input.mcp.manifest)))
     if (servers.desktop) args.push(...desktopAllowed())
     if (servers.spaces === true) args.push(...spacesAllowed())
+    // HE-62: the task's own browser, a sandboxed web page, asks nothing.
+    if (servers.browser === true) args.push(`mcp__${BROWSER_SERVER}`)
     for (const p of servers.plugins ?? []) if (p.preApproved) args.push(`mcp__${p.name}`)
     const ownGh = Object.hasOwn(tools.mcp_servers, GH_SERVER)
     if (!ownGh) args.push(...ghAllowed(task).map(ghTool))

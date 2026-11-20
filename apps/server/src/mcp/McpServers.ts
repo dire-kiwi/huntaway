@@ -57,12 +57,22 @@ export const SPACES_INSTRUCTIONS =
   "To sign in to a website in a Space, `space_sign_in` types a password the user saved on the board, once they approve; " +
   "never ask the user for a password."
 
+/** HE-62: the browser server's. */
+export const BROWSER_INSTRUCTIONS =
+  "`browser` is your task's own web browser, which the user sees beside your thread on the board (streamed, or as a pane " +
+  "of their desktop app). It runs on the board's host, so `localhost` and its ports are the ones your shell's servers " +
+  "listen on. `navigate` loads a page (a port like 5173 opens http://localhost:5173) and waits for it; `snapshot` reads " +
+  "the page as an outline with refs (e12); `click`, `type`, `press`, `hover` and `scroll` act on refs; `evaluate` runs " +
+  "JavaScript in the page; `screenshot` shows it. Take a new snapshot after the page changes. Use it to check web work " +
+  "you make, or to read a page the user points you to."
+
 /** What each server says it is in `initialize` (`serverInfo.name`, `instructions`). gh's name the run's account (`ghInstructions`). */
 export const SERVER_INFO: { readonly [S in BuiltInServer]: { readonly name: string; readonly instructions: string | null } } = {
   huntaway: { name: "huntaway", instructions: INSTRUCTIONS },
   gh: { name: "huntaway-gh", instructions: GH_INSTRUCTIONS },
   desktop: { name: "huntaway-desktop", instructions: DESKTOP_INSTRUCTIONS },
   spaces: { name: "huntaway-spaces", instructions: SPACES_INSTRUCTIONS },
+  browser: { name: "huntaway-browser", instructions: BROWSER_INSTRUCTIONS },
 }
 
 /** A tool with its handler, over JSON: what `ToolCalls` runs. */
@@ -190,7 +200,13 @@ export class McpServers extends Context.Service<McpServers, McpServersShape>()("
     McpServers,
     Effect.gen(function* () {
       const config = yield* ServerConfig
-      const registry = yield* Ref.make<Readonly<Record<ServerName, ReadonlyArray<RegisteredTool>>>>({ huntaway: [], gh: [], desktop: [], spaces: [] })
+      const registry = yield* Ref.make<Readonly<Record<ServerName, ReadonlyArray<RegisteredTool>>>>({
+        huntaway: [],
+        gh: [],
+        desktop: [],
+        spaces: [],
+        browser: [],
+      })
       const definitions = yield* Ref.make<ReadonlyMap<ServerName, DefinedServer>>(new Map())
 
       const gates = yield* Ref.make<Readonly<Record<ServerName, Effect.Effect<boolean>>>>({})
