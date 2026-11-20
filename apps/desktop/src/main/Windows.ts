@@ -23,6 +23,7 @@ import {
   isBrowsable,
   isWebUrl,
   originOf,
+  paneIsLocal,
   relaunchHeading,
   RETRY_URL,
   SKIP_BACKUP_URL,
@@ -378,7 +379,7 @@ export const runWindows = Effect.gen(function* () {
   })
   ipcMain.handle("huntaway:update-shell", (event) => runPromise(updateOwnPackage(event)))
   // HE-62: the browser pane's <webview>, given to the server to drive for the task's agent.
-  const unregisterPane = registerPaneDebugger(origin, senderOrigin, runPromise)
+  const unregisterPane = registerPaneDebugger(origin, senderOrigin, runPromise, paneIsLocal(desktop.file))
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
       unregisterPane()

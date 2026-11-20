@@ -1455,7 +1455,9 @@ take the same code, with no Playwright in the server.
   Chrome start has an id, and a page of an earlier one counts as gone. A headless page nobody used or watched for 30
   minutes closes (a loop every minute, `reap`), and Chrome closes when no page is left: decided under the lock a page
   being opened holds until it's in `tabs` (Chrome's download and start included), so a Chrome just started for a page
-  is never closed as idle. A headless page's dialogs are accepted, and each is told to the agent once (`takeDialog`;
+  is never closed as idle. A window a headless page opens (a `target="_blank"` link, `window.open`) is closed once it
+  has a web address, which then loads in the task's page, as the desktop pane does (`popups`, over
+  `Target.setDiscoverTargets`). A headless page's dialogs are accepted, and each is told to the agent once (`takeDialog`;
   forgotten on a new page). Profile: `<data>/browser/profile`, cookies shared by every task.
 - **Tickets and the socket**: `browser.open {task_id}` (`operate`) gives a viewer's ticket and `browser.pane {task_id}`
   (`terminal`, as the host's desktop view: only the board's own app hands over a pane) the desktop pane's (single use, a

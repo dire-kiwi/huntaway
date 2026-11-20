@@ -78,6 +78,8 @@ export interface BrowsersShape {
   readonly close: (task: TaskId) => Effect.Effect<void>
   /** The dialog the task's headless page showed since this was last asked, once: the agent is told of each one once. */
   readonly takeDialog: (task: TaskId) => Effect.Effect<string | null>
+  /** How many pages the headless Chrome has open (none when it isn't running): the tasks' pages, and nothing else. */
+  readonly openPages: Effect.Effect<number>
   /** Close the headless pages nobody has used or watched for 30 minutes, and Chrome when none is left (a loop runs it every minute). */
   readonly reap: Effect.Effect<void>
   /** The download of the headless Chrome going, if one is. */
@@ -229,9 +231,52 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           }
           const r: Running = { id: yield* Ref.updateAndGet(chromeIds, (n) => n + 1), chrome: started, scope }
           yield* Ref.set(running, r)
+          // A task's page that opens a window (a `target="_blank"` link, `window.open`) gets its address instead, as the
+          // desktop pane does: the window would otherwise run unseen until Chrome closes.
+          yield* Effect.andThen(started.cdp.send("Target.setDiscoverTargets", { discover: true }).pipe(Effect.ignore), popups(r)).pipe(Effect.forkIn(scope))
           return r
         }),
       )
+
+      /**
+       * Windows a task's headless page opens: each is closed once it has a web address (straight away, or when it gets
+       * one), which then loads in the task's page. One that never gets one (a script's blank window) is closed with Chrome.
+       */
+      const popups = (r: Running) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const sub = yield* r.chrome.cdp.subscribe
+            /** The new windows still blank, by their target id: the task's page that opened them. */
+            const waiting = new Map<string, string>()
+            const take = (targetId: string, opener: string, url: string) =>
+              Effect.gen(function* () {
+                const to = browserUrl(url)
+                if (to === null) {
+                  waiting.set(targetId, opener)
+                  return
+                }
+                waiting.delete(targetId)
+                yield* r.chrome.cdp.send("Target.closeTarget", { targetId }).pipe(Effect.ignore)
+                const tab = [...(yield* Ref.get(tabs)).entries()].find(([, t]) => t.headless?.targetId === opener)
+                if (tab?.[1].headless != null) yield* navigate(tab[1].headless.page, to).pipe(Effect.ignore, Effect.forkIn(r.scope))
+              })
+            return yield* PubSub.take(sub).pipe(
+              Effect.flatMap((e) => {
+                if (e.method === "Target.targetDestroyed") {
+                  waiting.delete(str(e.params, "targetId"))
+                  return Effect.void
+                }
+                const info = isRecord(e.params["targetInfo"]) ? e.params["targetInfo"] : undefined
+                if (info === undefined || str(info, "type") !== "page") return Effect.void
+                const id = str(info, "targetId")
+                if (e.method === "Target.targetCreated" && str(info, "openerId") !== "") return take(id, str(info, "openerId"), str(info, "url"))
+                const opener = waiting.get(id)
+                return e.method === "Target.targetInfoChanged" && opener !== undefined ? take(id, opener, str(info, "url")) : Effect.void
+              }),
+              Effect.forever,
+            )
+          }),
+        )
 
       /** Keep `info` up to date from `page`'s events; a headless page's dialogs are accepted, and remembered. */
       const track = (task: TaskId, page: CdpPage, info: SubscriptionRef.SubscriptionRef<BrowserPage>, headless: boolean) =>
@@ -522,6 +567,14 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
             return t === undefined || t.dialog === null ? [null, m] : [t.dialog, new Map([...m, [task, { ...t, dialog: null }]])]
           }),
         reap,
+        openPages: Effect.gen(function* () {
+          const r = yield* Ref.get(running)
+          if (r === null) return 0
+          const got = yield* r.chrome.cdp.send("Target.getTargets").pipe(Effect.orElseSucceed((): CdpResult => ({})))
+          const infos: ReadonlyArray<unknown> = Array.isArray(got["targetInfos"]) ? got["targetInfos"] : []
+          // Chrome's own first page (about:blank, from its command line) isn't a task's.
+          return infos.filter((t) => isRecord(t) && str(t, "type") === "page" && str(t, "url") !== BLANK).length
+        }),
         installing: install.installing,
         ticket,
         serve,

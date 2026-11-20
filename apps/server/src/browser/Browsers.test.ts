@@ -26,6 +26,7 @@ const PAGES: Readonly<Record<string, string>> = {
 <button style="position:absolute;left:10px;top:200px;width:200px;height:60px" onclick="document.title = 'Hello ' + document.getElementById('name').value">Greet</button>
 <a href="/second">Next page</a>`,
   "/second": "<!doctype html><title>Second</title><p>second page</p>",
+  "/blank": `<!doctype html><title>Opener</title><a href="/second" target="_blank">New window</a>`,
   "/alert": `<!doctype html><title>Alerts</title><button onclick="alert('hi')">Alert</button><input id="field">`,
 }
 
@@ -403,6 +404,33 @@ describe.skipIf(systemChrome === null)("a task's browser", () => {
           assert.deepStrictEqual(yield* nextJson(b, "viewport"), { type: "viewport", width: 500, height: 600 })
           yield* a.hangUp
           yield* b.hangUp
+        }),
+      ),
+    TIMEOUT,
+  )
+
+  it.live(
+    "a link that opens a window opens in the task's page, and no other page is left",
+    () =>
+      withBrowser((url) =>
+        Effect.gen(function* () {
+          const browsers = yield* Browsers
+          const agent = yield* fakeAgent()
+          const task = agent.run.task_id
+          yield* call(agent, "navigate", { url: `${url}/blank` })
+          const sock = yield* fakeSocket
+          yield* browsers
+            .serve(yield* browsers.ticket(task, "view"), { width: 640, height: 480, url: null }, Effect.succeed(sock.socket))
+            .pipe(Effect.scoped, Effect.forkChild)
+          yield* nextJson(sock, "viewport")
+          const outline = (yield* call(agent, "snapshot", {})).text
+          yield* call(agent, "click", { ref: refOf(outline, 'link "New window"') })
+          for (;;) {
+            const p = yield* nextJson(sock, "page")
+            if (p["url"] === `${url}/second` && p["loading"] === false) break
+          }
+          assert.strictEqual(yield* browsers.openPages, 1)
+          yield* sock.hangUp
         }),
       ),
     TIMEOUT,

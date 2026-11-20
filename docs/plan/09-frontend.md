@@ -347,8 +347,10 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 
 - `task/Browser.tsx`: `BrowserButton` (a globe beside the tabs, on every task) and `BrowserPane`, beside the main area
   with the old pane's splitter (`BrowserBar.tsx`'s `useBrowserShare`, `ia.browserShare` in `state/prefs.ts`; in the main
-  area's place when narrow). In the desktop app, for a task on the app's own host (`localHostId`), it is
-  `BrowserWebview`; everywhere else `BrowserStream`. `BrowserBar` is the address bar both have (`browserUrl` from
+  area's place when narrow). In the desktop app, when the board's server runs on the app's own machine
+  (desktop.json has no `serverUrl`: the preload exposes `paneDebugger` only then, `huntaway:pane-local`) and for a task
+  on that server's host (`localHostId`), it is `BrowserWebview`; everywhere else `BrowserStream` (a remote server's
+  tasks' localhost is that machine's, and its agents mustn't reach this one's network). `BrowserBar` is the address bar both have (`browserUrl` from
   `@huntaway/shared`, which the agent's `navigate` uses too).
 - `BrowserWebview.tsx`: the old pane's <webview> (`persist:huntaway-browser`, popups in the pane, DevTools, open in the
   system's browser, the last address in `ia.browser:<host>:<task>`), which an empty pane starts at the agent's page
@@ -366,7 +368,8 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   sandbox) is final, with Retry (a new stream); after, it's a dismissable note. A socket the server closes (the page went) is opened again
   with a new ticket.
 - The desktop shell: `main/paneDebugger.ts` (`huntaway:browser-debug`, `-send`, `-undebug`; only the board's own frame,
-  only for a <webview> it embeds; events relayed as `huntaway:browser-event`), and the preload's `paneDebugger`.
+  only for a <webview> it embeds, and refused in remote mode; events relayed as `huntaway:browser-event`), and the
+  preload's `paneDebugger`, given to the board only when `huntaway:pane-local` (`paneIsLocal`) says its server is here.
 - Looked at in a browser (a test server on this machine's Chromium, `ui-check.mjs`): the pane opens beside the thread,
   an address typed loads, clicks and keys reach the page, a link and Back work, a second task's page streams beside it,
   and the phone layout puts the pane in the main area's place. The desktop app's <webview> path has its server side

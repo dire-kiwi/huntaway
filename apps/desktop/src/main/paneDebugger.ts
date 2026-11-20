@@ -13,11 +13,15 @@ export type SendAnswer = { readonly result: unknown } | { readonly error: string
 
 const CHANNELS = ["huntaway:browser-debug", "huntaway:browser-send"] as const
 
-/** Register the IPC; the function it gives unregisters it. `boardOrigin` is the board's origin, null before it has one. */
+/**
+ * Register the IPC; the function it gives unregisters it. `boardOrigin` is the board's origin, null before it has one.
+ * `local` (`paneIsLocal`): the preload asks it (`huntaway:pane-local`), and gives the board no pane to hand over without.
+ */
 export const registerPaneDebugger = (
   boardOrigin: () => string | null,
   senderOrigin: (event: IpcMainEvent | IpcMainInvokeEvent) => string | null,
   runPromise: <A>(effect: Effect.Effect<A>) => Promise<A>,
+  local: boolean,
 ): (() => void) => {
   /** The guests being relayed, with the board page they relay to. */
   const relayed = new Map<number, WebContents>()
@@ -37,7 +41,12 @@ export const registerPaneDebugger = (
     if (guest !== undefined && !guest.isDestroyed() && guest.debugger.isAttached()) guest.debugger.detach()
   }
 
+  ipcMain.on("huntaway:pane-local", (event) => {
+    event.returnValue = local
+  })
+
   ipcMain.handle("huntaway:browser-debug", (event, id: unknown) => {
+    if (!local) return { error: "The board's server is on another machine: its tasks' browser is streamed from there." }
     const guest = paneOf(event, id)
     if (guest === null) return { error: "That isn't the board's browser pane." }
     if (relayed.has(guest.id)) return { result: true }
@@ -84,6 +93,7 @@ export const registerPaneDebugger = (
   return () => {
     for (const channel of CHANNELS) ipcMain.removeHandler(channel)
     ipcMain.removeAllListeners("huntaway:browser-undebug")
+    ipcMain.removeAllListeners("huntaway:pane-local")
     for (const id of Array.from(relayed.keys())) detach(id)
   }
 }

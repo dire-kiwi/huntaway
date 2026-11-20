@@ -13,7 +13,7 @@ import { errorPage } from "./errorPage.ts"
 import { refused } from "./health.ts"
 import { backupFailure, readyToken } from "./ServerProcess.ts"
 import { frameStamp, shellStamp } from "./stamp.ts"
-import { badgeCount, boardUrlPath, isBrowsable, isWebUrl, relaunchHeading, RETRY_URL, SKIP_BACKUP_URL, windowsToReopen } from "./urls.ts"
+import { badgeCount, boardUrlPath, isBrowsable, isWebUrl, paneIsLocal, relaunchHeading, RETRY_URL, SKIP_BACKUP_URL, windowsToReopen } from "./urls.ts"
 
 // The main process's smaller parts: state.json as both writers keep it, the stamps, what the server prints, the
 // windows' address rules and the error page.
@@ -124,6 +124,9 @@ describe("the windows' addresses", () => {
     for (const url of ["file:///etc/passwd", "vscode://x", "javascript:alert(1)", "not a url"]) assert.isFalse(isWebUrl(url))
     assert.isFalse(isBrowsable("mailto:a@b.invalid"))
     assert.isTrue(isBrowsable("https://x.invalid/"))
+    // HE-62: the browser pane is handed to the board's server only when that server is on this machine.
+    assert.isTrue(paneIsLocal({ serverUrl: null }))
+    assert.isFalse(paneIsLocal({ serverUrl: "https://board.example.invalid/" }))
   })
 
   it("a relaunch reopens the board pages it saved, else one window on the home page", () => {

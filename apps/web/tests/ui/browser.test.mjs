@@ -107,3 +107,21 @@ test("in the desktop app, an empty pane takes the page the task's browser opens 
     }
   })
 })
+
+test("in the desktop app on a server on another machine, the browser is streamed, not the app's own", async () => {
+  const task = await server.rpc("tasks.create", { task: { project_id: board.project.id, title: "Remote board" } })
+  await withBrowser(server, { allowErrors: [/browser/i] }, async (ui) => {
+    // The preload gives no pane to hand over when desktop.json's serverUrl is another machine's.
+    await ui.context.addInitScript(() => {
+      window.huntawayDesktop = { browserPane: true }
+    })
+    await ui.run([
+      `goto /p/${board.project.id}?task=${task.id}`,
+      "wait Remote board",
+      `click [title="The task's browser, beside the thread"]`,
+      "wait [aria-label=Address]",
+    ])
+    assert.equal(await ui.page.locator("canvas").count(), 1)
+    assert.equal(await ui.page.locator("webview").count(), 0)
+  })
+})

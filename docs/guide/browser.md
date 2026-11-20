@@ -9,11 +9,12 @@ its terminal opens with just its port. Type `5173` into the address bar for `htt
 
 ## Where it runs
 
-- **In the desktop app**, for a task on the app's own host, the browser is the app's own: a real browser pane, with its
+- **In the desktop app**, when its board's server runs on the same computer, for a task on that host, the browser is the app's own: a real browser pane, with its
   DevTools (the bug button), that the agent drives too while the pane is there. The dot in the address bar is green
   while the agent is connected to it. Closing the pane keeps its page; closing the task gives the agent's browser back
   to the host.
-- **Everywhere else** (a browser tab, the phone app, a task on another host), it is a headless Chrome on the host,
+- **Everywhere else** (a browser tab, the phone app, a task on another host, or the desktop app showing a server on
+  another computer), it is a headless Chrome on the host,
   streamed to you as pictures. Click, scroll and type in it as in any page; paste with Ctrl+V or Cmd+V. The agent keeps
   using it when nobody is watching.
 

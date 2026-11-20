@@ -47,3 +47,10 @@ export const badgeCount = (n: unknown): number => Math.max(0, Math.floor(Number(
 
 /** What the browser pane's pages may have without asking: copying to the clipboard and going full screen. */
 export const BROWSER_PERMISSIONS: ReadonlySet<string> = new Set(["clipboard-sanitized-write", "fullscreen"])
+
+/**
+ * Whether the board's server runs on this machine (desktop.json has no `serverUrl`): only then is a pane on this
+ * machine the task's browser. A remote server's tasks' localhost is that machine's, and its agents mustn't reach this
+ * one's network, so its board streams the browser instead.
+ */
+export const paneIsLocal = (file: { readonly serverUrl: string | null }): boolean => file.serverUrl === null
