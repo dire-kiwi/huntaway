@@ -10,7 +10,7 @@ import { writeSync } from "node:fs"
 // `HUNTAWAY_MCP_HEADERS` (a JSON object: the run's bearer secret) and the `Mcp-Session-Id` the server gave, if it gave
 // one; each JSON-RPC message of the answer (a JSON body, or the `data` of a server-sent event stream: a call's progress
 // notifications and its result; events without data, the priming event and keepalives, are skipped) is written to its
-// stdout, one to a line. A notification's 202 writes nothing. Messages are sent as they come, each on its own request,
+// stdout, one to a line. A notification's 202 writes nothing. Messages are sent as they come, each on its own request (a batch's too),
 // so a long call (the board's `wait`) doesn't hold up the others. A call whose event stream breaks before its answer (the
 // board restarting) is asked for again with a GET naming the last event's id (`Last-Event-ID`), as Claude Code and Codex
 // do, every `retry` milliseconds the stream said, up to 120 times. A request the board couldn't answer is answered with a
@@ -145,10 +145,10 @@ const program = Effect.gen(function* () {
     })
 
   /** One message from the agent, sent to the board and its answer delivered. */
-  const forward = (line: string) =>
+  const forward = (message: unknown) =>
     Effect.gen(function* () {
-      const message = Option.getOrUndefined(parse(line))
-      if (!isRecord(message)) return yield* warn(`skipping a line that isn't a JSON-RPC message: ${line.slice(0, 200)}`)
+      if (!isRecord(message)) return yield* warn(`skipping a line that isn't a JSON-RPC message: ${text(message).slice(0, 200)}`)
+      const line = text(message)
       // Only a request (an id and a method) is answered.
       const id = "method" in message && message["id"] !== undefined && message["id"] !== null ? message["id"] : undefined
       const request = yield* withHeaders(
@@ -179,7 +179,11 @@ const program = Effect.gen(function* () {
     Stream.decodeText(),
     Stream.splitLines,
     Stream.filter((l) => l.trim() !== ""),
-    Stream.runForEach((line) => Effect.forkScoped(forward(line))),
+    // A batch's messages are sent each on its own, as the board's server takes no batches.
+    Stream.runForEach((line) => {
+      const v = Option.getOrUndefined(parse(line))
+      return Effect.forEach(Array.isArray(v) ? v : [v ?? line], (m) => Effect.forkScoped(forward(m)), { concurrency: 1, discard: true })
+    }),
     Effect.ignore,
   )
 }).pipe(Effect.scoped)

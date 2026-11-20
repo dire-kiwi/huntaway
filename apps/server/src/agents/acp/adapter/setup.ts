@@ -38,7 +38,14 @@ export const refuse = (agent: AcpAgent, m: AgentMessage & { readonly _tag: "Requ
     : agent.respondError(m.id, METHOD_NOT_FOUND, `Method not supported by Huntaway: ${m.method}`)
 
 /** Request `method` and wait for its answer, refusing the agent's requests and dropping its notifications meanwhile. */
-export const call = (agent: AcpAgent, method: string, params: unknown): Effect.Effect<unknown, AcpError> =>
+/** How long the agent has to answer a request of the session's start; a session's resume or load (its history) longer. */
+export const ANSWER_WITHIN = "60 seconds"
+export const RESUME_WITHIN = "120 seconds"
+
+/** The code of the error a request that wasn't answered in time fails with (not a JSON-RPC code). */
+export const TIMED_OUT = -1
+
+export const call = (agent: AcpAgent, method: string, params: unknown, within: `${number} seconds` = ANSWER_WITHIN): Effect.Effect<unknown, AcpError> =>
   Effect.gen(function* () {
     const id = yield* agent.send(method, params)
     while (true) {
@@ -51,7 +58,15 @@ export const call = (agent: AcpAgent, method: string, params: unknown): Effect.E
       }
       if (m._tag === "Request") yield* refuse(agent, m)
     }
-  })
+  }).pipe(
+    Effect.timeoutOption(within),
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.fail(new AcpError({ method, code: TIMED_OUT, reason: `the agent didn't answer within ${within}` })),
+        onSome: Effect.succeed,
+      }),
+    ),
+  )
 
 /** An error as the adapter says it: `<method>: <reason>`. */
 export const errorText = (e: AcpError): string => (e.method === "" ? e.reason : `${e.method}: ${e.reason}`)
@@ -100,6 +115,29 @@ export const agentServers = (
   return { servers: out, warnings }
 }
 
+/**
+ * What takes the MCP servers' header values (the run's bearer secret) out of a text the adapter writes (the agent's
+ * errors and stderr say what they were given): each value, and the token after an `Authorization` scheme, as they are
+ * and as JSON writes them, is `[redacted]`. Values shorter than 8 characters are left: they're no secret.
+ */
+export const redactor = (servers: ReadonlyArray<AcpMcpServer>): ((text: string) => string) => {
+  const secrets = new Set<string>()
+  for (const s of servers) {
+    const values = "type" in s ? s.headers.map((h) => h.value) : s.env.map((e) => e.value)
+    for (const v of values) {
+      const token = /^\S+\s+(\S+)$/u.exec(v.trim())?.[1]
+      for (const x of [v, ...(token === undefined ? [] : [token])]) {
+        if (x.length < 8) continue
+        secrets.add(x)
+        secrets.add(jsonText(x).slice(1, -1))
+      }
+    }
+  }
+  // The longest first, so a value's token isn't taken out of it before the value.
+  const all = [...secrets].toSorted((a, b) => b.length - a.length)
+  return (text) => all.reduce((t, x) => t.split(x).join("[redacted]"), text)
+}
+
 /** The session the run goes on in: its id, what the agent said of it, and whether it's new. */
 export interface Opened {
   readonly sessionId: string
@@ -130,7 +168,7 @@ export const openSession = (agent: AcpAgent, init: InitializeResponse, spec: Acp
       warnings.push(warning("This agent can't continue an earlier session, so the conversation starts again."))
       return yield* fresh
     }
-    const continued = yield* Effect.result(call(agent, method, { sessionId: id, cwd: spec.cwd, mcpServers: servers }))
+    const continued = yield* Effect.result(call(agent, method, { sessionId: id, cwd: spec.cwd, mcpServers: servers }, RESUME_WITHIN))
     if (continued._tag === "Failure") {
       if (continued.failure.code === AUTH_REQUIRED) return yield* signIn(spec.program)
       warnings.push(warning(`The agent couldn't continue the session (${errorText(continued.failure)}), so the conversation starts again.`))

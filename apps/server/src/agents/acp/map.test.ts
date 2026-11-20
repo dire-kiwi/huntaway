@@ -3,13 +3,15 @@ import { applyEvents, initialState as threadState, TaskId, Timestamp } from "@hu
 import type { Item, SavedEvent, Snapshot, ToolCall } from "@huntaway/contracts"
 import { Option, Result } from "effect"
 import { jsonText } from "../claude/tools.ts"
+import { field } from "../codex/items.ts"
 import { decodeLine } from "../codex/lines.ts"
 import type { CodexLine } from "../codex/lines.ts"
 import { classify } from "../codex/requests.ts"
 import { emptyState, numbered, translate } from "../codex/translate.ts"
 import type { CodexEffect, CodexState } from "../codex/translate.ts"
 import { unifiedDiff } from "./diff.ts"
-import { answerPermission, askPermission, endTurn, initialState, modelLine, outcomeFor, startTurn, threadStarted, turnTokens, update } from "./map.ts"
+import { answerPermission, askPermission, endTurn, initialState, modelLine, outcomeFor, settle, startTurn, threadStarted, turnTokens, update } from "./map.ts"
+import { commandLine, commandWords } from "./spec.ts"
 import type { AcpState, Line, Pending } from "./map.ts"
 import { decodePermission, sessionUpdate } from "./protocol.ts"
 import { currentModel, effortChoice, modeChoice, modelChoice, modelList } from "./session.ts"
@@ -331,6 +333,73 @@ describe("ACP to Codex lines", () => {
   it("tokens: an input with the cached tokens in it is left as it is", () => {
     assert.strictEqual(turnTokens({ inputTokens: 100, cachedReadTokens: 30, outputTokens: 20, totalTokens: 120 }).inputTokens, 100)
     assert.strictEqual(turnTokens({ inputTokens: 100, cachedReadTokens: 30, outputTokens: 20, totalTokens: 150 }).inputTokens, 130)
+  })
+
+  it("Antigravity's MCP calls: the server, tool and arguments its rawInput wraps; a board tool its title names", () => {
+    const r = new Run()
+    r.turn()
+    // As Antigravity asks about one: `Run <tool>?`, the call wrapped in rawInput.
+    const wait = {
+      toolCallId: "w1",
+      title: "Run wait?",
+      kind: "other",
+      rawInput: { server: "huntaway", tool: "wait", arguments: { seconds: 5 } },
+      _meta: { is_mcp_tool_call: true },
+    }
+    r.acp({ sessionUpdate: "tool_call", ...wait, status: "pending" })
+    r.ask(1, { toolCall: { toolCallId: "w1" }, options: OPTIONS })
+    // A board tool on a server it doesn't name; and a tool of a server it doesn't name that isn't the board's.
+    r.acp({ sessionUpdate: "tool_call", toolCallId: "l1", title: "Running list_projects", kind: "other", rawInput: {}, _meta: { is_mcp_tool_call: true } })
+    r.acp({ sessionUpdate: "tool_call", toolCallId: "o1", title: "Running lookup", kind: "other", rawInput: { q: "x" }, _meta: { is_mcp_tool_call: true } })
+    r.acp({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "w1",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: "waited" } }],
+    })
+    r.step(endTurn(r.state, { _tag: "Stopped", stopReason: "end_turn", usage: null }))
+    const calls = r.items.flatMap((i) => (i.type === "tool_call" ? [[i.server, i.name, i.input]] : []))
+    assert.deepStrictEqual(calls, [
+      ["huntaway", "wait", { seconds: 5 }],
+      ["huntaway", "list_projects", {}],
+      ["mcp", "lookup", { q: "x" }],
+    ])
+    // The permission is asked as the board's tool's, with the call's own arguments.
+    const asked = r.requests()[0]?.request
+    assert.deepStrictEqual(
+      [asked?.method, field(asked?.params, "tool"), field(asked?.params, "input")],
+      ["acp/requestPermission", "mcp__huntaway__wait", { seconds: 5 }],
+    )
+    // The board's `wait` isn't the agent working again; its other tools are.
+    assert.strictEqual(r.effects.filter((e) => e._tag === "Working").length, 2)
+  })
+
+  it("text the agent sends after its turn ended is completed when the next turn starts, or when the adapter is done", () => {
+    const r = new Run()
+    r.turn()
+    r.step(endTurn(r.state, { _tag: "Stopped", stopReason: "end_turn", usage: null }))
+    r.acp({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Late." } })
+    r.acp({ sessionUpdate: "tool_call", toolCallId: "c9", title: "ls", kind: "execute", status: "completed", rawOutput: { combinedOutput: "x" } })
+    r.turn()
+    r.acp({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Later." } })
+    r.step(endTurn(r.state, { _tag: "Stopped", stopReason: "end_turn", usage: null }))
+    r.acp({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Last." } })
+    r.step(settle(r.state))
+    const shown = r.items.flatMap((i) => (i.type === "assistant_message" ? [i.text] : i.type === "tool_call" ? [`${i.name}:${i.status}`] : []))
+    assert.deepStrictEqual(shown, ["Late.", "Bash:completed", "Later.", "Last."])
+  })
+})
+
+describe("command lines", () => {
+  it("are split at blanks, but not in quotes", () => {
+    assert.deepStrictEqual(commandLine(null), { program: "agy", args: ["acp"] })
+    assert.deepStrictEqual(commandLine("   "), { program: "agy", args: ["acp"] })
+    assert.deepStrictEqual(commandLine("agy  acp --x"), { program: "agy", args: ["acp", "--x"] })
+    assert.deepStrictEqual(commandLine(`"/opt/my tools/agy" acp --flag='a b' "say \\"hi\\"" it\\ s ''`), {
+      program: "/opt/my tools/agy",
+      args: ["acp", "--flag=a b", 'say "hi"', "it s", ""],
+    })
+    assert.deepStrictEqual(commandWords("a 'b \\ c"), ["a", "b \\ c"])
   })
 })
 

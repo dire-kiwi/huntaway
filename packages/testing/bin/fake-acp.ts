@@ -29,6 +29,8 @@
 //   fake-think                an `agent_thought_chunk` before the reply
 //   fake-usage                a `usage_update` (used 1234 of 100000) and the prompt's `usage` (1000 in, 200 out)
 //   fake-until-interrupted    the turn goes on until `session/cancel`
+//   fake-child                a child process (`sleep 600`, its pid logged as {"child": pid}) that runs until it's killed
+//   fake-crash                a permission asked (of a command), then it exits 5 without waiting for the answer
 //
 // Knobs (environment):
 //   FAKE_ACP_LOG          appends a JSON line for its start (args, cwd, BROWSER) and each message it's sent
@@ -38,6 +40,10 @@
 //   FAKE_ACP_SIGNED_OUT   "1": `session/new` (and resume, load) is refused with -32000 "Authentication required"
 //   FAKE_ACP_NO_RESUME    "1": no `sessionCapabilities.resume` (a session is continued with `session/load`)
 //   FAKE_ACP_NO_LOAD      "1": no `loadSession` either (with FAKE_ACP_NO_RESUME, a session can't be continued)
+//   FAKE_ACP_IGNORE_CANCEL "1": `session/cancel` is ignored (a turn going on until it's interrupted never ends)
+//   FAKE_ACP_CANCEL_ERROR "1": a cancelled prompt is answered with an error, not `{stopReason: "cancelled"}`
+//   FAKE_ACP_RESUME_ERROR "1": `session/resume` and `session/load` fail, the error naming the MCP servers given
+// It logs {"closed": true} when its stdin ends, before it exits.
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { appendFileSync } from "node:fs"
@@ -280,6 +286,16 @@ const runTurn = async (id: unknown, text: string) => {
       ],
     })
   }
+  if (text.includes("fake-child")) log({ child: spawn("sleep", ["600"], { stdio: "ignore" }).pid })
+  if (text.includes("fake-crash")) {
+    void ask("session/request_permission", {
+      sessionId: session,
+      toolCall: { toolCallId: `call_${hex()}`, title: "ls", kind: "execute" },
+      options: PERMISSIONS,
+    })
+    process.stdout.write("", () => process.exit(5))
+    return
+  }
   if (text.includes("fake-until-interrupted")) await new Promise<void>((done) => (t.cancelled ? done() : t.wake.push(done)))
   if (!t.cancelled) {
     if (text.includes("fake-think")) update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Thinking it over." } })
@@ -289,6 +305,7 @@ const runTurn = async (id: unknown, text: string) => {
   const usage = text.includes("fake-usage")
   if (usage && !t.cancelled) update({ sessionUpdate: "usage_update", used: 1234, size: 100000 })
   turn = null
+  if (t.cancelled && env.FAKE_ACP_CANCEL_ERROR === "1") return send({ id, error: { code: -32603, message: "the request was cancelled" } })
   send({
     id,
     result: { stopReason: t.cancelled ? "cancelled" : "end_turn", ...(usage ? { usage: { inputTokens: 1000, outputTokens: 200, totalTokens: 1200 } } : {}) },
@@ -313,7 +330,7 @@ const handle = (m: Json) => {
     return
   }
   if (id === undefined) {
-    if (method === "session/cancel" && turn !== null) {
+    if (method === "session/cancel" && turn !== null && env.FAKE_ACP_IGNORE_CANCEL !== "1") {
       turn.cancelled = true
       for (const wake of turn.wake.splice(0)) wake()
     }
@@ -343,6 +360,7 @@ const handle = (m: Json) => {
     case "session/resume":
     case "session/load":
       if (signedOut) return error(-32000, "Authentication required")
+      if (env.FAKE_ACP_RESUME_ERROR === "1") return error(-32603, `can't continue it with ${JSON.stringify(field(params, "mcpServers"))}`)
       session = str(field(params, "sessionId"))
       mcpServers = list(field(params, "mcpServers"))
       if (method === "session/load") {
@@ -380,4 +398,7 @@ rl.on("line", (line) => {
   handle(m)
 })
 // Its stdin ended: it exits, once what it wrote is out.
-rl.on("close", () => process.stdout.write("", () => process.exit(0)))
+rl.on("close", () => {
+  log({ closed: true })
+  process.stdout.write("", () => process.exit(0))
+})

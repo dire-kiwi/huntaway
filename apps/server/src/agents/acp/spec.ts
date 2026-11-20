@@ -78,13 +78,46 @@ export interface AcpSpec extends Schema.Schema.Type<typeof AcpSpec> {}
 export const DEFAULT_ACP_PROGRAM = "agy"
 export const DEFAULT_ACP_ARGS: ReadonlyArray<string> = ["acp"]
 
+/**
+ * A command line's words, as a shell splits a simple one (no shell runs it): at blanks, but not inside single or
+ * double quotes (which are taken off), and a backslash keeps the next character as it is (but in single quotes). An
+ * unclosed quote goes to the end.
+ */
+export const commandWords = (line: string): ReadonlyArray<string> => {
+  const out: Array<string> = []
+  let word = ""
+  let inWord = false
+  let quote: "'" | '"' | null = null
+  let escaped = false
+  for (const c of line) {
+    if (escaped) {
+      word += c
+      escaped = false
+    } else if (c === "\\" && quote !== "'") {
+      escaped = true
+      inWord = true
+    } else if (quote !== null) {
+      if (c === quote) quote = null
+      else word += c
+    } else if (c === "'" || c === '"') {
+      quote = c
+      inWord = true
+    } else if (/\s/u.test(c)) {
+      if (inWord) out.push(word)
+      word = ""
+      inWord = false
+    } else {
+      word += c
+      inWord = true
+    }
+  }
+  if (inWord) out.push(word)
+  return out
+}
+
 /** A config's command line (`AgentConfig.command`) as a program and its arguments; null or blank is the default. */
 export const commandLine = (command: string | null | undefined): { readonly program: string; readonly args: ReadonlyArray<string> } => {
-  const words = (command ?? "")
-    .trim()
-    .split(/\s+/)
-    .filter((w) => w !== "")
-  const [program, ...args] = words
+  const [program, ...args] = commandWords(command ?? "")
   return program === undefined ? { program: DEFAULT_ACP_PROGRAM, args: DEFAULT_ACP_ARGS } : { program, args }
 }
 

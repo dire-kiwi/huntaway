@@ -1,3 +1,4 @@
+import { BOARD_SERVER_NAMES, BOARD_TOOLS } from "@huntaway/shared"
 import { Predicate } from "effect"
 import { jsonText } from "../claude/tools.ts"
 import { MODEL_METHOD, toolUse } from "../codex/items.ts"
@@ -201,23 +202,44 @@ const changesOf = (f: ToolCallFields): ReadonlyArray<Change> => {
   })
 }
 
-/** An MCP server's tool call: its server and tool, if it is one. */
-const mcpOf = (f: ToolCallFields): { readonly server: string; readonly tool: string } | null => {
+/** The board's own MCP server, which a call of one of its tools is on when the agent doesn't say. */
+const BOARD = BOARD_SERVER_NAMES[0] ?? "huntaway"
+
+/** An MCP server's tool call. */
+interface Mcp {
+  readonly server: string
+  readonly tool: string
+  readonly args: Readonly<Record<string, unknown>>
+}
+
+/**
+ * An MCP server's tool call: its server, tool and arguments, if it is one. Antigravity marks them
+ * `_meta.is_mcp_tool_call`, titles them `Running <tool>` (`Run <tool>?` when it asks), and has
+ * `rawInput: {server, tool, arguments}`; other agents title them `mcp__<server>__<tool>`. A call of one of the board's
+ * tools on a server it doesn't name is the board's.
+ */
+const mcpOf = (f: ToolCallFields): Mcp | null => {
+  const raw = isRecord(f.rawInput) ? f.rawInput : undefined
   const title = (f.title ?? "")
     .trim()
     .replace(/^(?:Running|Run|Calling|Call)\s+/u, "")
     .replace(/\?$/u, "")
     .trim()
   const prefixed = /^mcp__(.+?)__(.+)$/u.exec(title)
-  if (prefixed !== null) return { server: prefixed[1] ?? "", tool: prefixed[2] ?? "" }
+  if (prefixed !== null) return { server: prefixed[1] ?? "", tool: prefixed[2] ?? "", args: raw ?? {} }
   const m = meta(f)
   if (!isRecord(m) || m["is_mcp_tool_call"] !== true) return null
-  const server = firstStr(m, ["server_name", "serverName", "mcp_server", "server"])
-  const tool = firstStr(m, ["tool_name", "toolName", "tool"])
+  const rawServer = firstStr(raw, ["server", "server_name", "serverName"])
+  const rawTool = firstStr(raw, ["tool", "tool_name", "toolName"])
+  // Antigravity's wrapper: the call's own arguments are inside it.
+  const wrapped = (rawServer !== null || rawTool !== null) && raw !== undefined
+  const inner = wrapped ? raw["arguments"] : undefined
+  const args = wrapped ? (isRecord(inner) ? inner : {}) : (raw ?? {})
   const split = /^([\w-]+)\s*[./:]\s*([\w-]+)$/u.exec(title)
-  if (server !== null) return { server, tool: tool ?? split?.[2] ?? title }
-  if (split !== null) return { server: split[1] ?? "", tool: split[2] ?? "" }
-  return { server: "mcp", tool: tool ?? (title === "" ? "tool" : title) }
+  const bare = /^([A-Za-z0-9_]+)(?::\s*\{.*)?$/su.exec(title)?.[1]
+  const tool = rawTool ?? firstStr(m, ["tool_name", "toolName", "tool"]) ?? split?.[2] ?? bare ?? (title === "" ? "tool" : title)
+  const server = rawServer ?? firstStr(m, ["server_name", "serverName", "mcp_server", "server"]) ?? split?.[1] ?? (BOARD_TOOLS.includes(tool) ? BOARD : "mcp")
+  return { server: server.trim(), tool: tool.trim(), args }
 }
 
 const typeOf = (f: ToolCallFields): ItemType => {
@@ -286,14 +308,14 @@ const codexItem = (tool: Tool): Readonly<Record<string, unknown>> => {
   }
   if (type === "fileChange") return { type, ...base, changes: changesOf(f) }
   if (type === "mcpToolCall") {
-    const mcp = mcpOf(f) ?? { server: "mcp", tool: "tool" }
+    const mcp = mcpOf(f) ?? { server: "mcp", tool: "tool", args: {} }
     const text = outputOf(f)
     return {
       type,
       ...base,
       server: mcp.server,
       tool: mcp.tool,
-      arguments: isRecord(f.rawInput) ? f.rawInput : {},
+      arguments: mcp.args,
       ...(finished
         ? status === "completed"
           ? { result: { content: [{ type: "text", text }] }, error: null }
@@ -353,10 +375,18 @@ const onTool = (state: AcpState, fields: ToolCallFields, force: boolean): Step =
 
 /** A turn starts (a `session/prompt` is sent). */
 export const startTurn = (state: AcpState): Step => {
-  const n = state.turns + 1
-  const s: AcpState = { ...state, turns: n, turnId: `${state.seed}:turn:${n}`, tools: new Map(), text: null }
-  return { state: s, lines: [{ method: "turn/started", params: { threadId: s.threadId, turn: { id: s.turnId, status: "inProgress", items: [] } } }] }
+  // Text the agent sent after the last turn's end is completed before this one starts.
+  const closed = closeText(state)
+  const n = closed.state.turns + 1
+  const s: AcpState = { ...closed.state, turns: n, turnId: `${state.seed}:turn:${n}`, tools: new Map(), text: null }
+  return {
+    state: s,
+    lines: [...closed.lines, { method: "turn/started", params: { threadId: s.threadId, turn: { id: s.turnId, status: "inProgress", items: [] } } }],
+  }
 }
+
+/** The text item being streamed, completed: when the adapter is done, for text the agent sent after its last turn ended. */
+export const settle = (state: AcpState): Step => closeText(state)
 
 const PLAN_STATUS: Readonly<Record<string, string>> = { pending: "pending", in_progress: "inProgress", completed: "completed" }
 

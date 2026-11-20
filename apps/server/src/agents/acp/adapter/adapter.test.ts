@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Option, Schema } from "effect"
 import { spawn } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
@@ -365,6 +365,118 @@ describe("acp-run", () => {
         const r = yield* drive({ fields: { program: "sh", args: ["-c", "read line; echo 'it broke' >&2; exit 4"] }, stdin: "Hello" })
         assert.strictEqual(r.code, 1)
         assert.include(r.err, "the agent exited (exit status: 4) before answering initialize:\nit broke")
+      }),
+    30_000,
+  )
+
+  it.live(
+    "an agent that dies mid-turn: its open request no longer wanted, the turn failed, then the run",
+    () =>
+      Effect.gen(function* () {
+        const r = yield* withBoard("fake-crash", () => undefined)
+        assert.strictEqual(r.code, 1)
+        allDecode(r.out)
+        assert.deepStrictEqual(
+          byMethod(r.out, "serverRequest/resolved").map((v) => at(v, "params", "requestId")),
+          [1],
+        )
+        assert.deepStrictEqual(turnStatuses(r.out), ["failed"])
+        assert.match(
+          String(at(byMethod(r.out, "turn/completed")[0], "params", "turn", "error", "message")),
+          /the agent exited \(exit status: 5\) before the turn ended/,
+        )
+        assert.include(r.err, "the agent exited (exit status: 5) before the turn ended")
+      }),
+    30_000,
+  )
+
+  it.live(
+    "a cancelled prompt the agent answers with an error ends interrupted",
+    () =>
+      Effect.gen(function* () {
+        const r = yield* withBoard(
+          "fake-until-interrupted",
+          (v, write, end) => {
+            if (at(v, "method") === "turn/started") write({ type: "control_request", request_id: "stop-1", request: { subtype: "interrupt" } })
+            if (at(v, "method") === "turn/completed") end()
+          },
+          {},
+          { FAKE_ACP_CANCEL_ERROR: "1" },
+        )
+        assert.strictEqual(r.code, 0, r.err)
+        assert.deepStrictEqual(turnStatuses(r.out), ["interrupted"])
+      }),
+    30_000,
+  )
+
+  it.live(
+    "an agent that ignores its cancel is killed with what it started 10 seconds later; a held message is said to be dropped",
+    () =>
+      Effect.gen(function* () {
+        const r = yield* withBoard(
+          "fake-child fake-until-interrupted",
+          (v, write) => {
+            if (at(v, "method") !== "turn/started") return
+            write({ type: "user", uuid: "u2", message: { role: "user", content: "Held" } })
+            write({ type: "control_request", request_id: "stop-1", request: { subtype: "interrupt" } })
+          },
+          {},
+          { FAKE_ACP_IGNORE_CANCEL: "1" },
+        )
+        assert.strictEqual(r.code, 0, r.err)
+        allDecode(r.out)
+        assert.deepStrictEqual(turnStatuses(r.out), ["interrupted"])
+        const warnings = byMethod(r.out, "warning").map((v) => String(at(v, "params", "message")))
+        assert.deepStrictEqual(warnings, [
+          "The agent didn't stop within 10 seconds of being cancelled, so it was stopped.",
+          "A message sent during the turn wasn't given to the agent, as it was stopped: send it again.",
+        ])
+        // The agent's child went with its process group (gone, or a zombie not yet reaped).
+        const child = Number(
+          at(
+            r.sent.find((m) => at(m, "child") !== undefined),
+            "child",
+          ),
+        )
+        assert.isAbove(child, 0)
+        const stat = `/proc/${child}/stat`
+        assert.isTrue(!existsSync(stat) || /\) Z /u.test(readFileSync(stat, "utf8")), `pid ${child} is still running`)
+      }),
+    30_000,
+  )
+
+  it.live(
+    "at its end the agent's input is closed, so it can exit by itself",
+    () =>
+      Effect.gen(function* () {
+        const r = yield* drive({ stdin: "Hello" })
+        assert.strictEqual(r.code, 0, r.err)
+        assert.isTrue(r.sent.some((m) => at(m, "closed") === true))
+      }),
+    30_000,
+  )
+
+  it.live(
+    "the MCP servers' secrets don't reach the output, nor its stderr",
+    () =>
+      Effect.gen(function* () {
+        const secret = "s3cr3t-run-token-0123456789"
+        const r = yield* drive({
+          fields: {
+            session_id: "sess-old",
+            mcp_servers: [{ type: "http", name: "huntaway", url: "http://127.0.0.1:1/mcp", headers: [{ name: "Authorization", value: `Bearer ${secret}` }] }],
+          },
+          env: { FAKE_ACP_RESUME_ERROR: "1", FAKE_ACP_HTTP_MCP: "1" },
+          stdin: "Hello",
+        })
+        assert.strictEqual(r.code, 0, r.err)
+        const said = String(at(byMethod(r.out, "warning")[0], "params", "message"))
+        assert.include(said, "couldn't continue the session")
+        assert.include(said, "[redacted]")
+        assert.notInclude(text(r.out), secret)
+        assert.notInclude(r.err, secret)
+        // The agent was given it.
+        assert.include(text(r.sent), secret)
       }),
     30_000,
   )

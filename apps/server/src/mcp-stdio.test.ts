@@ -97,6 +97,14 @@ describe("mcp-stdio", () => {
         yield* b.send({ jsonrpc: "2.0", id: 4, method: "server/discover" })
         const refused = yield* b.next
         assert.deepStrictEqual([at(refused, "id"), at(refused, "error", "code")], [4, -32601])
+        // A batch's messages go each on its own (the board takes no batches): its request is answered, its notification isn't.
+        yield* b.send([
+          { jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 99 } },
+          { jsonrpc: "2.0", id: 5, method: "tools/list" },
+        ])
+        const listed = yield* b.next
+        assert.strictEqual(at(listed, "id"), 5)
+        assert.isTrue(Array.isArray(at(listed, "result", "tools")))
         yield* b.end
         assert.strictEqual(yield* b.exited, 0)
       }).pipe(Effect.scoped, Effect.provide(served)),

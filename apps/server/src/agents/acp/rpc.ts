@@ -8,8 +8,8 @@ import { toJson } from "../../platform/columns.ts"
 // of `next` in the order the agent wrote it, after the session updates it wrote before it, so a turn's last updates are
 // taken in before the prompt's answer ends it, and `session/load`'s history can be told from what follows. Lines that
 // aren't JSON-RPC (an agent may print others on its stdout) go to `onStderr` with its stderr's lines, the last of which
-// are kept for saying why it stopped. The process lives as long as the scope it is started in, and is killed (SIGKILL)
-// when that closes. It is not detached: in a run it is in the adapter's process group, which ia-shim's kill reaches.
+// are kept for saying why it stopped. The process lives as long as the scope it is started in: when that closes its
+// input ends, and it has 3 seconds to exit before its process group is stopped (see `LAUNCH`).
 
 /** The agent couldn't be started, or a request of the adapter's failed (`code` the agent's JSON-RPC error code). */
 export class AcpError extends Schema.TaggedError<AcpError, { readonly brand: unique symbol }>()("AcpError", {
@@ -51,9 +51,22 @@ export interface AcpAgent {
   readonly stderrTail: Effect.Effect<string>
   /** Waits until it has exited, and says how. */
   readonly exited: Effect.Effect<string>
-  /** Kill it (SIGKILL) now. */
+  /** Kill it and its process group (SIGKILL) now. */
   readonly kill: Effect.Effect<void>
 }
+
+/**
+ * How the agent is started: `sh -c LAUNCH <program> <args…>`. A watchdog in its process group kills the group once its
+ * fd 3 closes, which the kernel does however the adapter goes (killed by ia-shim's stop too, which reaches only the
+ * adapter's own group), so the agent and what it started don't outlive the run; then the agent is exec'd. The watchdog
+ * has no stdout or stderr of the agent's, so they end when the agent's do.
+ */
+export const LAUNCH = `(read -r _ <&3; kill -KILL 0) </dev/null >/dev/null 2>&1 & exec 3<&-; exec "$0" "$@"`
+
+/** How long the agent has to exit once its input ends, at the adapter's end. */
+const EXIT_GRACE = "3 seconds"
+/** How long after SIGTERM its group is killed. */
+const KILL_AFTER = "2 seconds"
 
 /** How many of its stderr's last lines are kept. */
 const TAIL_LINES = 20
@@ -97,15 +110,19 @@ export const acpAgent = Effect.fnUntraced(function* (
   const exit = yield* Deferred.make<string>()
   const handle = yield* spawner
     .spawn(
-      ChildProcess.make(options.program, [...options.args], {
+      ChildProcess.make("sh", ["-c", LAUNCH, options.program, ...options.args], {
         cwd: options.cwd,
         env: options.env ?? {},
         extendEnv: true,
-        detached: false,
-        killSignal: "SIGKILL",
+        // A process group of its own, so what the agent starts (its tools' commands) is stopped with it.
+        detached: true,
+        killSignal: "SIGTERM",
+        forceKillAfter: KILL_AFTER,
         stdin: { stream: Stream.fromQueue(writes), endOnDone: true },
         stdout: "pipe",
         stderr: "pipe",
+        // The watchdog's pipe: never written, closed by the kernel however this process ends.
+        additionalFds: { fd3: { type: "input", stream: Stream.never } },
       }),
     )
     .pipe(Effect.mapError((e) => new AcpError({ method: "", code: null, reason: `failed to start ${options.program}: ${e.message}` })))
@@ -139,7 +156,11 @@ export const acpAgent = Effect.fnUntraced(function* (
     Effect.flatMap((s) => Deferred.succeed(exit, s)),
     Effect.forkScoped,
   )
-  yield* Effect.addFinalizer(() => Effect.andThen(Queue.end(writes), Fiber.interrupt(reader)))
+  // Once the scope closes: its input ends, and it has a moment to exit by itself (Antigravity saves its session for the
+  // next run's resume), before its group is stopped (SIGTERM, then SIGKILL) and the reader with it.
+  yield* Effect.addFinalizer(() =>
+    Queue.end(writes).pipe(Effect.andThen(Effect.timeoutOption(Deferred.await(exit), EXIT_GRACE)), Effect.andThen(Fiber.interrupt(reader))),
+  )
 
   const write = (value: unknown) =>
     Effect.gen(function* () {

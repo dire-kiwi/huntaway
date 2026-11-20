@@ -13,6 +13,7 @@ import {
   outcomeFor,
   rejected,
   resolvedLine,
+  settle,
   startTurn,
   threadStarted,
   update,
@@ -25,7 +26,7 @@ import type { AgentMessage } from "../rpc.ts"
 import { currentModel, fullAccess } from "../session.ts"
 import { specFromJson } from "../spec.ts"
 import type { AdapterError } from "./setup.ts"
-import { agentServers, applySettings, errorText, exitedReason, fail, initialize, openSession, refuse } from "./setup.ts"
+import { agentServers, redactor, applySettings, errorText, exitedReason, fail, initialize, openSession, refuse } from "./setup.ts"
 
 // The adapter, `huntaway acp-run <run dir>/acp.json` (docs/plan/07-agents.md, ACP agents): it runs an ACP agent's turns
 // for a run, under ia-shim, between the run's files and the agent (`agy acp` by default), and is a Codex run to the rest
@@ -103,17 +104,23 @@ const makeSeed = Effect.gen(function* () {
   return `${a.toString(36)}${b.toString(36)}`
 })
 
+const asIs = (text: string) => text
+
 /** Run the adapter for the spec at `specPath`. Done once the run's work is (the caller exits then). */
 export const runAdapter = (
   specPath: string,
   io: AdapterIo,
-): Effect.Effect<void, AdapterError, FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | Scope.Scope> =>
-  Effect.gen(function* () {
+): Effect.Effect<void, AdapterError, FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | Scope.Scope> => {
+  // The run's secrets (its MCP servers' header values) taken out of what it writes, once the spec says them.
+  let redact = asIs
+  return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
-    const emit = (lines: ReadonlyArray<unknown>) => Effect.forEach(lines, (l) => Effect.flatMap(toJson(l), io.writeLine), { concurrency: 1, discard: true })
+    const emit = (lines: ReadonlyArray<unknown>) =>
+      Effect.forEach(lines, (l) => Effect.flatMap(toJson(l), (t) => io.writeLine(redact(t))), { concurrency: 1, discard: true })
     const raw = yield* fs.readFileString(specPath).pipe(Effect.mapError((e) => fail(`reading acp.json: ${e.message}`)))
     const spec = specFromJson(Option.getOrUndefined(parseJson(raw)))
     if (spec === null) return yield* fail("acp.json isn't a run's spec")
+    redact = redactor(spec.mcp_servers)
 
     // The input: its lines as they come, ended by null.
     const inputs = yield* Queue.unbounded<Input | null, Cause.Done>()
@@ -141,7 +148,7 @@ export const runAdapter = (
       )
     }
 
-    const agent = yield* acpAgent({ program: spec.program, args: spec.args, cwd: spec.cwd, env: AGENT_ENV, onStderr: io.warn })
+    const agent = yield* acpAgent({ program: spec.program, args: spec.args, cwd: spec.cwd, env: AGENT_ENV, onStderr: (line) => io.warn(redact(line)) })
     const init = yield* initialize(agent, io.version)
     const mcp = agentServers(spec.mcp_servers, init.agentCapabilities?.mcpCapabilities?.http === true, io.exe)
     const opened = yield* openSession(agent, init, spec, mcp.servers)
@@ -223,25 +230,45 @@ export const runAdapter = (
         return yield* agent.respond(m.id, outcome)
       })
 
+    /** The adapter is done: text the agent sent after its last turn ended is completed. */
+    const finish = Effect.suspend(() => step(settle(state)))
+
     while (true) {
       const got = yield* Queue.take(events).pipe(Effect.orElseSucceed((): Event => ({ k: "agent", v: null })))
       if (got.k === "grace") {
         if (state.turnId !== got.turn) continue
-        // The agent didn't end its cancelled turn: it's killed, and the turn ends interrupted.
+        // The agent didn't end its cancelled turn: it's killed (with what it started), and the turn ends interrupted.
         yield* agent.kill
         yield* step(endTurn(state, { _tag: "Stopped", stopReason: "cancelled", usage: null }))
         yield* emit([warning("The agent didn't stop within 10 seconds of being cancelled, so it was stopped.")])
-        return yield* Effect.void
+        if (held.length > 0) {
+          const n = held.length
+          yield* emit([
+            warning(
+              `${n === 1 ? "A message" : `${n} messages`} sent during the turn ${n === 1 ? "wasn't" : "weren't"} given to the agent, as it was stopped: send ${n === 1 ? "it" : "them"} again.`,
+            ),
+          ])
+        }
+        return yield* finish
       }
       if (got.k === "agent") {
         const m = got.v
-        if (m === null) return yield* fail(yield* exitedReason(agent, state.turnId !== null ? "before the turn ended" : "while the run was waiting for input"))
+        if (m === null) {
+          const reason = yield* exitedReason(agent, state.turnId !== null ? "before the turn ended" : "while the run was waiting for input")
+          // What the board was asked is no longer wanted, and the turn going failed.
+          yield* dropPending
+          if (state.turnId !== null) yield* step(endTurn(state, { _tag: "Failed", message: reason }))
+          return yield* fail(reason)
+        }
         if (m._tag === "Response") {
           if (m.id !== promptId) continue
           promptId = null
           const end: TurnEnd =
             m.error !== null
-              ? { _tag: "Failed", message: m.error.message }
+              ? // An agent may answer a cancelled prompt with an error: the turn was still interrupted.
+                cancelling
+                ? { _tag: "Stopped", stopReason: "cancelled", usage: null }
+                : { _tag: "Failed", message: m.error.message }
               : Option.match(decodePrompt(m.result), {
                   onNone: (): TurnEnd => ({ _tag: "Stopped", stopReason: "end_turn", usage: null }),
                   onSome: (r): TurnEnd => ({ _tag: "Stopped", stopReason: r.stopReason ?? "end_turn", usage: r.usage ?? null }),
@@ -254,7 +281,7 @@ export const runAdapter = (
             held = []
             yield* start(taken.map(([, t]) => t).join("\n\n"))
             for (const [id, text] of taken) yield* replay(id, text)
-          } else if (!inputOpen) return yield* Effect.void
+          } else if (!inputOpen) return yield* finish
         } else if (m._tag === "Notification") {
           if (m.method !== "session/update") continue
           const of = strField(m.params, "sessionId")
@@ -277,7 +304,7 @@ export const runAdapter = (
           if (!p.question) state = rejected(state, p.toolCallId)
           yield* agent.respond(p.acpId, p.question ? cancelled : outcomeFor(p, "reject"))
         }
-        if (state.turnId === null) return yield* Effect.void
+        if (state.turnId === null) return yield* finish
       } else if (line.type === "response") {
         const p = typeof line.id === "number" ? pending.get(line.id) : undefined
         if (p === undefined) continue
@@ -304,4 +331,6 @@ export const runAdapter = (
       AcpError: (e) => Effect.fail(fail(errorText(e))),
       SignInRequired: (e) => Effect.fail(fail(e.reason)),
     }),
+    Effect.mapError((e) => fail(redact(e.reason))),
   )
+}
