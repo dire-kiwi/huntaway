@@ -12,7 +12,12 @@ import { Proc } from "../platform/Proc.ts"
 //   task's temp folder);
 // - an ia-shim whose run folder is in one of those servers' data dirs or in the temp folder, or whose executable is in
 //   the worktree; or the agent under one of those shims, with its process group;
-// - or started by one of those servers (a TS server's `node` under its `sh` wrapper, its MCP helpers).
+// - or started by one of those servers (a TS server's `node` under its `sh` wrapper, its MCP helpers);
+// - or any other program whose executable is in the task's temp folder or whose command line names a path in it, with
+//   what it started (HE-68): an Electron app built there, a browser with its profile there. Chromium clears its
+//   environment as it starts (`/proc/<pid>/environ` reads as zeros), so `DevServers.stopLeft`, which goes by
+//   `HUNTAWAY_TASK_ID` in it, can't tell these are the task's; left running headless they each kept a core busy. Not
+//   anything under another server or shim (a live agent, of this board or another, may name the folder in a command).
 //
 // Never the board itself or what runs its own agents: not this process or its parents, no server on the board's data
 // dir, and no shim with a run in the board's `runs` folder. Processes are found by what `/proc` says of them (their
@@ -114,13 +119,14 @@ const ancestors = (pid: number, byPid: ReadonlyMap<number, LeftoverProc>): Set<n
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
-/** The task folders (named as `TaskTmp` names them) in `roots` that servers and shims in `procs` name. */
+/** The task folders (named as `TaskTmp` names them) in `roots` that processes in `procs` name, or run from. */
 export const foldersIn = (procs: ReadonlyArray<LeftoverProc>, roots: ReadonlyArray<string>): Set<string> => {
   const out = new Set<string>()
   for (const p of procs) {
-    if (serverWords(p) === null && shimOf(p) === null) continue
     for (const r of roots) {
-      for (const m of p.cmd.matchAll(new RegExp(`${escape(r)}/([0-9a-f]{12})(?=/| |$)`, "g"))) if (m[1] !== undefined) out.add(m[1])
+      for (const text of [p.cmd, p.exe ?? ""]) {
+        for (const m of text.matchAll(new RegExp(`${escape(r)}/([0-9a-f]{12})(?=/| |$)`, "g"))) if (m[1] !== undefined) out.add(m[1])
+      }
     }
   }
   return out
@@ -318,7 +324,16 @@ export class Leftovers extends Context.Service<Leftovers, LeftoversShape>()("hun
           const fromAgent = agents.has(p.pgid) || shims.some((sh) => up.has(sh.pid))
           if (fromServer || fromAgent) under.push(p)
         }
-        return [...servers, ...under, ...shims]
+
+        // Other programs run from the temp folder or naming it, and what they started; never under a server or shim
+        // that isn't the task's.
+        if (tmp.length === 0) return [...servers, ...under, ...shims]
+        const taken = new Set([...picked, ...under.map((p) => p.pid)])
+        const others = new Set(candidates.filter((p) => !picked.has(p.pid) && (serverWords(p) !== null || shimOf(p) !== null)).map((p) => p.pid))
+        const free = candidates.filter((p) => !taken.has(p.pid) && !others.has(p.pid) && ![...ancestors(p.pid, byPid)].some((a) => others.has(a)))
+        const programs = new Set(free.filter((p) => (p.exe !== null && within(p.exe, tmp)) || names(p.cmd, tmp)).map((p) => p.pid))
+        const fromPrograms = free.filter((p) => programs.has(p.pid) || [...ancestors(p.pid, byPid)].some((a) => programs.has(a)))
+        return [...servers, ...under, ...fromPrograms, ...shims]
       })
 
       /** Those of `procs` that are still running as the same processes (not new ones given their pids), by when they started. */

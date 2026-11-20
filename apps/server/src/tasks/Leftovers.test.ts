@@ -334,6 +334,48 @@ describe.skipIf(!linux)("Leftovers", () => {
     LIVE,
   )
 
+  // HE-68: a headless Electron app or browser an agent left running isn't a server, and Chromium clears its environment,
+  // so it's found by its command line naming the temp folder (its profile there), with what it started.
+  it.live(
+    "a program naming a done task's temp folder is stopped with it, or once it has gone",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const tmp = yield* TaskTmp
+          const data = yield* DataDir
+          const [a, gone, open] = [yield* newTask, yield* newTask, yield* newTask]
+          const exe = join(data.root, "browser", "chrome.js")
+          writeFile(exe, SERVER)
+          const profile = (t: TaskId) => join(tmp.root, folder(t), "profile")
+          for (const t of [a, gone, open]) mkdirSync(profile(t), { recursive: true })
+          const tags = ["browser-a", "browser-gone", "browser-open"]
+          yield* withFakes(
+            tags,
+            Effect.gen(function* () {
+              yield* start([exe, "--headless", `--user-data-dir=${profile(a)}`, "--name", "browser-a"])
+              yield* start([exe, "--headless", `--user-data-dir=${profile(gone)}`, "--name", "browser-gone"])
+              yield* start([exe, "--headless", `--user-data-dir=${profile(open)}`, "--name", "browser-open"])
+              yield* running([...tags, ...tags.map((t) => `${t}-child`)])
+
+              yield* done(a)
+              assert.isTrue(yield* tmp.remove(folder(a)))
+              let left = yield* fakes
+              assert.isTrue(!left.has("browser-a") && !left.has("browser-a-child"), "stopped with its folder")
+
+              rmSync(join(tmp.root, folder(gone)), { recursive: true })
+              rmSync(join(tmp.root, folder(open)), { recursive: true })
+              yield* done(gone)
+              yield* tmp.sweep
+              left = yield* fakes
+              assert.isTrue(!left.has("browser-gone") && !left.has("browser-gone-child"), "stopped once its folder has gone")
+              assert.isTrue(left.has("browser-open") && left.has("browser-open-child"), "an open task's is left alone")
+            }),
+          )
+        }),
+      ),
+    LIVE,
+  )
+
   // HA-227: each gone folder's processes are listed as it's come to, not once for all of them, as stopping one folder's
   // may take seconds. Here stopping A's server starts one in B's folder, which a listing from before then wouldn't have.
   it.live(

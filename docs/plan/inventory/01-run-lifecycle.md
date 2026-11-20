@@ -68,7 +68,10 @@ and the 5-hour-window restarter.
   in sessions of their own), `background-detached` keeps them, and the run ends Ok (not Failed) as a turn's end does.
   The next prompt's note says they were left running (`lost_background` items with `running`). What a task's agents
   left running (environ naming it, never the board, a board's server, a shim or anything under them) is stopped once
-  it's done with no agent left, or deleted (`stop_task_processes`).
+  it's done with no agent left, or deleted (`stop_task_processes`). Chromium clears its environment, so a headless
+  browser or Electron app an agent left is found instead as its temp folder goes (`tasks/Leftovers`, HE-68): a program
+  whose executable is in the folder or whose command line names it (its profile there), with what it started, never
+  under another server or shim.
 
 ### Merge queue (`runner/merge.ts`, `db/tasks/merges.ts`)
 - One merge at a time per *lane*; start the next waiting task's merge run; ask for merge-approval summaries; whole-stack runs hold a lane; step-out/rejoin (`remerge`).
