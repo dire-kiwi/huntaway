@@ -13,6 +13,8 @@ import { Events } from "../platform/Events.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
 import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
+import { ProjectRepo } from "../projects/ProjectRepo.ts"
+import { ServerConfig } from "../platform/ServerConfig.ts"
 import { todoNudge } from "../prompts/todoNudge.ts"
 import { deriveColumns } from "../tasks/decide.ts"
 import type { TaskColumns } from "../tasks/decide.ts"
@@ -23,7 +25,7 @@ import { Threads } from "../threads/Threads.ts"
 import { AgentRequests } from "./AgentRequests.ts"
 import { BackgroundWork } from "./BackgroundWork.ts"
 import { DevServers } from "./DevServers.ts"
-import { decideFinish, isAhead, nudged, nudgeNotice, outcomeOf, todoReason } from "./finish.ts"
+import { decideFinish, isAhead, nudged, nudgeNotice, outcomeOf, reviewDue, todoReason } from "./finish.ts"
 import type { FinishDecision } from "./finish.ts"
 import type { Run } from "./Run.ts"
 import { RunRepo } from "./RunRepo.ts"
@@ -79,6 +81,8 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       const checkpoints = yield* Checkpoints
       const pullRequests = yield* PullRequests
       const workflowFacts = yield* WorkflowFacts
+      const projects = yield* ProjectRepo
+      const config = yield* ServerConfig
 
       const board: Actor = { _tag: "Board" }
 
@@ -113,14 +117,15 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
             // 6.6: what the project's workflows make of the run's end: the column that takes the task on, and its merge.
             const due = task.kind === "task" && !task.merging ? yield* workflowFacts.finishDue(task) : null
             const mergesToDone = task.kind === "task" && task.merging ? (yield* workflowFacts.mergeFinish(task)) !== null : false
-            const config = task.claude_config_id === null ? null : Option.getOrNull(yield* configs.get(task.claude_config_id))
+            const agentConfig = task.claude_config_id === null ? null : Option.getOrNull(yield* configs.get(task.claude_config_id))
+            const project = task.kind === "task" && task.project_id !== null ? Option.getOrNull(yield* projects.get(task.project_id)) : null
             const decision = decideFinish({
               outcome: outcomeOf(run, change.exit, change.errorTail, detached),
               run,
               task,
               limitAhead: isAhead(task.limit_reset_at, at),
               limitWait: profile?.limit_wait ?? false,
-              configName: config?.name ?? "Its config",
+              configName: agentConfig?.name ?? "Its config",
               // 4.7: what it merges into (or lands after) was closed or deleted while it ran.
               mergeHeld: task.kind === "task" && task.project_id !== null ? heldReasonOf(yield* tasks.projectTasks(task.project_id), task) : null,
               mergesToDone,
@@ -128,6 +133,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
               planOnly,
               nudged: nudged(yield* readers.lastUserMessage(task.id)),
               endOfMergeQueue: yield* tasks.endPosition(task.project_id, "ready_for_merge"),
+              reviewDue: reviewDue(task, project, config.noAgents),
             })
             // Said once, by the run's own end: a later run's start doesn't unsay it.
             for (const n of decision.notices) yield* threads.notice(task.id, n.level, n.text, n.detail).pipe(Effect.orDie)
@@ -232,6 +238,8 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         if (done === null) return
         yield* changes.offer({ _tag: "TaskChanged", before: done.before, after: done.after, cause: board })
         if (decision.nudge !== null) yield* nudge(run.task_id, decision.nudge, first.due, run.hops)
+        // 4.6: the task stays in In progress while it's reviewed (HE-66); the reactor starts the review.
+        if (decision.review) yield* changes.offer({ _tag: "ReviewDue", task: run.task_id })
         // 6.6: the workflow column that held the task goes on from there, or its workflow moves the merged task to Done.
         if ((decision.workDone && first.due !== null) || decision.mergeFinished) {
           const due = decision.workDone ? first.due : null

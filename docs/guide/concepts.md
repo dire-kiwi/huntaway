@@ -246,7 +246,8 @@
 - **Status transitions:** running → _In progress_; the agent asks a question
   (`request_user_input` or `AskUserQuestion`, see _Questions and plans_) or presents a plan, a
   tool needs approval, a run fails, or you stop it → _Needs
-  attention_; a run finishes cleanly → _In review_. You move cards to _Done_ yourself, or to
+  attention_; a run finishes cleanly → _In review_ (in a project that reviews tasks, once its review
+  passes: see _Reviews_). You move cards to _Done_ yourself, or to
   _Ready for merge_; a task whose pull request is merged on GitHub moves to _Done_ by itself
   (see _Pull requests_). Moving a task to _Done_ (with the _Done_ resolution) whose work isn't
   merged asks first: its branch has commits its base branch doesn't, or it has
@@ -325,7 +326,7 @@
     before then doesn't end it (HA-389: HA-346's agent waited on a task that had gone to
     _In review_ 11 seconds before, and the wait sat for 50 minutes). So the agent can give
     `last_seen`, how it last saw each task: its status (`{"ABC-12": "in_progress"}`), or its
-    status and review state (`{"ABC-12": {"status": "in_review", "review": "running"}}`, `null`
+    status and review state (`{"ABC-12": {"status": "in_progress", "review": "running"}}`, `null`
     for no review). A task whose status has moved on since, or whose review has finished since
     in a state other than the one seen (it passed while the agent saw it running), ends the wait
     at once, so a change between the agent's read and its wait isn't missed (agents' waits came
@@ -409,7 +410,7 @@
   is _Done_ with resolution _Done_ (closing one as _Won't fix_ or _Not done_ doesn't count),
   its agent starts. Deleting a task it depends on, or taking it off the list, also lets it go.
   Moving a queued task out of _In progress_ takes it out of the queue.
-- **Reviews:** when a task moves to _In review_ (its agent finished, or you moved it), a reviewer
+- **Reviews:** when a task's agent finishes (or you move the task to _In review_), a reviewer
   agent reviews its branch's pull request (or the branch's diff if there's no PR) in a review
   thread of its own, working read-only in the task's worktree. The card shows _reviewing_ while
   it runs, then the outcome; click it, or _Review thread_ in the task's sidebar, to read the
@@ -434,10 +435,11 @@
   (`tasks.extendReview`). _Review again_ starts afresh, with the project's rounds. A commit that was already
   reviewed isn't reviewed again (unless its review found issues and the branch has no commits, as
   the fixes are then elsewhere), and a review in progress is stopped when the task's agent
-  starts working again. The card stays in _In review_ while it's reviewed, and only goes back to
-  _In progress_ when the agent works on it again (to fix the issues found, or because you sent
-  it a message). _Review now_ in the task's sidebar reviews on demand, once the agent has
-  stopped; a task in _In progress_ or _Needs attention_ moves to _In review_ for it. Turn reviews off,
+  starts working again. The card stays in _In progress_ while it's reviewed (one you moved to _In
+  review_, or reviewed from _Needs attention_, moves back there for it), and the agent fixes the
+  issues found there too. It goes on to _In review_ once a review passes, or ends without issues
+  to send back (it failed, or you stopped it), or when there was nothing new to review. _Review now_
+  in the task's sidebar reviews on demand, once the agent has stopped. Turn reviews off,
   or set the rounds, in the project's settings. The task's _Review_ tab shows what each
   round of fixes changed, from its checkpoints (see _Checkpoints and rewinding_).
 - **Several reviewers**: a project's settings can list more than one reviewer under

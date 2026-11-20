@@ -66,7 +66,7 @@ export const Project = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   /** Overrides the profile's configs when set. */
   claude_config_ids: Schema.NullOr(Schema.Array(AgentConfigId)),
-  /** Review each task's work when it moves to In review (not with `use_workflows`). */
+  /** Review each task's work when its agent finishes, the task in In progress meanwhile (not with `use_workflows`). */
   auto_review: Schema.Boolean,
   /** Move a task in In review or Needs attention to Done when its pull request is merged on GitHub. */
   done_when_merged: Schema.Boolean,

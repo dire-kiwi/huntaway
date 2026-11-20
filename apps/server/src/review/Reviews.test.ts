@@ -181,7 +181,10 @@ const threadsOf = (type: string | null) =>
 /** What a refusal said, or "" when it succeeded. */
 const refusal = (exit: Exit.Exit<unknown, unknown>) => (Exit.isFailure(exit) ? failureText(exit.cause) : "")
 
-/** `n` reviewer threads under the task and a review in progress by them (r0, r1…), each with no run before it. */
+/**
+ * `n` reviewer threads under the task and a review in progress by them (r0, r1…), each with no run before it; the task
+ * in In progress, where it's reviewed (HE-66).
+ */
 const reviewing = (n: number, over: Partial<Review> = {}) =>
   Effect.gen(function* () {
     const repo = yield* ReviewRepo
@@ -220,7 +223,7 @@ const reviewing = (n: number, over: Partial<Review> = {}) =>
       },
       over,
     )
-    yield* setTask(TASK, { review })
+    yield* setTask(TASK, { review, status: "in_progress" })
     return ids
   })
 
@@ -267,7 +270,8 @@ describe("starting a review", () => {
         yield* setProject({ review_prompt: "Check the project's rules.", reviewers: yield* json([security, R({ model: "haiku" })]) })
         const reviews = yield* Reviews
         const started = yield* reviews.start(TASK, true)
-        assert.isNotNull(started)
+        // HE-66: a task under review sits in In progress.
+        assert.strictEqual(started?.status, "in_progress")
         const r = yield* reviewOf
         assert.deepStrictEqual(
           r?.reviewers.map((p) => [p.label, p.state]),
@@ -302,6 +306,9 @@ describe("starting a review", () => {
         const failed = yield* reviewOf
         assert.deepStrictEqual([failed?.state, failed?.reviewers[0]?.state], ["failed", "failed"])
         assert.include(yield* notices(TASK), "Review didn't finish")
+        // Then it goes on to In review, and isn't reviewed again for going there.
+        assert.strictEqual((yield* task()).status, "in_review")
+        assert.strictEqual((yield* notices(TASK)).filter((n) => n.startsWith("Reviewing the changes")).length, 1)
 
         // Reviewed again with other settings, the same threads follow them.
         yield* setProject({ reviewers: yield* json([R({ model: "opus" })]) })
@@ -327,10 +334,14 @@ describe("starting a review", () => {
         const refused = yield* Effect.exit(reviews.start(TASK, true))
         assert.strictEqual(refusal(refused), "Can't review: the agent is still working; its changes are reviewed when it finishes")
         assert.isNull(yield* reviews.start(TASK, false))
-        yield* ends(agent)
-        // Its run's end reviewed it (its column, In review, is the review's), and the parts failed to start.
+        // HE-66: its run's end leaves it in In progress while it's reviewed.
+        yield* ends(agent, true, false)
+        assert.deepStrictEqual([(yield* task()).status, (yield* reviewOf)?.state], ["in_progress", "running"])
+        // The parts failed to start: the review didn't finish, and the task goes on to In review, once.
+        yield* settle
         const head = yield* git(dir, ["rev-parse", "HEAD"])
-        assert.strictEqual((yield* reviewOf)?.head, head)
+        assert.deepStrictEqual([(yield* reviewOf)?.head, (yield* reviewOf)?.state, (yield* task()).status], [head, "failed", "in_review"])
+        assert.strictEqual((yield* notices(TASK)).filter((n) => n.startsWith("Reviewing the changes")).length, 1)
         const passed: Review = Object.assign({}, (yield* reviewOf) ?? undefined, { state: "passed" as const })
         yield* setTask(TASK, { review: passed })
         assert.isNull(yield* reviews.start(TASK, false))
@@ -415,7 +426,7 @@ describe("starting a review", () => {
     }),
   )
 
-  it.effect("Review now from Needs attention moves the task to In review and starts a fresh cycle of fixes", () =>
+  it.effect("Review now from Needs attention moves the task to In progress and starts a fresh cycle of fixes", () =>
     run(
       Effect.gen(function* () {
         yield* reviewable({ status: "needs_attention" })
@@ -424,7 +435,7 @@ describe("starting a review", () => {
           review: Object.assign({}, REVIEW_DONE, { state: "issues" as const, issues: ["x"], fixes: 2, extra_rounds: 1 }),
         })
         const t = yield* (yield* Reviews).start(TASK, true)
-        assert.deepStrictEqual([t?.status, t?.attention_reason, t?.review?.fixes, t?.review?.extra_rounds], ["in_review", null, 0, 0])
+        assert.deepStrictEqual([t?.status, t?.attention_reason, t?.review?.fixes, t?.review?.extra_rounds], ["in_progress", null, 0, 0])
         // The issues it was asked to fix are checked again.
         assert.include(
           yield* asked(t?.review?.thread_id ?? TASK),
@@ -485,7 +496,7 @@ describe("a review's outcome", () => {
     ),
   )
 
-  it.effect("serious issues go back to the agent while the task waits in In review with rounds left", () =>
+  it.effect("serious issues go back to the agent while the task waits in In progress with rounds left", () =>
     run(
       Effect.gen(function* () {
         yield* reviewable()
@@ -499,6 +510,8 @@ describe("a review's outcome", () => {
         const sent = yield* (yield* ThreadReaders).lastUserMessage(TASK)
         assert.deepStrictEqual([sent?.review_round, sent?.auto], [1, true])
         assert.isTrue(sent?.text.startsWith("The review found 1 serious issue in your changes:\n\n1. the bug\n\n") ?? false, sent?.text)
+        // It stays in In progress for its agent to fix them.
+        assert.strictEqual((yield* task()).status, "in_progress")
         yield* settle
       }),
     ),
@@ -514,7 +527,8 @@ describe("a review's outcome", () => {
         yield* submit(a, ra, { verdict: "pass", summary: "Fine.", serious_issues: [] })
         yield* ends(ra, true, false)
         const t = yield* task()
-        assert.deepStrictEqual([t.review?.state, t.summaries.map((s) => s.state)], ["passed", ["running"]])
+        // On to In review once it passed (HE-66).
+        assert.deepStrictEqual([t.status, t.review?.state, t.summaries.map((s) => s.state)], ["in_review", "passed", ["running"]])
         assert.include(yield* notices(TASK), "Review passed")
         yield* settle
       }),
@@ -662,6 +676,9 @@ describe("stopping a review", () => {
         assert.deepStrictEqual([r?.state, r?.summary], ["stopped", "Stopped by the user."])
         assert.isTrue(r?.reviewers.every((p) => p.state === "stopped"))
         assert.include(yield* notices(TASK), "Review stopped")
+        // It goes on to In review, and isn't reviewed again for it.
+        yield* (yield* Reactor).idle
+        assert.deepStrictEqual([(yield* task()).status, (yield* reviewOf)?.state], ["in_review", "stopped"])
         // Nothing left to stop.
         assert.deepStrictEqual(yield* reviews.stopTask(TASK), { stopped: false })
       }),

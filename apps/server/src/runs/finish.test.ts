@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Timestamp } from "@huntaway/contracts"
 import type { Todo } from "@huntaway/contracts"
-import { APPROVAL, decideFinish, nudged, outcomeOf, PLAN_READY, todoReason } from "./finish.ts"
+import { APPROVAL, decideFinish, nudged, outcomeOf, PLAN_READY, reviewDue, todoReason } from "./finish.ts"
 import type { FinishFacts } from "./finish.ts"
 import { Outcome } from "./Run.ts"
 
@@ -32,6 +32,7 @@ const facts = (over: Partial<FinishFacts> = {}): FinishFacts => ({
   planOnly: false,
   nudged: false,
   endOfMergeQueue: 9,
+  reviewDue: false,
   ...over,
 })
 const task = facts().task
@@ -154,6 +155,7 @@ describe("decideFinish", () => {
       nudge: null,
       workDone: false,
       mergeFinished: false,
+      review: false,
     })
     assert.deepStrictEqual(decideFinish(facts({ run: compact, outcome: Outcome.failed("x") })).notices, [
       { level: "error", text: "Compacting failed", detail: "x" },
@@ -193,5 +195,31 @@ describe("decideFinish", () => {
       [not.columns.status, not.columns.attention_reason, not.mergeFinished],
       ["needs_attention", "The agent finished without saying the task is merged (with finish_work)", false],
     )
+  })
+
+  it("a task its project reviews stays in In progress for its review (HE-66), but not one going elsewhere", () => {
+    const reviewed = decideFinish(facts({ reviewDue: true }))
+    assert.deepStrictEqual([reviewed.columns.status, reviewed.columns.attention_reason, reviewed.review], ["in_progress", null, true])
+    assert.deepStrictEqual([decideFinish(facts()).columns.status, decideFinish(facts()).review], ["in_review", false])
+    // A failure, a question, a plan, a merge step out, an unfinished list or a workflow's column go where they go.
+    assert.isFalse(decideFinish(facts({ reviewDue: true, outcome: Outcome.failed("x") })).review)
+    assert.isFalse(decideFinish(facts({ reviewDue: true, run: { kind: "prompt", attention: "Which one?", finished: false } })).review)
+    assert.isFalse(decideFinish(facts({ reviewDue: true, planOnly: true })).review)
+    assert.isFalse(decideFinish(facts({ reviewDue: true, task: { ...task, remerge: true } })).review)
+    assert.isFalse(decideFinish(facts({ reviewDue: true, task: { ...task, todos: [todo("Add tests", "pending")] } })).review)
+    assert.isFalse(decideFinish(facts({ reviewDue: true, finishDue: { status: "in_progress", asksFinish: false } })).review)
+  })
+
+  it("reviewDue: a task with a ready worktree on a branch, in a project that reviews automatically, where agents run", () => {
+    const t = { kind: "task" as const, worktree_state: "ready" as const, worktree_path: "/w", branch: "b" }
+    const p = { auto_review: true, use_workflows: false }
+    assert.isTrue(reviewDue(t, p, false))
+    assert.isFalse(reviewDue(t, p, true))
+    assert.isFalse(reviewDue(t, null, false))
+    assert.isFalse(reviewDue(t, { ...p, auto_review: false }, false))
+    assert.isFalse(reviewDue(t, { ...p, use_workflows: true }, false))
+    assert.isFalse(reviewDue({ ...t, worktree_state: "none" }, p, false))
+    assert.isFalse(reviewDue({ ...t, branch: null }, p, false))
+    assert.isFalse(reviewDue({ ...t, kind: "review" }, p, false))
   })
 })

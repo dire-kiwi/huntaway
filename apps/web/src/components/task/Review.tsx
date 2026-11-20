@@ -265,7 +265,7 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
   return (
     <div className="space-y-2.5 text-[12.5px]">
       {!r || !d ? (
-        <div className="text-muted">Not reviewed yet. The task's changes are reviewed when it moves to In review.</div>
+        <div className="text-muted">Not reviewed yet. The task's changes are reviewed when its agent finishes.</div>
       ) : (
         <>
           <div

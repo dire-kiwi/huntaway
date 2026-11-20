@@ -68,7 +68,7 @@ export const WaitTool = Tool.make("wait", {
         ]),
       ).annotate({
         description:
-          'For tasks in tasks, how you last saw each: its status, e.g. {"ABC-12": "in_progress"}, or its status and review state, e.g. {"ABC-12": {"status": "in_review", "review": "running"}} (null if it had no review). ' +
+          'For tasks in tasks, how you last saw each: its status, e.g. {"ABC-12": "in_progress"}, or its status and review state, e.g. {"ABC-12": {"status": "in_progress", "review": "running"}} (null if it had no review). ' +
           "One whose status has moved on since, or whose review has finished in another state since (passed while you saw it running, say), ends the wait at once, rather than being watched from where it is now. " +
           "Give the review state when you wait for a task's review: a review that ends between your read and the wait is otherwise missed.",
       }),

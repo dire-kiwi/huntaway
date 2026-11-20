@@ -179,7 +179,8 @@ const reason = (d: ReturnType<typeof decideExtend>) => (d._tag === "Refused" ? d
 const found = (fixes: number): Review => reviewing(1, { state: "issues", issues: ["still"], fixes, extra_rounds: 2 })
 
 describe("rounds of fixes", () => {
-  const inReview = { status: "in_review" as const, running: false }
+  // HE-66: a task is reviewed in In progress.
+  const inReview = { status: "in_progress" as const, running: false }
 
   it("the extra rounds of fixes count until they're used up", () => {
     // A round left: it goes to the agent.
@@ -195,7 +196,8 @@ describe("rounds of fixes", () => {
       reason: "The review found 1 serious issue after a round of fixes",
     })
     // The user (or the agent) has moved on.
-    assert.deepStrictEqual(decideIssues({ status: "in_progress", running: false }, found(0), 2), { _tag: "MovedOn" })
+    assert.deepStrictEqual(decideIssues({ status: "in_review", running: false }, found(0), 2), { _tag: "MovedOn" })
+    assert.deepStrictEqual(decideIssues({ status: "done", running: false }, found(0), 2), { _tag: "MovedOn" })
     assert.deepStrictEqual(decideIssues({ ...inReview, running: true }, found(0), 2), { _tag: "MovedOn" })
   })
 
