@@ -3,7 +3,7 @@
 The board shows every profile at once. The sidebar lists the profiles at the top, each with a bar of how many of its
 tasks are in progress (blue), need attention (amber), in review (purple) and merging or waiting to merge (pink), leaving
 out the columns with none. Clicking another one switches to it, back on the page you were on when you left it (HE-64:
-its board the first time; `p` and `P` switch the same way); clicking the one you're on opens the **profile's board**:
+its board the first time, or when that page isn't one of its own any more; `p` and `P` switch the same way); clicking the one you're on opens the **profile's board**:
 all of its tasks together, from every project and
 every host that has the profile, with its group and scratch tasks. Its _New task_ form picks the project, or makes a
 scratch task: type `in:` and a project's key (`in:HA`), `in:none` for a scratch task in no project or `in:group` for a

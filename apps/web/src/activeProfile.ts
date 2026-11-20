@@ -1,5 +1,4 @@
 import { parseJson, toJson } from "./components/ui/json"
-import { href } from "./router"
 
 const KEY = "ia.activeProfile"
 
@@ -57,7 +56,7 @@ export function saveProfilePlace(profile: string, url: string) {
   }
 }
 
-/** HE-64: where switching to `profile` goes: the page it was last on (`saveProfilePlace`), else its board. */
-export function profilePlace(profile: string): string {
-  return loadPlaces()[profile] ?? href({ name: "profile", profile })
+/** HE-64: the page `profile` was last on (`saveProfilePlace`), which switching to it opens. */
+export function profilePlace(profile: string): string | undefined {
+  return loadPlaces()[profile]
 }

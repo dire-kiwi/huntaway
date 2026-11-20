@@ -117,5 +117,10 @@ test("switching profiles goes back to the page each was last on", async () => {
       `click ${defaultNav}`,
       at(`/p/${demo.id}`),
     ])
+
+    // A kept page the profile no longer lists (the pinned project, unpinned, is Default's) opens its board instead.
+    await ui.run([`click ${testNav}`, at(`/p/${demo.id}`), "wait css=aside [aria-current] >> text=/^t\\s*test/", `rclick ${demoRow}`])
+    await ui.run(["click [role=menu] >> text=Unpin", "wait css=aside [aria-current] >> text=/^D\\s*Default/", "goto /settings", `click ${testNav}`])
+    await ui.run([at("/profile/test"), "wait css=aside [aria-current] >> text=/^t\\s*test/", `wait ${testRow}`, `gone ${demoRow}`])
   })
 })
