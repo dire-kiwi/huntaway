@@ -1445,7 +1445,8 @@ take the same code, with no Playwright in the server.
   flags that keep every page painting), `ChromeInstall` (the program: `HUNTAWAY_CHROME`, else Chrome for Testing's
   chrome-headless-shell pinned in `CHROME_VERSION` with each platform's size and SHA-256, downloaded on first use into
   `<data>/browser/chrome/<version>`, unpacked with `unzip` into a folder of its own and renamed into place, older
-  versions removed; `HUNTAWAY_CHROME_RELEASE` replaces the pin in tests), `page.ts` (the agent's actions on a `CdpPage`),
+  versions removed; `HUNTAWAY_CHROME_RELEASE` replaces the pin in tests; a failed install isn't tried again for five minutes, as each try
+  downloads it again), `page.ts` (the agent's actions on a `CdpPage`),
   `snapshot.ts` (the accessibility tree as an outline with refs `e<backend node id>`), `keys.ts` (key names as CDP's
   events), `Browsers` (below), `viewer.ts` (one viewer's stream), `tools.ts` and `BrowserTools` (the MCP server).
 - **`Browsers`**: a `Tab` per task in a `Ref` (its headless page or the desktop pane, its address and title in a
@@ -1456,8 +1457,9 @@ take the same code, with no Playwright in the server.
   being opened holds until it's in `tabs` (Chrome's download and start included), so a Chrome just started for a page
   is never closed as idle. A headless page's dialogs are accepted, and each is told to the agent once (`takeDialog`;
   forgotten on a new page). Profile: `<data>/browser/profile`, cookies shared by every task.
-- **Tickets and the socket**: `browser.open {task_id, role}` gives a ticket (single use, a minute, as `terminal.open`)
-  for `GET /api/browser/<ticket>` (`http/browser.ts`). Role `view`: `relayViewer` attaches a CDP session of its own to
+- **Tickets and the socket**: `browser.open {task_id}` (`operate`) gives a viewer's ticket and `browser.pane {task_id}`
+  (`terminal`, as the host's desktop view: only the board's own app hands over a pane) the desktop pane's (single use, a
+  minute, as `terminal.open`), for `GET /api/browser/<ticket>` (`http/browser.ts`). Role `view`: `relayViewer` attaches a CDP session of its own to
   the page, starts its screencast (JPEG 70, the viewer's size), and sends one frame at a time: the next after the
   viewer's `ack`, only the newest waiting, and Chrome's own ack after the viewer's, as T3 Code does; a still
   (`Page.captureScreenshot`) when a new screencast sends nothing within 300 ms (an idle page doesn't repaint). The
@@ -1468,7 +1470,9 @@ take the same code, with no Playwright in the server.
   with an `error` frame. When the page goes (the agent's `close`, a reap, Chrome gone), the relay ends and the socket
   closes with 1012; the viewer asks for a new ticket, which opens the page again where it was. `browser.open` needs
   `operate`, so a paired phone can watch and use a task's browser: it reaches what the host's network does, web pages
-  only. Role `desktop`: the socket carries CDP itself, the
+  only. The tab keeps only a web page's address (`keptAddress`): Chrome's error page records the address that failed
+  (`unreachableUrl`), and an address a pane reports that isn't a web page's (`file:`) is dropped, since a page opened
+  again loads the tab's address. Role `desktop`: the socket carries CDP itself, the
   server's commands to the app's pane and its answers and events back (`attachDesktop`, a `makeCdp` over the socket).
   On attach the pane loads the address the headless page was on, the headless page closes, and its viewers are told
   `desktop` and let go. When the pane's socket closes, the tab falls back to headless at the pane's last address.

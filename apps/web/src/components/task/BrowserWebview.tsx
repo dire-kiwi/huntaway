@@ -69,6 +69,9 @@ const ALLOW_POPUPS = { allowpopups: "true" } as object
 /** The pages' own session (the main process gives every pane it, whatever the page asks). */
 const PARTITION = "persist:huntaway-browser"
 
+/** A web page's address: the only kind the pane starts from (the main process refuses any other). */
+const isWeb = (url: string) => /^https?:/u.test(url)
+
 const field = (v: unknown, key: string): unknown => (typeof v === "object" && v !== null ? Reflect.get(v, key) : undefined)
 const text = (v: unknown, key: string): string => {
   const x = field(v, key)
@@ -79,12 +82,13 @@ export function BrowserWebview({ task, onClose }: { task: Task; onClose: () => v
   const [saved, save] = useAtom(browserUrlAtom(`${task.host_id}:${task.id}`))
   // A page the agent has open headless, which the pane takes over.
   const status = resultValue(useAtomValue(query("browser.status", task.host_id, { task_id: task.id })))
-  const agentUrl = status?.url !== undefined && status.url !== "about:blank" ? status.url : null
-  const [start] = useState(() => saved ?? task.preview_url ?? "")
-  // What the webview was first given (an empty pane starts where the agent's page is): later pages are loaded into it,
-  // so that it isn't made again.
-  const [typed, setTyped] = useState(start)
-  const src = typed !== "" ? typed : (agentUrl ?? "")
+  const agentUrl = status !== undefined && status !== null && isWeb(status.url) ? status.url : null
+  // Where it starts: the first web address it learns of (the one saved, the task's preview, the agent's page; the saved
+  // one comes from storage a moment after the first render), kept from then on (later pages are loaded into the
+  // webview, so that it isn't made again).
+  const first = [saved ?? "", task.preview_url ?? "", agentUrl ?? ""].find(isWeb) ?? ""
+  const [src, setSrc] = useState(first)
+  if (src === "" && first !== "") setSrc(first)
   const [went, setWent] = useState("")
   const url = went !== "" ? went : src
   const [title, setTitle] = useState("")
@@ -111,7 +115,8 @@ export function BrowserWebview({ task, onClose }: { task: Task; onClose: () => v
       if (field(e, "isMainFrame") === false) return
       const to = text(e, "url")
       setWent(to)
-      save(to)
+      // Only a web page's address is kept (not an error page's): the pane starts from it next time.
+      if (isWeb(to)) save(to)
       navState()
     }
     const on: Record<string, (e: Event) => void> = {
@@ -172,7 +177,7 @@ export function BrowserWebview({ task, onClose }: { task: Task; onClose: () => v
     const connect = () => {
       const id = at.id
       if (at.disposed || id === null) return
-      void run(mutate("browser.open", task.host_id, { task_id: task.id, role: "desktop" })).then((exit) => {
+      void run(mutate("browser.pane", task.host_id, { task_id: task.id })).then((exit) => {
         if (at.disposed) return
         if (!Exit.isSuccess(exit)) {
           retry("The agent can't reach this browser: trying again…")
@@ -245,7 +250,7 @@ export function BrowserWebview({ task, onClose }: { task: Task; onClose: () => v
   const go = (to: string) => {
     setError(null)
     setWent(to)
-    if (src === "") setTyped(to)
+    if (src === "") setSrc(to)
     // A failure comes as did-fail-load.
     else ref.current?.loadURL(to).catch(() => undefined)
   }

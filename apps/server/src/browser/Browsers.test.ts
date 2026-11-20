@@ -12,6 +12,7 @@ import { callResult } from "../mcp/jsonrpc.ts"
 import { BROWSER_INSTRUCTIONS, McpServers } from "../mcp/McpServers.ts"
 import { ToolCalls } from "../mcp/ToolCalls.ts"
 import { Browsers } from "./Browsers.ts"
+import { ChromeInstall } from "./ChromeInstall.ts"
 import { isRecord, jsonText, nextEvent, pageOf, str } from "./cdp.ts"
 import { navigate } from "./page.ts"
 import { startChrome } from "./chrome.ts"
@@ -373,6 +374,78 @@ describe.skipIf(systemChrome === null)("a task's browser", () => {
           bin,
         )
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    TIMEOUT,
+  )
+
+  it.live(
+    "a page that didn't load keeps the address it was asked for, not Chrome's error page",
+    () =>
+      withBrowser(() =>
+        Effect.gen(function* () {
+          const agent = yield* fakeAgent()
+          const went = yield* call(agent, "navigate", { url: "http://127.0.0.1:2/" })
+          assert.isTrue(went.error)
+          assert.strictEqual((yield* (yield* Browsers).state(agent.run.task_id))?.url, "http://127.0.0.1:2/")
+        }),
+      ),
+    TIMEOUT,
+  )
+
+  it.live(
+    "an address a desktop pane reports that isn't a web page's isn't kept, nor opened when the page opens again",
+    () =>
+      withBrowser(() =>
+        Effect.gen(function* () {
+          const browsers = yield* Browsers
+          const agent = yield* fakeAgent()
+          const task = agent.run.task_id
+          // A "pane" that answers every command with nothing and says it went to a file.
+          const pane = yield* fakeSocket
+          const attached = yield* browsers
+            .serve(yield* browsers.ticket(task, "desktop"), { width: 1, height: 1, url: null }, Effect.succeed(pane.socket))
+            .pipe(Effect.scoped, Effect.forkChild)
+          const answer = Effect.gen(function* () {
+            for (;;) {
+              const f = yield* Queue.take(pane.sent)
+              if (typeof f !== "string") continue
+              const m = Option.getOrThrow(decodeCommand(f))
+              yield* pane.send(jsonText({ id: m.id, result: {} }))
+              if (m.method === "Page.getFrameTree") {
+                yield* pane.send(jsonText({ method: "Page.frameNavigated", params: { frame: { id: "F", url: "file:///etc/os-release" } } }))
+                yield* pane.hangUp
+                return
+              }
+            }
+          })
+          yield* answer
+          yield* Fiber.join(attached)
+          // The next page opens blank.
+          yield* call(agent, "snapshot", {})
+          assert.strictEqual((yield* browsers.state(task))?.url, "about:blank")
+        }),
+      ),
+    TIMEOUT,
+  )
+})
+
+describe("installing Chrome", () => {
+  it.live(
+    "a failed install isn't tried again for a while",
+    () =>
+      Effect.gen(function* () {
+        const install = yield* ChromeInstall
+        const first = yield* Effect.flip(install.executable)
+        assert.include(first.reason, "downloading")
+        const again = yield* Effect.flip(install.executable)
+        assert.include(again.reason, "tried again five minutes after it failed")
+      }).pipe(
+        Effect.provide(
+          TestBoard({
+            chromeBin: null,
+            chromeRelease: { version: "0", url: "http://127.0.0.1:2/chrome.zip", bytes: 1, sha256: "0", program: "chrome" },
+          }).pipe(Layer.provideMerge(NodeServices.layer)),
+        ),
+      ),
     TIMEOUT,
   )
 })

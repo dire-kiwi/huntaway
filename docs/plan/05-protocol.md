@@ -220,7 +220,7 @@ Rpc.make("threads.watch", {
 | `GET /api/rpc` (websocket), `POST /api/rpc` | RPC                                                                                      | per request                  |
 | `GET /api/relay/<ticket>` (websocket)      | A client's socket to another host, relayed                                                | the ticket                   |
 | `GET /api/terminal/<ticket>` (websocket)   | A terminal: binary output and input, JSON control frames, as now                          | the ticket                   |
-| `GET /api/browser/<ticket>` (websocket)    | A task's browser (HE-62): a viewer's stream (JPEG frames, JSON page and input frames), or the desktop pane's CDP relay | the ticket |
+| `GET /api/browser/<ticket>` (websocket)    | A task's browser (HE-62): a viewer's stream (JPEG frames, JSON page and input frames; `browser.open`), or the desktop pane's CDP relay (`browser.pane`) | the ticket |
 | `* /api/spaces/v/<ticket>/…`               | A Space's spacesd (HE-35): its viewer page, gRPC-Web calls and media websocket, relayed  | the ticket (an hour, reused) |
 | `GET /api/link` (websocket)                | A host dialling in: its control connection                                                | the hub token                |
 | `GET /api/link/stream/<id>` (websocket)    | A host answering the hub's request for one more socket                                    | the hub token and the id     |

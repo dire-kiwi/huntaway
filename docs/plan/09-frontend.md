@@ -352,15 +352,17 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   `@huntaway/shared`, which the agent's `navigate` uses too).
 - `BrowserWebview.tsx`: the old pane's <webview> (`persist:huntaway-browser`, popups in the pane, DevTools, open in the
   system's browser, the last address in `ia.browser:<host>:<task>`), which an empty pane starts at the agent's page
-  (`browser.status`). Once the webview is ready it takes its debugger through the preload's `paneDebugger` and opens
-  `/api/browser/<ticket>` as `desktop`: the server's CDP commands go to the debugger and its answers and events come
+  (`browser.status`): it starts at the first web address it learns of (the saved one, the task's preview, the agent's
+  page) and keeps it. Once the webview is ready it takes its debugger through the preload's `paneDebugger` and opens
+  `/api/browser/<ticket>` with a `browser.pane` ticket: the server's CDP commands go to the debugger and its answers and events come
   back. A dot in the bar says whether the agent is connected. Closed, it stays mounted for the task it was opened on
   (`TaskView`'s `keptFor`; never for a task viewed after), off-screen at a page's size rather than `display: none`,
   so its page stays and still draws for the agent.
 - `BrowserStream.tsx`: a canvas the socket's JPEG frames are drawn on (`createImageBitmap`), each acknowledged once
   drawn; the pane's size is the page's (a `ResizeObserver`, after 150 ms); mouse, wheel (a non-passive listener), keys
   and pasted text go back as JSON. It shows the download of Chrome as it goes, and says so when the desktop app has the
-  page. Unmounted when closed: the page stays on the host. A socket the server closes (the page went) is opened again
+  page. Unmounted when closed: the page stays on the host. An `error` before the page has shown (no Chrome, its
+  sandbox) is final, with Retry (a new stream); after, it's a dismissable note. A socket the server closes (the page went) is opened again
   with a new ticket.
 - The desktop shell: `main/paneDebugger.ts` (`huntaway:browser-debug`, `-send`, `-undebug`; only the board's own frame,
   only for a <webview> it embeds; events relayed as `huntaway:browser-event`), and the preload's `paneDebugger`.

@@ -10,8 +10,13 @@ export const BrowserHandlers = BrowserRpcs.toLayer(
     const browsers = yield* Browsers
     const tasks = yield* Tasks
     return BrowserRpcs.of({
-      "browser.open": ({ task_id, role }) =>
-        browsers.ticket(task_id, role).pipe(
+      "browser.open": ({ task_id }) =>
+        browsers.ticket(task_id, "view").pipe(
+          Effect.map((ticket) => ({ ticket })),
+          Effect.catchTag("TaskNotFound", taskNotFound),
+        ),
+      "browser.pane": ({ task_id }) =>
+        browsers.ticket(task_id, "desktop").pipe(
           Effect.map((ticket) => ({ ticket })),
           Effect.catchTag("TaskNotFound", taskNotFound),
         ),

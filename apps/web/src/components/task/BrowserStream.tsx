@@ -22,6 +22,8 @@ type Conn =
   | { readonly state: "installing"; readonly received: number; readonly total: number; readonly phase: string }
   | { readonly state: "desktop" }
   | { readonly state: "error"; readonly message: string }
+  /** The browser couldn't open: not tried again until the user says so. */
+  | { readonly state: "failed"; readonly message: string }
 
 interface Page {
   readonly url: string
@@ -60,6 +62,12 @@ const pointIn = (cv: HTMLCanvasElement | null, vp: { readonly width: number; rea
 }
 
 export function BrowserStream({ task, onClose }: { task: Task; onClose: () => void }) {
+  // Retry, after the browser couldn't open, is a new stream.
+  const [attempt, setAttempt] = useState(0)
+  return <Stream key={attempt} task={task} onClose={onClose} onRetry={() => setAttempt((n) => n + 1)} />
+}
+
+function Stream({ task, onClose, onRetry }: { task: Task; onClose: () => void; onRetry: () => void }) {
   const [saved, save] = useAtom(browserUrlAtom(`${task.host_id}:${task.id}`))
   // Where a browser the task doesn't have yet starts: the page it was last on here, else its preview.
   const start = useRef(saved ?? task.preview_url ?? "")
@@ -81,11 +89,12 @@ export function BrowserStream({ task, onClose }: { task: Task; onClose: () => vo
     const at: {
       disposed: boolean
       done: boolean
+      shown: boolean
       ws: WebSocket | null
       retries: number
       cancelRetry: (() => void) | undefined
       cancelResize: (() => void) | undefined
-    } = { disposed: false, done: false, ws: null, retries: 0, cancelRetry: undefined, cancelResize: undefined }
+    } = { disposed: false, done: false, shown: false, ws: null, retries: 0, cancelRetry: undefined, cancelResize: undefined }
     const size = () => ({ width: Math.max(200, Math.round(el.clientWidth)), height: Math.max(150, Math.round(el.clientHeight)) })
     const send = (v: unknown) => {
       if (at.ws?.readyState === WebSocket.OPEN) at.ws.send(toJson(v))
@@ -116,11 +125,14 @@ export function BrowserStream({ task, onClose }: { task: Task; onClose: () => vo
         case "page": {
           const url = str(frame, "url")
           setPage({ url: url === "about:blank" ? "" : url, title: str(frame, "title"), loading: field(frame, "loading") === true })
-          if (url !== "" && url !== "about:blank") save(url)
+          if (/^https?:/u.test(url)) save(url)
           return
         }
         case "viewport":
           viewport.current = { width: numOf(frame, "width"), height: numOf(frame, "height") }
+          // The page shows: a later drop is tried again from the shortest wait.
+          at.shown = true
+          at.retries = 0
           setConn({ state: "open" })
           return
         case "installing":
@@ -131,7 +143,12 @@ export function BrowserStream({ task, onClose }: { task: Task; onClose: () => vo
           setConn({ state: "desktop" })
           return
         case "error":
-          setFailure(str(frame, "message"))
+          // Before the page shows, the browser couldn't open (no Chrome, its sandbox): trying again each second would
+          // only do the same, so it waits for the user's Retry.
+          if (!at.shown) {
+            at.done = true
+            setConn({ state: "failed", message: str(frame, "message") })
+          } else setFailure(str(frame, "message"))
           return
         default:
       }
@@ -144,7 +161,7 @@ export function BrowserStream({ task, onClose }: { task: Task; onClose: () => vo
     }
     const connect = () => {
       if (at.disposed) return
-      void run(mutate("browser.open", task.host_id, { task_id: task.id, role: "view" })).then((exit) => {
+      void run(mutate("browser.open", task.host_id, { task_id: task.id })).then((exit) => {
         if (at.disposed) return
         if (!Exit.isSuccess(exit)) {
           retry(exitError(exit) ?? "Can't reach the task's browser")
@@ -159,7 +176,7 @@ export function BrowserStream({ task, onClose }: { task: Task; onClose: () => vo
         ws.binaryType = "arraybuffer"
         at.ws = ws
         ws.addEventListener("open", () => {
-          at.retries = 0
+          at.shown = false
         })
         ws.addEventListener("message", (e: MessageEvent<unknown>) => {
           if (e.data instanceof ArrayBuffer) draw(e.data)
@@ -261,7 +278,9 @@ export function BrowserStream({ task, onClose }: { task: Task; onClose: () => vo
             e.preventDefault()
           }}
         />
-        {!shown && page.url === "" && conn.state !== "desktop" && conn.state !== "installing" && conn.state !== "error" && <NoPage />}
+        {!shown && page.url === "" && conn.state !== "desktop" && conn.state !== "installing" && conn.state !== "error" && conn.state !== "failed" && (
+          <NoPage />
+        )}
         {conn.state === "connecting" && !hasFrame && (
           <div className="absolute inset-x-0 top-3 flex justify-center text-[12px] text-muted">
             <Loader2 size={13} className="mr-1.5 animate-spin" /> Opening the task&apos;s browser…
@@ -278,6 +297,14 @@ export function BrowserStream({ task, onClose }: { task: Task; onClose: () => vo
         {conn.state === "desktop" && (
           <NoPage>
             <p>This task&apos;s browser is open in the desktop app on its host, so it isn&apos;t streamed here.</p>
+          </NoPage>
+        )}
+        {conn.state === "failed" && (
+          <NoPage>
+            <p className="max-w-md break-words text-red-400">{conn.message}</p>
+            <button className="rounded-md border border-line px-3 py-1 text-fg hover:bg-white/5" onClick={onRetry}>
+              Retry
+            </button>
           </NoPage>
         )}
         {conn.state === "error" && !hasFrame && (

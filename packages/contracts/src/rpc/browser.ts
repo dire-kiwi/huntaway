@@ -5,8 +5,8 @@ import { TaskId } from "../ids.ts"
 import { Auth, RequiredScope } from "../session.ts"
 
 // HE-62: each task's web browser, which its agent drives with the `browser` MCP server and the board shows beside the
-// thread. `browser.open` gives a ticket for the socket `/api/browser/<ticket>` (single use, for a minute), as
-// `terminal.open` does, in one of two roles:
+// thread. `browser.open` (a viewer) and `browser.pane` (the desktop app's pane) give a ticket for the socket
+// `/api/browser/<ticket>` (single use, for a minute), as `terminal.open` does, in one of two roles:
 //
 // - `view`: the browser streamed from the host's headless Chrome. The server sends each frame of the page as a binary
 //   message (a JPEG) and waits for the client's `ack` before the next, and `BrowserServerFrame`s as JSON; the client
@@ -79,8 +79,13 @@ export const BrowserClientFrame = Schema.Union([
 export type BrowserClientFrame = typeof BrowserClientFrame.Type
 
 export class BrowserRpcs extends RpcGroup.make(
-  /** A ticket for the task's browser's socket, as a viewer of its stream or as the desktop app's pane. */
-  Rpc.make("browser.open", { payload: { task_id: TaskId, role: BrowserRole }, success: BrowserTicket, error: NotFound }).annotate(RequiredScope, "operate"),
+  /** A ticket for the task's browser's socket as a viewer of its stream: web pages only, so `operate` (a phone) may. */
+  Rpc.make("browser.open", { payload: { task_id: TaskId }, success: BrowserTicket, error: NotFound }).annotate(RequiredScope, "operate"),
+  /**
+   * A ticket for the socket as the desktop app's pane, whose page the agent then drives and whose address the tab
+   * keeps: `terminal`, as the host's desktop view needs, since only the board's own app hands one over.
+   */
+  Rpc.make("browser.pane", { payload: { task_id: TaskId }, success: BrowserTicket, error: NotFound }).annotate(RequiredScope, "terminal"),
   /** The task's browser's page, if it has one open. */
   Rpc.make("browser.status", { payload: { task_id: TaskId }, success: Schema.NullOr(BrowserPage), error: NotFound }).annotate(RequiredScope, "read"),
 ).middleware(Auth) {}

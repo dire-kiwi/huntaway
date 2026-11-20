@@ -53,6 +53,9 @@ export interface ChromeInstallShape {
   readonly installing: Effect.Effect<ChromeInstalling | null>
 }
 
+/** How long a failed install isn't tried again. */
+const RETRY_AFTER_MS = 5 * 60_000
+
 const fail = (reason: string) => Effect.fail(new ChromeUnavailable({ reason }))
 const fsError = (what: string) => (e: { readonly message: string }) => new ChromeUnavailable({ reason: `${what}: ${e.message}` })
 
@@ -71,6 +74,8 @@ export class ChromeInstall extends Context.Service<ChromeInstall, ChromeInstallS
       const at = (p: ChromeInstalling | null) => Ref.set(progress, p)
       /** The install going, which later callers wait for rather than start another. */
       const going = yield* Ref.make<Deferred.Deferred<string, ChromeUnavailable> | null>(null)
+      /** The last install that failed, which isn't tried again for `RETRY_AFTER_MS` (each try downloads 125 MB). */
+      const failed = yield* Ref.make<{ readonly at: number; readonly reason: string } | null>(null)
 
       const download = (r: ChromeReleaseConfig, to: string) =>
         Effect.gen(function* () {
@@ -132,13 +137,19 @@ export class ChromeInstall extends Context.Service<ChromeInstall, ChromeInstallS
           return yield* fail(`Chrome for Testing has no headless Chrome for ${config.platform}: set HUNTAWAY_CHROME to a Chrome or Chromium.`)
         const path = `${root}/${release.version}/${release.program}`
         if (yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false))) return path
+        const now = yield* Clock.currentTimeMillis
+        const last = yield* Ref.get(failed)
+        if (last !== null && now - last.at < RETRY_AFTER_MS) return yield* fail(`${last.reason} (It's tried again five minutes after it failed.)`)
         // One install at a time: a caller while one is going waits for it.
         const mine = yield* Deferred.make<string, ChromeUnavailable>()
         const theirs = yield* Ref.modify(going, (g) => (g === null ? [null, mine] : [g, g]))
         if (theirs !== null) return yield* Deferred.await(theirs)
         return yield* install(release).pipe(
           Effect.onExit((exit) => Effect.andThen(Deferred.done(mine, exit), Ref.set(going, null))),
-          Effect.tapError((e) => Effect.logError(`installing Chrome ${release.version} failed: ${e.reason}`)),
+          Effect.tapError((e) =>
+            Effect.andThen(Ref.set(failed, { at: now, reason: e.reason }), Effect.logError(`installing Chrome ${release.version} failed: ${e.reason}`)),
+          ),
+          Effect.tap(() => Ref.set(failed, null)),
         )
       })
 

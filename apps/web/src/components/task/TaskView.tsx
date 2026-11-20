@@ -311,7 +311,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // 6.10: it needs the room.
   const toggleDesktop = () => {
     if (!desktop && mode === "panel") setPanelExpanded(true)
-    if (!desktop) closeBrowser()
+    // Only a browser that was open stays mounted (closed) for the task: opening the desktop view mounts none.
+    if (!desktop && browser) closeBrowser()
     setDesktop(!desktop)
   }
   const toggleBrowser = () => {

@@ -38,7 +38,8 @@ instead, set `HUNTAWAY_CHROME` to it in the server's environment.
 
 Chrome runs in its own sandbox. On a host where that can't start (the server runs as root or in a container, or
 Ubuntu 23.10 and later, which blocks it with AppArmor), the browser says it didn't start; set
-`HUNTAWAY_CHROME_SANDBOX=0` in the server's environment and restart it.
+`HUNTAWAY_CHROME_SANDBOX=0` in the server's environment and restart it. When the browser can't open, the pane says why
+and waits for you to press **Retry**; a download that failed isn't tried again for five minutes.
 
 Its cookies and storage are in `<data dir>/browser/profile`, shared by every task on the host.
 

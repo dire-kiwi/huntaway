@@ -139,12 +139,20 @@ const setSize = (page: CdpPage, s: { readonly width: number; readonly height: nu
   page.send("Emulation.setDeviceMetricsOverride", { width: s.width, height: s.height, deviceScaleFactor: 1, mobile: false }).pipe(Effect.ignore)
 
 /** Read the page's address and title into `info`, when they changed. */
+/**
+ * Whether an address is one the tab keeps as where its page is: a web page, or blank. Chrome's error page
+ * (`chrome-error://chromewebdata/`) isn't (the address that failed is), nor anything a pane reports that a viewer
+ * mustn't open again (`file:`): a page opened again loads the tab's address.
+ */
+export const keptAddress = (url: string) => url === BLANK || (url !== "" && browserUrl(url) === url)
+
+/** Read the page's address (when it's one to keep) and title into `info`, when they changed. */
 const refresh = (page: CdpPage, info: SubscriptionRef.SubscriptionRef<BrowserPage>) =>
   Effect.gen(function* () {
     const i = yield* pageInfo(page).pipe(Effect.option)
     if (Option.isNone(i)) return
     const p = yield* SubscriptionRef.get(info)
-    const url = i.value.url || p.url
+    const url = keptAddress(i.value.url) ? i.value.url : p.url
     if (url !== p.url || i.value.title !== p.title) yield* SubscriptionRef.set(info, { ...p, url, title: i.value.title })
   })
 
@@ -236,18 +244,21 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
               if (e.sessionId !== page.sessionId) return Effect.void
               const frame = isRecord(e.params["frame"]) ? e.params["frame"] : undefined
               switch (e.method) {
-                case "Page.frameNavigated":
+                case "Page.frameNavigated": {
+                  if (frame === undefined || frame["parentId"] !== undefined) return Effect.void
+                  // Chrome's error page for one that didn't load names the address that didn't in `unreachableUrl`.
+                  const failed = str(frame, "unreachableUrl")
+                  const to = failed !== "" ? failed : `${str(frame, "url")}${str(frame, "urlFragment")}`
                   // A new page: a dialog of the last one isn't news any more.
-                  return frame !== undefined && frame["parentId"] === undefined
-                    ? Effect.andThen(
-                        SubscriptionRef.update(info, (p) => ({ ...p, url: `${str(frame, "url")}${str(frame, "urlFragment")}` })),
-                        setTab(task, (t) => ({ ...t, dialog: null })),
-                      )
-                    : Effect.void
+                  return Effect.andThen(
+                    keptAddress(to) ? SubscriptionRef.update(info, (p) => ({ ...p, url: to })) : Effect.void,
+                    setTab(task, (t) => ({ ...t, dialog: null })),
+                  )
+                }
                 case "Page.navigatedWithinDocument":
                   return str(e.params, "frameId") === mainFrame
                     ? Effect.andThen(
-                        SubscriptionRef.update(info, (p) => ({ ...p, url: str(e.params, "url") })),
+                        keptAddress(str(e.params, "url")) ? SubscriptionRef.update(info, (p) => ({ ...p, url: str(e.params, "url") })) : Effect.void,
                         title,
                       )
                     : Effect.void
@@ -315,7 +326,8 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
             if (tab.headless !== null) yield* Scope.close(tab.headless.scope, Exit.void)
             const was = (yield* SubscriptionRef.get(tab.info)).url
             const h = yield* openHeadless(task, tab)
-            const load = was !== BLANK && was !== "" ? was : url !== undefined && url !== "" ? url : null
+            // The tab's last address (only a web page's is ever kept), else the one asked for (checked by the caller).
+            const load = was !== BLANK && keptAddress(was) ? was : url !== undefined && url !== "" ? url : null
             return { h, tab, load }
           }),
         )
@@ -477,7 +489,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           yield* Effect.addFinalizer(() => setTab(task, (t) => (t.desktop?.id === pane.id ? { ...t, desktop: null } : t)))
           yield* track(task, pane.page, before.tab.info, false)
           // The agent's page carries over to the pane.
-          if (before.hadHeadless && before.was !== BLANK && before.was !== "" && before.was !== its.url)
+          if (before.hadHeadless && before.was !== BLANK && keptAddress(before.was) && before.was !== its.url)
             yield* navigate(pane.page, before.was).pipe(Effect.ignore)
           yield* touch(task)
           yield* cdp.closed

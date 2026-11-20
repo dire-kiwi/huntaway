@@ -81,7 +81,12 @@ export const navigate = (page: CdpPage, url: string) =>
           ),
         )
       const failed = str(r, "errorText")
-      if (failed !== "") return yield* new PageRefused({ reason: `${url} didn't load: ${failed}` })
+      if (failed !== "") {
+        // Chrome commits its error page for it next (naming the address in `unreachableUrl`): waited for, so the tab's
+        // address is settled when the agent is told.
+        yield* nextEvent(page, sub, isMainCommit, "2 seconds")
+        return yield* new PageRefused({ reason: `${url} didn't load: ${failed}` })
+      }
       // A same-document navigation (only the #fragment changed) has no loader and fires no load event.
       if (str(r, "loaderId") !== "") yield* nextEvent(page, sub, isLoad, LOAD_TIMEOUT)
       return yield* Effect.void
