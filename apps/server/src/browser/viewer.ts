@@ -1,4 +1,4 @@
-import { Effect, Option, PubSub, Ref, Schema, Stream, SubscriptionRef } from "effect"
+import { Effect, Option, PubSub, Ref, Schedule, Schema, Stream, SubscriptionRef } from "effect"
 import type { Scope } from "effect"
 import { Base64 } from "effect/encoding"
 import type { Socket } from "effect/socket"
@@ -22,6 +22,8 @@ export interface ViewerTab {
   /** The page's own session (the agent's), on which its size is set. */
   readonly main: CdpPage
   readonly info: SubscriptionRef.SubscriptionRef<BrowserPage>
+  /** Read the page's address and title again (a script may change the title with no event). */
+  readonly refresh: Effect.Effect<void>
   /** Set the page's size (CSS pixels), as the viewer asks. */
   readonly resize: (width: number, height: number) => Effect.Effect<{ readonly width: number; readonly height: number }>
   /** Load an address the viewer typed; fails with why it didn't load. */
@@ -34,6 +36,8 @@ export interface ViewerTab {
 
 /** JPEG quality, and the largest frame sent. */
 const QUALITY = 70
+/** How often a watched page's title is looked at. */
+const TITLE_EVERY = "2 seconds"
 const decodeFrame = Schema.decodeUnknownOption(Schema.fromJsonString(BrowserClientFrame))
 const decoder = new TextDecoder()
 
@@ -119,6 +123,7 @@ export const relayViewer = Effect.fnUntraced(function* (
     Effect.forkScoped,
   )
 
+  yield* tab.refresh.pipe(Effect.repeat(Schedule.spaced(TITLE_EVERY)), Effect.forkScoped)
   yield* page.send("Page.enable").pipe(Effect.ignore)
   yield* resized(size.width, size.height)
 

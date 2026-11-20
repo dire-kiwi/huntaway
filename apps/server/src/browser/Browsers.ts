@@ -131,6 +131,16 @@ interface Running {
 const setSize = (page: CdpPage, s: { readonly width: number; readonly height: number }) =>
   page.send("Emulation.setDeviceMetricsOverride", { width: s.width, height: s.height, deviceScaleFactor: 1, mobile: false }).pipe(Effect.ignore)
 
+/** Read the page's address and title into `info`, when they changed. */
+const refresh = (page: CdpPage, info: SubscriptionRef.SubscriptionRef<BrowserPage>) =>
+  Effect.gen(function* () {
+    const i = yield* pageInfo(page).pipe(Effect.option)
+    if (Option.isNone(i)) return
+    const p = yield* SubscriptionRef.get(info)
+    const url = i.value.url || p.url
+    if (url !== p.url || i.value.title !== p.title) yield* SubscriptionRef.set(info, { ...p, url, title: i.value.title })
+  })
+
 const sizeOf = (w: number, h: number) => ({ width: Math.max(200, Math.min(3840, Math.round(w))), height: Math.max(150, Math.min(2160, Math.round(h))) })
 
 export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaway-server/browser/Browsers") {
@@ -213,9 +223,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           const sub = yield* page.subscribe
           const tree = yield* page.send("Page.getFrameTree").pipe(Effect.orElseSucceed((): CdpResult => ({})))
           const mainFrame = isRecord(tree["frameTree"]) && isRecord(tree["frameTree"]["frame"]) ? str(tree["frameTree"]["frame"], "id") : ""
-          const title = Effect.flatMap(pageInfo(page).pipe(Effect.option), (i) =>
-            Option.isSome(i) ? SubscriptionRef.update(info, (p) => ({ ...p, url: i.value.url || p.url, title: i.value.title })) : Effect.void,
-          )
+          const title = refresh(page, info)
           yield* PubSub.take(sub).pipe(
             Effect.flatMap((e) => {
               if (e.sessionId !== page.sessionId) return Effect.void
@@ -265,7 +273,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
         Effect.gen(function* () {
           const r = yield* chrome
           const cdp = r.chrome.cdp
-          const made = yield* cdp.send("Target.createTarget", { url: BLANK, background: true })
+          const made = yield* cdp.send("Target.createTarget", { url: BLANK })
           const targetId = str(made, "targetId")
           const page = pageOf(cdp, str(yield* cdp.send("Target.attachToTarget", { targetId, flatten: true }), "sessionId"))
           yield* preparePage(page)
@@ -401,6 +409,8 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
               main: h.page,
               info: now.info,
               taken: Deferred.await(now.taken),
+              // A script may change the title with no event of the page's: it's looked at while someone watches.
+              refresh: refresh(h.page, now.info),
               resize: (w, hgt) =>
                 Effect.gen(function* () {
                   const s = sizeOf(w, hgt)

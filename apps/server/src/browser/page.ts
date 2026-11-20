@@ -24,6 +24,8 @@ export interface PageInfo {
 }
 
 const isLoad = (e: CdpEvent) => e.method === "Page.loadEventFired"
+/** A navigation is over: its page loaded, or it came back from the back/forward cache, which fires no load. */
+const isSettled = (e: CdpEvent) => isLoad(e) || e.method === "Page.frameStoppedLoading" || e.method === "Page.navigatedWithinDocument"
 const isMainStart = (e: CdpEvent) =>
   e.method === "Page.frameStartedLoading" || (e.method === "Page.frameRequestedNavigation" && str(e.params, "disposition") === "currentTab")
 
@@ -48,7 +50,7 @@ const settling = <A, E>(page: CdpPage, action: Effect.Effect<A, E>) =>
       const sub = yield* page.subscribe
       const out = yield* action
       const started = yield* nextEvent(page, sub, (e) => isMainStart(e) || isLoad(e), NAVIGATION_START)
-      if (Option.isSome(started) && !isLoad(started.value)) yield* nextEvent(page, sub, isLoad, LOAD_TIMEOUT)
+      if (Option.isSome(started) && !isLoad(started.value)) yield* nextEvent(page, sub, isSettled, LOAD_TIMEOUT)
       return out
     }),
   )
