@@ -1132,6 +1132,14 @@ was the reference for the protocol and Antigravity's dialect.
   asked as `item/tool/requestUserInput` with one question `answer`. `acceptForSession` answers `allow_always`. After a
   `session/cancel` the turn has 10 s to end, then the agent is killed and the turn written as interrupted. The agent's
   `BROWSER` is `true`, so a sign-in never opens one.
+- **Robustness** (after review): the agent runs as `sh -c LAUNCH <program> <args>` (`agents/acp/rpc.ts`) in its own
+  process group, with a watchdog on a pipe the adapter holds, so the group dies with the adapter however it ends; at
+  the end its input closes and it has 3 s to exit before the group is stopped. Setup calls time out (60 s; resume and
+  load 120 s, then a fresh session). Antigravity's MCP calls (`Run wait?`, `_meta.is_mcp_tool_call`, the server and
+  tool in `rawInput`) are named by `rawInput`, and a bare tool name of the board's (`BOARD_TOOLS`, now in
+  `packages/shared`) is the board's server's. Text after a turn's end is still written; a cancel the agent answers
+  with an error ends the turn interrupted; an agent dying mid-turn ends it failed. MCP header values and bearer tokens
+  are redacted from everything the adapter writes. A config's command takes simple quotes (`commandWords`, no shell).
 - **`acp-run --list-models <spec.json>`** prints one line, `{models: [{id, name, description}], current, efforts,
   default_effort}` (the `model` config option, else the legacy `models`; efforts from a `thought_level` option); exit 3
   is a sign-in refusal. `AcpQueries` (`agents/AcpQueries.ts`, live in `agents/acp/AcpQueriesLive.ts`) runs it in a temp
