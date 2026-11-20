@@ -26,11 +26,11 @@ export const checkSocksProxy = (given: string): Effect.Effect<string | null, Inv
   if (text === "") return Effect.succeed(null)
   const url = URL.parse(text)
   if (url === null || !SCHEMES.has(url.protocol) || url.hostname === "") {
-    return refuse("socks_proxy must be a SOCKS5 proxy's address, like socks5://127.0.0.1:1080")
+    return refuse("give a SOCKS5 proxy's address, like socks5://127.0.0.1:1080")
   }
-  if (url.username !== "" || url.password !== "") return refuse("socks_proxy can't have a user or password: the browser can't sign in to a SOCKS proxy")
+  if (url.username !== "" || url.password !== "") return refuse("no user or password: the browser can't sign in to a SOCKS proxy")
   if ((url.pathname !== "" && url.pathname !== "/") || url.search !== "" || url.hash !== "") {
-    return refuse("socks_proxy is a host and port only, like socks5://127.0.0.1:1080")
+    return refuse("a host and port only, like socks5://127.0.0.1:1080")
   }
   return Effect.succeed(`socks5://${url.hostname}:${url.port === "" ? SOCKS_PORT : url.port}`)
 }

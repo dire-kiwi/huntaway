@@ -1,3 +1,4 @@
+import { Exit } from "effect"
 import { useBoard } from "../../../state/board"
 import { useMutation } from "../../../state/mutation"
 import { Button, Input, useDraft } from "../../ui"
@@ -14,7 +15,11 @@ export function SocksProxyRow({ host }: { host: { readonly id: string } }) {
   const [{ busy, error }, updateSettings] = useMutation("host.updateSettings")
   if (saved === undefined) return null
   const changed = draft.trim() !== (saved ?? "")
-  const save = () => void updateSettings(host.id, { patch: { socks_proxy: draft.trim() || null } })
+  // What's stored may be written otherwise (`socks5h://proxy` is `socks5://proxy:1080`): the field shows that.
+  const save = () =>
+    void updateSettings(host.id, { patch: { socks_proxy: draft.trim() || null } }).then((exit) => {
+      if (Exit.isSuccess(exit)) setDraft(exit.value.socks_proxy ?? "")
+    })
   return (
     <section>
       <h2 className="mb-1 text-[13px] font-semibold">SOCKS proxy</h2>
@@ -26,6 +31,7 @@ export function SocksProxyRow({ host }: { host: { readonly id: string } }) {
         <div className="flex items-center gap-2">
           <Input
             aria-label="SOCKS proxy"
+            spellCheck={false}
             className="font-mono text-[12px]"
             value={draft}
             placeholder="socks5://127.0.0.1:1080"

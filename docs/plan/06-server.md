@@ -479,6 +479,8 @@ As built in 4.5 (HE-5):
 - **RPCs**: `tasks.fixChecks` (`operate`; `Invalid` `pr_url` without a readable pull request, `Conflict` with the new
   reasons `pr_not_open` and `nothing_failed`, a refused message as `tasks.send`), `tasks.unmerged` (`read`),
   `board.previewStatus` (`read`; `Invalid` `url` for one that isn't http(s); `PreviewStatus` in the board contract).
+  HE-67: it goes through the host's SOCKS proxy (below, Browser) when it has one and the page isn't on this machine
+  (`platform/socks.ts`: `proxiedTo`, `socksClient`, an undici `Socks5ProxyAgent` under `NodeHttpClient.makeUndici`).
 - **Main**: `GithubLive` has `PrWatch`, `PullRequests` and `PrWatchRepo`; `areasLayer` has `InReview` and
   `MergedWatcher` above the merge gate; their loops are `PrLoops`, beside `RunLoops` in `AreasLive` (not in
   `areasLayer`: tests run `InReview.sweep` and `MergedWatcher.check` themselves).
@@ -1498,6 +1500,17 @@ take the same code, with no Playwright in the server.
   relays its <webview>) run in this machine's Chromium (`systemChrome` in `@huntaway/testing`: `$CHROMIUM`, else
   `/usr/bin/chromium`) and are skipped without one; nothing downloads Chrome in a test. Test servers
   (`scripts/test-server.sh`) run the same Chromium without its sandbox.
+- **The host's SOCKS proxy** (HE-67): `socks_proxy` in the host's settings (`socks5://host:port`; `socks5h://` and
+  `socks://` are taken as that, port 1080 by default, no user or password since Chrome can't give one: `checkSocksProxy`
+  in `platform/socks.ts`), for previews only reachable over a VPN or an SSH tunnel. Not synced (each host's own). The
+  headless Chrome starts with `--proxy-server` (names resolved at the proxy; Chrome leaves loopback pages out), and the
+  preview checks (`previewStatus`) go the same way, loopback pages direct. `Running` keeps the proxy Chrome started
+  with: a change of the setting (`settings_changed`) closes a Chrome with another, and a page of one counts as gone
+  (`alive`), so each page opens again where it was, through the new one, when it's next used or watched. The desktop
+  pane's session gets it from the board (`BrowserWebview`, the preload's `setBrowserProxy`, `huntaway:browser-proxy`:
+  only from the board's frame, only when the server is on this machine, only a `socks5://host:port`), before its first
+  page loads. Settings → the host's page has the field (`hosts/SocksProxy.tsx`, shown when the host reports the key).
+  Tested with `fakeSocks` (`@huntaway/testing`): the setting, the client, `previewStatus`, and the headless browser.
 - **Not yet**: copy from the page to the viewer's clipboard, file uploads and downloads through the viewer, touch
   scrolling on a phone (taps work: the browser makes them mouse events), input methods, more than one tab a task,
   `t3 browser setup`'s AppArmor profile for Ubuntu's blocked sandbox (`HUNTAWAY_CHROME_SANDBOX=0` instead), and a task on
