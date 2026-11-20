@@ -46,6 +46,11 @@ const Answer = Schema.fromJsonString(
   }),
 )
 const Published = Schema.fromJsonString(Schema.Struct({ slug: Schema.String, version: Schema.Finite, url: Schema.String }))
+const UploadUrl = Schema.fromJsonString(Schema.Struct({ upload_url: Schema.String }))
+const Uploaded = Schema.fromJsonString(Schema.Struct({ id: Schema.String }))
+
+/** A 1×1 PNG, for an image sent to an upload URL. */
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64")
 
 describe("the docs plugin, on a whole server", () => {
   it.live("a run publishes a document through the docs server, and the plugin's page at its link shows it", () =>
@@ -80,14 +85,34 @@ describe("the docs plugin, on a whole server", () => {
       assert.notStrictEqual(answer.result.isError, true, answer.result.content[0]?.text)
       const published = yield* Schema.decodeEffect(Published)(answer.result.content[0]?.text ?? "")
       assert.deepStrictEqual([published.slug, published.version], ["rollout-plan", 1])
-      // The link agents are given is the board's own `/docs/<profile id>/d/<slug>/`, as the built-in documents' was.
+      // The link agents are given is the board's own `/docs/<profile id>/d/<slug>/`, as the built-in documents' was, on
+      // the port the server listens on (`--port 0` here; HE-63).
       const path = new URL(published.url).pathname
       assert.strictEqual(path, "/docs/e2e/d/rollout-plan/")
+      assert.strictEqual(new URL(published.url).port, String(port))
 
       const rpc = yield* RpcClient.make(CliRpcs).pipe(Effect.provide(httpRpcClientLayer(`http://127.0.0.1:${port}`, token)))
       const page = yield* rpc["plugins.page"]({ plugin: PluginId.make("docs"), slot: "page", path: path.slice("/docs/".length), query: {}, task_id: null })
       assert.strictEqual(page.type, "html")
       assert.include(page.type === "html" ? page.html : "", "Ship it.")
+
+      // HE-63: an image file sent over HTTP to the URL `create_upload_url` gives (the plugin's public route, no board
+      // token, as an agent's `curl` sends it), then named by its id in a publish, shows in the page.
+      const asked = yield* call("create_upload_url", {})
+      const { upload_url } = yield* Schema.decodeEffect(UploadUrl)(asked.result.content[0]?.text ?? "")
+      assert.strictEqual(new URL(upload_url).port, String(port))
+      const sent = yield* client.execute(HttpClientRequest.post(upload_url).pipe(HttpClientRequest.bodyUint8Array(PNG, "image/png")))
+      const sentText = yield* sent.text
+      assert.strictEqual(sent.status, 200, sentText)
+      const uploaded = yield* Schema.decodeEffect(Uploaded)(sentText)
+      const withImage = yield* call("publish_document", {
+        title: "Chart",
+        pages: [{ path: "index", content: "# Chart\n\n![A dot](images/dot.png)\n" }],
+        images: [{ name: "images/dot.png", upload: uploaded.id }],
+      })
+      assert.notStrictEqual(withImage.result.isError, true, withImage.result.content[0]?.text)
+      const chart = yield* rpc["plugins.page"]({ plugin: PluginId.make("docs"), slot: "page", path: "e2e/d/chart/", query: {}, task_id: null })
+      assert.include(chart.type === "html" ? chart.html : "", "data:image/avif")
     }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, FetchHttpClient.layer])),
   )
 

@@ -68,7 +68,9 @@ images are `data:`/`blob:` URLs, data comes through the bridge), WebRTC taken aw
 board's theme as its own CSS variables (`--color-*`, `--font-*`), and `window.huntaway` is the bridge:
 
 - `huntaway.call(method, payload)` → a promise of the plugin's call's result, over `plugins.call` on its host;
-- `huntaway.navigate(path)` and `huntaway.openTask(id)`, after the user's own click in the frame;
+- `huntaway.navigate(path)` and `huntaway.openTask(id)`, after the user's own click in the frame; a page of the
+  plugin's own it navigates to is read again (`plugins.page` keeps a render for 10 seconds once nothing shows it), as
+  the plugin may have just changed it (HE-63: the docs editor's Save goes to the document);
 - `huntaway.onEvent(listener)` for the plugin's events;
 - `huntaway.context`: `{ host, plugin, slot, path, task_id }`.
 
@@ -99,7 +101,9 @@ frames get it, and one with `reload` renders its pages again (`plugins.page`'s t
 
 `routes: [{ method, path, auth?, handle }]` at `/plugins/<id><path>` (`http/plugins.ts`), for what isn't a page (an
 export, a webhook). `board` (the default) needs the board token as a bearer token; `public` answers anyone who
-reaches the board, and checks what it needs itself.
+reaches the board, and checks what it needs itself. `PluginHost.boardUrl` (and `pageUrl`) is the Public URL setting,
+else `http://127.0.0.1:<the port the server listens on>` (`Listening`, so a test server's `--port 0` gives its real
+port, HE-63): the docs plugin's upload URLs are made from it.
 
 ## The board's services (`PluginHost`)
 
@@ -158,11 +162,19 @@ stays the board's:
 - **Old hosts' events.** `docs`, `doc_comments` and `docs_site` stay in `BoardEvent`, which has no catch-all member,
   so a stream from a host before HE-42 still decodes; the web ignores them.
 
+At 0.3.0 (HE-63; DOC-17 to DOC-23) it also has: form fields' answers saved on the board, a document editor with
+drafts, mockups (HTML pages) in a design editor, and image files uploaded over HTTP (`create_upload_url`, then the
+plugin's public route `/plugins/docs/uploads/<token>`) and named by id in a publish. None of it needed more from the
+plugin API: the design editor's frames for mockups are `srcdoc` frames inside the plugin's, which `FRAME_CSP`'s
+`frame-src 'none'` doesn't hold (they load nothing), each under its own nonce policy on top of the inherited one
+(`tests/e2e/docs.test.ts` uploads an image and publishes it; the editors were tried in a browser).
+
 Updating it is a new release in dire-kiwi/docs (`render-v…` first if it needs a new renderer, then `huntaway-v…`) and
 the tarball URL bumped in `apps/server/package.json`. pnpm records no `integrity` for a tarball that is only a
 dependency's (the renderer is the plugin's), and `pnpm deploy` (`scripts/package-server.sh`) refuses one without: put
 the renderer's in `pnpm-lock.yaml` by hand, `sha512-` and the base64 of its tarball's SHA-512 (`openssl dgst -sha512
--binary <tgz> | base64 -w0`), which later installs keep.
+-binary <tgz> | base64 -w0`), which later installs keep. (pnpm 10.34 recorded the 0.6.0 renderer's itself, HE-63:
+check that the lockfile has it, and that it matches.)
 
 ## What's next
 

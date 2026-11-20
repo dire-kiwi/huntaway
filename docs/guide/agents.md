@@ -190,13 +190,16 @@ server off, or has its own `gh`, gets neither.
 **Docs.** Each run also gets the `docs` MCP server, for documents the user reads on the board: reports, plans,
 research. It is the docs plugin's (HE-42: `@dire-kiwi/docs-huntaway` from
 [dire-kiwi/docs](https://github.com/dire-kiwi/docs), included in this build; the board had it built in before, HA-280).
-Its tools are the hosted docs app's (`publish_document`, `list_documents`, `get_document`, `read_page`,
+Its tools are the hosted docs app's (`publish_document`, `create_upload_url`, `list_documents`, `get_document`, `read_page`,
 `move_document`, `set_document_labels`, `list_labels`, `get_feedback` and `list_components`, with the same schemas,
 checks, errors and warnings, from the site's own renderer), but the documents are kept on the host, in the profile of
 the run's task: each publish makes a new version (`mode: "merge"` keeps the previous version's other pages), slugs are
 unique per profile, and a new document goes in a folder named after the task's project unless the agent gives
 `folder`. Images go in `images` or inline as data: URIs, are converted to AVIF on the host and refused over 500 KB once
-converted; the server takes requests of up to 64 MB (the board's own servers 32 MB). `get_feedback` gives the comments
+converted; the server takes requests of up to 64 MB (the board's own servers 32 MB). An image file can instead be sent
+over HTTP: `create_upload_url` gives a URL on the board (`/plugins/docs/uploads/<token>`, for an hour) that the agent
+`curl`s the file to, and `images` names it by the id that answers (`{ name, upload }`). A page published as HTML is a
+mockup, which the user can change in the board's design editor. `get_feedback` gives the comments and form answers
 the user left on the board's pages. Sharing (`share_document`) isn't there. Its tools run without asking (in
 `--allowedTools`, or approved in Codex's config), its instructions say how to use it, and agents are told to publish
 write-ups there and give the user the URL it returns: `<board>/docs/<profile id>/d/<slug>/` (the host's _Public URL_,

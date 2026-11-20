@@ -46,10 +46,14 @@ label, each with its latest version and the task that published it. A document o
 `/docs/<profile id>/d/<slug>/` (`-/v/<n>/` for a version), the address agents give in their links, with a menu of its
 pages, a picker of its versions, **Labels**, **Move** and **Delete**. Pages are rendered on the host by the hosted
 site's own renderer and show in the plugin's sandboxed frame; their images are AVIFs the host keeps, given to the frame
-as data: URLs. Form fields (`<Approval />`, inputs) are read-only: documents on the board collect no answers.
+as data: URLs. Form fields (`<Approval />`, inputs) take answers, saved as you give them; they go to the task with
+the comments (below). **Edit** opens a document in the editor (each page's source beside a preview; **Save** publishes
+a new version, and unsaved changes are kept as a draft), and **New document** on the Docs page writes one. A page an
+agent published as HTML is a mockup, which opens in the design editor: inspect and change its elements, comment on
+them, and save the changed mockups as a new version.
 
 Selecting text in a page offers a comment, as on the hosted site: write it in the popup, and it's saved when you click
-away and shows as a bubble beside the text it quotes. **Send** sends the unsent ones, as one message, to the task that
+away and shows as a bubble beside the text it quotes. **Send** sends the unsent comments and answers, as one message, to the task that
 published the document; agents also read them with the docs server's `get_feedback`. A task's thread links each
 document it published to its page here, and a task's page lists them; Settings has a Docs section.
 

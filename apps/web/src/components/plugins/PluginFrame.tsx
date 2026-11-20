@@ -3,7 +3,9 @@ import { pluginCall, pluginEventAtom, query } from "@huntaway/client"
 import { TaskId } from "@huntaway/contracts"
 import { Exit } from "effect"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { parse } from "../../router"
 import { exitError, runExit } from "../../state/mutation"
+import { registry } from "../../state/registry"
 import { navigate, openTask } from "../../state/route"
 import { followsFrameInput, fromFrame, openable, trackBoardInput } from "../task/htmlFrame"
 import { Loading } from "../ui/Loading"
@@ -124,7 +126,14 @@ function Frame({
         // Moving the board needs the user's own click or key press in the frame.
         if (kind === "navigate" && navigator.userActivation?.isActive) {
           const to = boardPath(Reflect.get(m, "path"))
-          if (to !== null) navigate(to)
+          if (to !== null) {
+            // A page of its own it sends the board to is read again, not one rendered in the last 10 seconds (the
+            // query's idle time): the plugin may have just changed it, as the docs editor's Save does (HE-63).
+            const next = parse(new URL(to, window.location.origin).pathname)
+            if (next.name === "plugin" && next.plugin === plugin)
+              registry.refresh(query("plugins.page", host, { plugin, slot: "page", path: next.path, query: NO_QUERY, task_id: null }))
+            navigate(to)
+          }
         }
         if (kind === "openTask" && navigator.userActivation?.isActive) {
           const id = Reflect.get(m, "id")

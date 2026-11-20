@@ -6,7 +6,7 @@ import { PluginError } from "@huntaway/plugin"
 import type { PluginHostShape, PluginProfile, PluginProject, PluginTask } from "@huntaway/plugin"
 import { Events } from "../platform/Events.ts"
 import { Identity } from "../platform/Identity.ts"
-import { ServerConfig } from "../platform/ServerConfig.ts"
+import { Listening } from "../platform/Listening.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { Runs } from "../runs/Runs.ts"
@@ -46,7 +46,7 @@ const key = (profile: string | null) => profile ?? ""
 /** What makes each plugin's `PluginHost`: the board's services, taken once. */
 export const makeHosts = Effect.gen(function* () {
   const identity = yield* Identity
-  const config = yield* ServerConfig
+  const listening = yield* Listening
   const settings = yield* HostSettings
   const profiles = yield* ProfileRepo
   const projects = yield* ProjectRepo
@@ -54,7 +54,8 @@ export const makeHosts = Effect.gen(function* () {
   const runs = yield* Runs
   const events = yield* Events
 
-  const boardUrl = Effect.map(settings.get, (s) => boardUrlOf(s.public_url, config.port))
+  // The bound port, not `--port`: a test server's `--port 0` would make every link (an upload URL, HE-63) `:0`.
+  const boardUrl = Effect.zipWith(settings.get, listening.port, (s, port) => boardUrlOf(s.public_url, port))
 
   return (plugin: string, filesDir: string, sql: SqlClient.SqlClient): PluginHostShape => {
     return {
