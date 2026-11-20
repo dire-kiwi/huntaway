@@ -1,4 +1,5 @@
 import { Option, Predicate, Schema } from "effect"
+import type { Agent } from "@huntaway/contracts"
 import type { ByModel, Counts } from "./counts.ts"
 import { add, counts, countsEqual, countsFromClaude, countsFromCodex, covers, fed, field, int, minus, sorted, total } from "./counts.ts"
 
@@ -15,10 +16,12 @@ import { add, counts, countsEqual, countsFromClaude, countsFromCodex, covers, fe
 //   request's (`last`). Threads keep their totals when they're resumed, so a run used what they went up by too. A
 //   thread whose earlier totals aren't known, or that went down (rolled back), adds just its latest request. Here
 //   `input` is what wasn't cached, as for Claude.
+// - An ACP agent's run (HE-69) writes Codex's lines, its session as the one thread, so it is counted as Codex's
+//   (`countAcp`).
 
 /** What a run used, by model, and the totals its agent's session (`session`) or threads had reached. */
 export interface Counted {
-  runtime: "claude" | "codex"
+  runtime: Agent
   models: ByModel
   session: string | null
   snapshot: ByModel
@@ -28,7 +31,7 @@ export interface Counted {
   estimated: boolean
 }
 
-export const counted = (runtime: "claude" | "codex"): Counted => ({ runtime, models: {}, session: null, snapshot: {}, tail: {}, estimated: false })
+export const counted = (runtime: Agent): Counted => ({ runtime, models: {}, session: null, snapshot: {}, tail: {}, estimated: false })
 
 /** The totals a run's agent started from: its task's latest earlier counted run's, and the part of them that run's requests after its last `result` add. */
 export interface Before {
@@ -293,6 +296,9 @@ export const countCodex = (lines: Iterable<string>, runModel: string, earlier: E
   out.snapshot = sorted(out.snapshot)
   return out
 }
+
+/** What an ACP agent's run used: its Codex-shaped lines (`thread/tokenUsage/updated` of its session), counted as Codex's. */
+export const countAcp = (lines: Iterable<string>, runModel: string, earlier: Earlier): Counted => ({ ...countCodex(lines, runModel, earlier), runtime: "acp" })
 
 /** The thread a Codex run's output says it started (`thread/started`), if it does. */
 export const startedThread = (lines: Iterable<string>): string | null => {

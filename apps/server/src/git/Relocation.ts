@@ -403,7 +403,7 @@ export class Relocation extends Context.Service<Relocation, RelocationShape>()("
           if (mtime !== null) yield* fs.utimes(to, mtime, mtime)
         })
 
-      /** The Claude config folder a thread's conversation is in (the old `task_config_dir`); none for a Codex thread. */
+      /** The Claude config folder a thread's conversation is in (the old `task_config_dir`); none for a Codex or an ACP thread. */
       const conversationDir = Effect.fnUntraced(function* (t: Task, session: string) {
         let cfg = t.claude_config_id === null ? null : Option.getOrNull(yield* configs.get(t.claude_config_id))
         if (cfg === null && t.claude_config_id !== null) {
@@ -412,7 +412,7 @@ export class Relocation extends Context.Service<Relocation, RelocationShape>()("
           const [first] = yield* taskRepo.configs(t.profile_id, project)
           cfg = first === undefined ? null : Option.getOrNull(yield* configs.get(first))
         }
-        if (cfg?.agent === "codex") return null
+        if (cfg !== null && cfg.agent !== "claude") return null
         const current = cfg === null || cfg.config_dir.trim() === "" ? null : cfg.config_dir.trim()
         const was = (yield* rows.sessionConfigDir(t.id, session))?.trim() ?? null
         let dir = current

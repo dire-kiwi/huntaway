@@ -10,6 +10,7 @@ export const AgentConfigRow = Schema.Struct({
   name: Schema.String,
   config_dir: Schema.String,
   agent: Agent,
+  command: Schema.NullOr(Schema.String),
   show_usage: Bit,
   restart_window: Bit,
   api_url: Schema.NullOr(Schema.String),
@@ -19,7 +20,7 @@ export const AgentConfigRow = Schema.Struct({
 })
 export type AgentConfigRow = typeof AgentConfigRow.Type
 
-const SELECT = `SELECT id, name, config_dir, agent, show_usage, restart_window, api_url, api_key IS NOT NULL AS has_api_key,
+const SELECT = `SELECT id, name, config_dir, agent, command, show_usage, restart_window, api_url, api_key IS NOT NULL AS has_api_key,
   management_key IS NOT NULL AS has_management_key, created_at FROM agent_configs`
 
 /** The columns a write may set. */
@@ -27,6 +28,7 @@ export type AgentConfigColumns = {
   readonly name?: string
   readonly config_dir?: string
   readonly agent?: Agent
+  readonly command?: string | null
   readonly show_usage?: boolean
   readonly restart_window?: boolean
   readonly api_url?: string | null

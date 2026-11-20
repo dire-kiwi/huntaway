@@ -41,8 +41,10 @@ export interface PromptContext {
   readonly docs: ReadonlyArray<DocumentFile>
   /** The task it merges into (`merges_into`), while that one is not done. */
   readonly target: { readonly number: number; readonly title: string; readonly branch: string | null } | null
-  /** It runs on Codex rather than Claude Code. */
+  /** It runs on Codex (or an ACP agent) rather than Claude Code: its tools are MCP tools, with none of Claude Code's own. */
   readonly codex: boolean
+  /** HE-69: it runs on an ACP agent (`codex` too). */
+  readonly acp?: boolean | undefined
   /** It is in plan mode, which a Codex run is told (Claude Code tells Claude itself). */
   readonly plan: boolean
   /** The run's own profile, and every profile on the host. */

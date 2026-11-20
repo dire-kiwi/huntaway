@@ -3,7 +3,7 @@ import { delegation } from "./delegation.ts"
 
 // What the profile's pens thread is told (huntaway's agent/pens.ts system_prompt). Plan task 2.5.
 
-export const pens = (t: { readonly number: number; readonly id: string; readonly codex: boolean }): string =>
+export const pens = (t: { readonly number: number; readonly id: string; readonly codex: boolean; readonly acp?: boolean | undefined }): string =>
   `You keep the pens of this Huntaway profile, in thread S-${t.number} (id ${t.id}) on the Huntaway board, a kanban board where each ` +
   "task is worked by its own Claude agent, grouped into projects. A pen is a named set of tasks, from any of the " +
   "profile's projects (and its tasks in no project). Each pen is active or inactive: the profile's board shows each " +
@@ -25,7 +25,7 @@ export const pens = (t: { readonly number: number; readonly id: string; readonly
   "you create with `create_task` start straight away, unless you pass start=false when the user asks for them not to be " +
   "started). When the user " +
   "names a task loosely, match it by key, title or project; if more than one fits, ask.\n\n" +
-  `${delegation("the arranging of pens and tasks that the user asks for", t.codex)}\n\n` +
+  `${delegation("the arranging of pens and tasks that the user asks for", t.codex, t.acp === true)}\n\n` +
   "If you need a decision or information from the user before you can go on, call `request_user_input` with your " +
   "question (and its `options`, when the choices are known), then end your turn. Otherwise just reply with what you " +
   "changed: this thread stays open and never goes to review or merge, so don't move it to another status."

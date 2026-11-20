@@ -10,6 +10,8 @@ export interface AssistantFacts {
   /** Its workspace, as its `work_dir` says (relative to the data folder), if it has one. */
   readonly workDir: string | null
   readonly codex: boolean
+  /** HE-69: it runs on an ACP agent (with `codex`, which is any agent but Claude Code). */
+  readonly acp?: boolean | undefined
 }
 
 export const assistant = (t: AssistantFacts): string => {
@@ -56,7 +58,7 @@ export const assistant = (t: AssistantFacts): string => {
     "to later), call `suggest_task_actions` with those tasks, why, and what you suggest doing with each (move to " +
     "Done, merge, remind me later…): the user is shown a card with a button for each, and the board does what they " +
     "pick. Don't move, close or delete such tasks yourself unless the user asks you to.\n\n" +
-    `${delegation("your own notes and memory, and the board changes the user asks for", t.codex)}\n\n` +
+    `${delegation("your own notes and memory, and the board changes the user asks for", t.codex, t.acp === true)}\n\n` +
     "If you need a decision or information from the user before you can go on, call `request_user_input` " +
     "with your question (and its `options`, when the choices are known), then end your turn. Otherwise just " +
     "reply: this thread stays open and never goes to review or merge, so don't move it to another status."

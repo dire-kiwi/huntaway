@@ -351,11 +351,11 @@ export class Checkpoints extends Context.Service<Checkpoints, CheckpointsShape>(
 
       // ---- reading ----
 
-      /** Whether the task's agent runs on Codex (its config's agent). */
-      const isCodex = Effect.fnUntraced(function* (task: Task) {
-        if (task.claude_config_id === null) return false
+      /** The agent the task runs on (its config's), Claude Code's without one. */
+      const agentOf = Effect.fnUntraced(function* (task: Task) {
+        if (task.claude_config_id === null) return "claude" as const
         const cfg = yield* configs.get(task.claude_config_id)
-        return cfg._tag === "Some" && cfg.value.agent === "codex"
+        return cfg._tag === "Some" ? cfg.value.agent : "claude"
       })
 
       /** The checkpoints whose refs are still there. */
@@ -384,7 +384,7 @@ export class Checkpoints extends Context.Service<Checkpoints, CheckpointsShape>(
           if (m !== null) messages.set(r.write_no, m)
         }
         const first = yield* readers.firstUserMessage(id)
-        const codex = yield* isCodex(task)
+        const agent = yield* agentOf(task)
         const list = rows.flatMap((r): ReadonlyArray<Turn> => {
           if (r.kind !== "turn") return []
           const before = r.before_n !== null && have.has(r.before_n) && rows.some((x) => x.n === r.before_n) ? r.before_n : null
@@ -394,7 +394,7 @@ export class Checkpoints extends Context.Service<Checkpoints, CheckpointsShape>(
           else if (r.stale > 0) files = "a rewind has gone back to before this turn"
           else if (before === null) files = "there's no checkpoint from before this turn"
           else if (r.write_no === null) files = "the message this turn started with isn't known"
-          const c = conversation(task.session_id, rows, r, codex, first)
+          const c = conversation(task.session_id, rows, r, agent, first)
           const round = m?.review_round
           return [
             {
@@ -420,7 +420,7 @@ export class Checkpoints extends Context.Service<Checkpoints, CheckpointsShape>(
             },
           ]
         })
-        const result: Turns = { available: true, turns: list, head: yield* head(t, top), rewind: task.rewind, agent: codex ? "codex" : "claude" }
+        const result: Turns = { available: true, turns: list, head: yield* head(t, top), rewind: task.rewind, agent }
         return result
       })
 
@@ -507,7 +507,7 @@ export class Checkpoints extends Context.Service<Checkpoints, CheckpointsShape>(
         yield* stillThere(id, top, before, "the checkpoint from before this turn is gone from the repository")
         let convo: Convo = { _tag: "Nothing" }
         if (options.conversation) {
-          const c = conversation(task.session_id, rows, turn, yield* isCodex(task), yield* readers.firstUserMessage(id))
+          const c = conversation(task.session_id, rows, turn, yield* agentOf(task), yield* readers.firstUserMessage(id))
           if ("err" in c) return yield* new RewindRefused({ reason: "changed_meanwhile", detail: `Can't take the conversation back: ${c.err}` })
           convo = c.ok
         }

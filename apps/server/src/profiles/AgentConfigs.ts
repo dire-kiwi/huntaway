@@ -57,9 +57,17 @@ export const settingsBaseUrl = (text: string): Effect.Effect<string | null> =>
 /** A row as the wire has it, with what its folder's settings.json was last read to say. */
 const toWire = (row: AgentConfigRow, known: ReadonlyMap<string, string | null>): AgentConfig => ({
   ...row,
-  api_url: row.agent === "codex" ? null : row.api_url,
-  settings_api_url: row.agent === "codex" ? null : (known.get(row.config_dir) ?? null),
+  command: row.agent === "acp" ? row.command : null,
+  api_url: row.agent !== "claude" ? null : row.api_url,
+  settings_api_url: row.agent !== "claude" ? null : (known.get(row.config_dir) ?? null),
 })
+
+/** A command line given (an ACP config's), trimmed, blank cleared (null); left out is left as it is. */
+const commandColumn = (command: string | null | undefined): { readonly command?: string | null } => {
+  if (command === undefined) return {}
+  const text = command?.trim() ?? ""
+  return { command: text === "" ? null : text }
+}
 
 export interface AgentConfigsShape {
   readonly list: Effect.Effect<ReadonlyArray<AgentConfig>>
@@ -78,7 +86,7 @@ export interface AgentConfigsShape {
   readonly forDir: (name: string, dir: string) => Effect.Effect<AgentConfigId>
 }
 
-/** Agent configs: an agent's config folder on this host, Claude Code's or Codex's, and its proxy. */
+/** Agent configs: an agent's config folder on this host, Claude Code's, Codex's or an ACP agent's (with its command line), and its proxy. */
 export class AgentConfigs extends Context.Service<AgentConfigs, AgentConfigsShape>()("huntaway-server/profiles/AgentConfigs") {
   static readonly layer = Layer.effect(
     AgentConfigs,
@@ -129,14 +137,16 @@ export class AgentConfigs extends Context.Service<AgentConfigs, AgentConfigsShap
         if (name === "") return yield* new Invalid({ field: "name", reason: "name is required" })
         const agent = input.agent ?? "claude"
         const proxy = yield* checkProxyFields(input)
-        if (agent === "codex" && Object.values(proxy).some((v) => v !== null)) {
+        if (agent !== "claude" && Object.values(proxy).some((v) => v !== null)) {
           return yield* new Invalid({ field: "api_url", reason: "a proxy is for Claude Code configs" })
         }
+        const command = commandColumn(input.command).command ?? null
+        if (agent !== "acp" && command !== null) return yield* new Invalid({ field: "command", reason: "a command line is for ACP agent configs" })
         const configDir = input.config_dir?.trim() ?? ""
         yield* refresh([configDir])
         return yield* db.tx(
           Effect.gen(function* () {
-            const id = yield* insert({ name, config_dir: configDir, agent, ...proxy })
+            const id = yield* insert({ name, config_dir: configDir, agent, command, ...proxy })
             yield* emitChanged
             return yield* wire(yield* getRow(id).pipe(Effect.orDie))
           }),
@@ -148,6 +158,7 @@ export class AgentConfigs extends Context.Service<AgentConfigs, AgentConfigsShap
           ...(patch.name === undefined ? {} : { name: patch.name.trim() }),
           ...(patch.config_dir === undefined ? {} : { config_dir: patch.config_dir.trim() }),
           ...(patch.agent === undefined ? {} : { agent: patch.agent }),
+          ...commandColumn(patch.command),
           ...(patch.show_usage === undefined ? {} : { show_usage: patch.show_usage }),
           ...(patch.restart_window === undefined ? {} : { restart_window: patch.restart_window }),
           ...(yield* checkProxyFields(patch)),
@@ -157,16 +168,20 @@ export class AgentConfigs extends Context.Service<AgentConfigs, AgentConfigsShap
         return yield* db.tx(
           Effect.gen(function* () {
             const current = yield* getRow(id)
-            // A Codex config can't have a proxy, nor can one that has a proxy become a Codex config.
+            // Only a Claude Code config has a proxy, nor can one that has a proxy become another agent's. Only an ACP
+            // config has a command line; one that stops being an ACP config loses it.
             const agent = columns.agent ?? current.agent
             const url = columns.api_url === undefined ? current.api_url : columns.api_url
-            if (agent === "codex" && url !== null) {
+            if (agent !== "claude" && url !== null) {
               return yield* new Invalid({ field: "agent", reason: "a proxy is for Claude Code configs; clear api_url first" })
+            }
+            if (agent !== "acp" && columns.command != null) {
+              return yield* new Invalid({ field: "command", reason: "a command line is for ACP agent configs" })
             }
             if (agent !== current.agent && (yield* repo.sessions(id)) > 0) {
               return yield* new Conflict({ reason: "has_session", detail: "threads have conversations in this config; add another config for the other agent" })
             }
-            yield* repo.update(id, columns)
+            yield* repo.update(id, agent !== "acp" && current.command !== null ? { ...columns, command: null } : columns)
             yield* emitChanged
             return yield* wire(yield* getRow(id))
           }),

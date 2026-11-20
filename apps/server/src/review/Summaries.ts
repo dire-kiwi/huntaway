@@ -145,7 +145,7 @@ export class Summaries extends Context.Service<Summaries, SummariesShape>()("hun
           const variant = variantKey(spec)
           // Two the same would share a thread.
           if (plans.some((p) => same(p.configId, configId) && same(p.model, model) && same(p.effort, effort) && p.variant === variant)) continue
-          plans.push({ spec, codex: cfg?.agent === "codex", configId, model, effort, variant, label: label(cfg?.name ?? null, model, effort) })
+          plans.push({ spec, codex: (cfg?.agent ?? "claude") !== "claude", configId, model, effort, variant, label: label(cfg?.name ?? null, model, effort) })
         }
         const existing = (yield* tasks.reviewThreads(task.id)).filter(isSummary)
         const writing: Array<readonly [Plan, Task]> = []
