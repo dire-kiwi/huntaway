@@ -19,6 +19,9 @@ const elicit = (tool: string, params: unknown) => ({
   },
 })
 
+/** An ACP agent's permission request (HE-69), as its adapter writes it. */
+const acp = (params: unknown) => classify({ id: 7, method: "acp/requestPermission", params })
+
 describe("Codex's requests", () => {
   it("an approval is a prompt of the tool it is for, with the command as the agent wrote it", () => {
     const c = classify({
@@ -74,7 +77,6 @@ describe("Codex's requests", () => {
 
   // HE-69
   it("an ACP agent's permission request is a prompt of the tool its kind names, its title as what it's for", () => {
-    const acp = (params: unknown) => classify({ id: 7, method: "acp/requestPermission", params })
     assert.deepStrictEqual(acp({ itemId: "tc1", tool: "read", title: "Read src/a.ts", input: { path: "src/a.ts" } }), {
       _tag: "Prompt",
       tool_name: "Read",
@@ -86,10 +88,19 @@ describe("Codex's requests", () => {
       const c = acp({ itemId: "x", tool: kind, title: "t", input: {} })
       return c._tag === "Prompt" ? c.tool_name : c._tag
     }
-    assert.deepStrictEqual(
-      ["read", "edit", "delete", "move", "search", "fetch", "execute", "think", "switch_mode", "other", ""].map(tool),
-      ["Read", "Edit", "Edit", "Edit", "Grep", "WebFetch", "Bash", "Think", "switch_mode", "other", "tool"],
-    )
+    assert.deepStrictEqual(["read", "edit", "delete", "move", "search", "fetch", "execute", "think", "switch_mode", "other", ""].map(tool), [
+      "Read",
+      "Edit",
+      "Edit",
+      "Edit",
+      "Grep",
+      "WebFetch",
+      "Bash",
+      "Think",
+      "switch_mode",
+      "other",
+      "tool",
+    ])
     // A command without one in its input is its title; what isn't an object is kept as it is; its own description stays.
     const run = acp({ itemId: "c", tool: "execute", title: "ls -la", input: null })
     assert.deepStrictEqual(run._tag === "Prompt" ? run.input : null, { command: "ls -la", description: "ls -la" })

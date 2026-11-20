@@ -38,7 +38,10 @@ export const ConfigHandlers = ConfigRpcs.toLayer(
       // An ACP config's are its agent's (HE-69); the others' Codex's (none for Claude's).
       "configs.models": ({ id }) =>
         acp.configModels(id).pipe(
-          Effect.flatMap((listed) => (listed === null ? codex.configModels(id) : Effect.succeed(listed))),
+          Effect.filterOrElse(
+            (listed) => listed !== null,
+            () => codex.configModels(id),
+          ),
           Effect.catchTags({
             AgentConfigNotFound: configNotFound,
             CodexUnavailable: (e) => Effect.fail(new Unavailable({ what: "Codex", reason: `couldn't list Codex models: ${e.reason}` })),

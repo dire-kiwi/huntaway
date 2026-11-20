@@ -72,7 +72,8 @@ export const AcpQueriesLive = Layer.effect(
       const now = yield* Clock.currentTimeMillis
       const hit = (yield* Ref.get(cache)).get(key)
       if (hit !== undefined && now - hit.at < MODELS_FOR_MS) return hit.value
-      if (config.exe === null) return yield* new AcpUnavailable({ reason: "this server wasn't started by its launcher (bin/huntaway), so it can't ask an ACP agent" })
+      if (config.exe === null)
+        return yield* new AcpUnavailable({ reason: "this server wasn't started by its launcher (bin/huntaway), so it can't ask an ACP agent" })
       const out = yield* ask(cfg, config.exe)
       if (out.code === SIGNED_OUT) return yield* new AcpUnavailable({ reason: signInReason(cfg.command) })
       if (out.code !== 0) return yield* new AcpUnavailable({ reason: lastLine(out.stderr) || `acp-run --list-models exited with ${out.code}` })

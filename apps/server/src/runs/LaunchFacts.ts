@@ -508,7 +508,10 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const model = acpModel(nonBlank(task.model))
         const effort = nonBlank(task.effort)
         const reports = yield* assistantLaunch.reports(task)
-        const prompt = withPreface((workspace?.update ?? "") + (reports?.preface ?? ""), yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
+        const prompt = withPreface(
+          (workspace?.update ?? "") + (reports?.preface ?? ""),
+          yield* prompts.start(task.id, text, yield* background.takeLost(task.id)),
+        )
         const tmp = yield* taskTmp.ensure(task)
         const served = yield* requests.served
         // The text for an agent other than Claude Code: its tools are MCP tools.

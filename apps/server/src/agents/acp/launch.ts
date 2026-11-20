@@ -90,7 +90,8 @@ export const acpServers = (servers: Readonly<Record<string, unknown>>): Readonly
 export const acpLaunch = (input: AcpLaunchInput): Effect.Effect<AcpLaunch, LaunchRefused> =>
   Effect.gen(function* () {
     const { task, tools } = input
-    if (input.exe === null) return yield* new LaunchRefused({ reason: "this server wasn't started by its launcher (bin/huntaway), so it can't run an ACP agent" })
+    if (input.exe === null)
+      return yield* new LaunchRefused({ reason: "this server wasn't started by its launcher (bin/huntaway), so it can't run an ACP agent" })
     if (input.kind === "compact") return yield* new LaunchRefused({ reason: "an ACP agent's conversation can't be compacted" })
     const review = task.kind === "review"
     const servers: ServedServers = {

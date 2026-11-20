@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem, Layer, Schema } from "effect"
+import { Effect, FileSystem, Layer, Result, Schema } from "effect"
 import { AgentConfigId, Timestamp } from "@huntaway/contracts"
 import { tempDir, TestBoard, TestPlatform } from "@huntaway/testing"
 import { AgentConfigRepo } from "../../profiles/AgentConfigRepo.ts"
@@ -58,6 +58,13 @@ const withLauncher = (out: string, code = 0) =>
 const live = (exe: string | null, home: string) =>
   AcpQueriesLive.pipe(Layer.provideMerge(AgentConfigRepo.layer), Layer.provideMerge(TestPlatform({ exe, home })))
 
+/** Why the live layer, with launcher `exe`, can't list an ACP config's models. */
+const reason = (exe: string | null) =>
+  Effect.gen(function* () {
+    const e = yield* Effect.flip((yield* AcpQueries).models(config()))
+    return e.reason
+  }).pipe(Effect.provide(live(exe, "/home/me")))
+
 describe("AcpQueries", () => {
   it("reads acp-run --list-models' line as the config's models, the current one the default", () => {
     assert.deepStrictEqual(modelsFromListing(`\n${LISTING}\n`), MODELS)
@@ -91,7 +98,7 @@ describe("AcpQueries", () => {
       const cwd = seen[3]?.slice("cwd=".length) ?? ""
       assert.strictEqual(seen[2], `[${cwd}/spec.json]`)
       assert.strictEqual(seen[4], "home=/home/me/.gemini-work")
-      assert.deepStrictEqual(Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(seen[5] ?? "null"), {
+      assert.deepStrictEqual(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(seen[5] ?? "null").pipe(Effect.orDie), {
         cwd,
         program: "agy",
         args: ["acp", "--verbose"],
@@ -111,11 +118,6 @@ describe("AcpQueries", () => {
 
   it.live("an agent that needs a sign-in, a failure, a listing that doesn't read, and no launcher are unavailable", () =>
     Effect.gen(function* () {
-      const reason = (exe: string | null) =>
-        Effect.gen(function* () {
-          const e = yield* Effect.flip((yield* AcpQueries).models(config()))
-          return e.reason
-        }).pipe(Effect.provide(live(exe, "/home/me")))
       assert.include(yield* reason(`${yield* withLauncher("", 3)}/huntaway`), "sign in by running `agy` once")
       assert.strictEqual(yield* reason(`${yield* withLauncher("", 1)}/huntaway`), "stderr says why")
       assert.strictEqual(yield* reason(`${yield* withLauncher("nope")}/huntaway`), "the agent's models didn't read")
@@ -131,10 +133,10 @@ describe("AcpQueries", () => {
       const acp = yield* configs.create({ name: "g", agent: "acp" })
       const claude = yield* configs.create({ name: "c" })
       assert.deepStrictEqual(yield* queries.configModels(acp.id), [])
-      yield* script.set(MODELS)
+      yield* script.set(Result.succeed(MODELS))
       assert.deepStrictEqual(yield* queries.configModels(acp.id), MODELS)
       assert.strictEqual(yield* queries.configModels(claude.id), null)
-      yield* script.set(new AcpUnavailable({ reason: "signed out" }))
+      yield* script.set(Result.fail(new AcpUnavailable({ reason: "signed out" })))
       assert.strictEqual((yield* Effect.flip(queries.configModels(acp.id)))._tag, "AcpUnavailable")
       assert.strictEqual((yield* Effect.flip(queries.configModels(AgentConfigId.make("gone"))))._tag, "AgentConfigNotFound")
     }).pipe(Effect.provide(TestBoard())),

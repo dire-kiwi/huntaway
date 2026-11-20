@@ -84,6 +84,9 @@ const empty = (config: AgentConfigId): UsageData => ({
   accounts: null,
 })
 
+/** Its usage is fetched and listed: it has `show_usage` on, and isn't an ACP agent's (whose limits aren't known: HE-69). */
+const usageShown = (row: AgentConfigRow) => row.show_usage && row.agent !== "acp"
+
 export interface UsageShape {
   /**
    * Every config on this host that shows its usage, fetching the ones last fetched `MAX_AGE_MS` ago (`MIN_GAP_MS` when
@@ -153,7 +156,7 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
 
       /** The proxy its agents go through, if it has one: its own (`api_url`), else the one its settings.json sets. */
       const proxyOf = (row: AgentConfigRow): Effect.Effect<string | null> => {
-        if (row.agent === "codex") return Effect.succeed(null)
+        if (row.agent !== "claude") return Effect.succeed(null)
         if (row.api_url !== null && row.api_url.trim() !== "") return Effect.succeed(row.api_url)
         return fs.readFileString(path.join(folder(row), "settings.json")).pipe(
           Effect.flatMap(settingsBaseUrl),
@@ -289,6 +292,8 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
         )
 
       const refreshRow = Effect.fnUntraced(function* (row: AgentConfigRow) {
+        // HE-69: an ACP agent's limits aren't known to the board.
+        if (row.agent === "acp") return false
         const url = yield* proxyOf(row)
         const fetch: Effect.Effect<Fetched, FetchFailed> = url !== null ? fetchProxy(row, url) : row.agent === "codex" ? fetchCodex(row) : fetchClaude(row)
         const result = yield* Effect.result(fetch)
@@ -324,7 +329,7 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
       })
 
       const list = Effect.fn("Usage.list")(function* (refreshAsked: boolean) {
-        const configs = (yield* repo.list).filter((c) => c.show_usage)
+        const configs = (yield* repo.list).filter(usageShown)
         const now = yield* Clock.currentTimeMillis
         const known = yield* Ref.get(state)
         const due = configs.filter((c) => {
@@ -341,7 +346,7 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
         const known = yield* Ref.get(state)
         return configs.flatMap((c) => {
           const usage = known.get(c.id)?.usage
-          return usage !== undefined ? [usage] : c.show_usage ? [empty(c.id)] : []
+          return usage !== undefined ? [usage] : usageShown(c) ? [empty(c.id)] : []
         })
       }).pipe(Effect.withSpan("Usage.snapshot"))
 

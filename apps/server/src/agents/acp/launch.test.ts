@@ -131,10 +131,15 @@ describe("an ACP agent's run's launch", () => {
   )
 
   it("asks for the thread's model unless it is Claude's or Codex's", () => {
-    assert.deepStrictEqual(
-      ["gemini-3-pro", "opus", "claude-sonnet-4-5", "gpt-5.1", "codex-mini", "o3", null].map(acpModel),
-      ["gemini-3-pro", null, null, null, null, null, null],
-    )
+    assert.deepStrictEqual(["gemini-3-pro", "opus", "claude-sonnet-4-5", "gpt-5.1", "codex-mini", "o3", null].map(acpModel), [
+      "gemini-3-pro",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ])
   })
 
   it("turns mcp.json's entries into ACP's, leaving out what it can't give", () => {

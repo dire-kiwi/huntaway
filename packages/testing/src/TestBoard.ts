@@ -32,6 +32,7 @@ export const TestPlatform = (overrides: Partial<ServerConfigShape> = {}) =>
  * started (`CodexQueries.layerTest`: the models `CodexModelsScript` sets), nor is an ACP agent (`AcpQueries.layerTest`, `AcpModelsScript`). It runs `plugins` (HE-34), none by default.
  */
 export const TestBoard = (overrides: Partial<ServerConfigShape> = {}, plugins: ReadonlyArray<Plugin> = []) =>
-  areasLayer({ titles: TitleModel.layerScripted, window: WindowPrompt.layerNone, codex: CodexQueries.layerTest, acp: AcpQueries.layerTest }, InstalledPlugins.layer(plugins)).pipe(
-    Layer.provideMerge(TestPlatform(overrides)),
-  )
+  areasLayer(
+    { titles: TitleModel.layerScripted, window: WindowPrompt.layerNone, codex: CodexQueries.layerTest, acp: AcpQueries.layerTest },
+    InstalledPlugins.layer(plugins),
+  ).pipe(Layer.provideMerge(TestPlatform(overrides)))

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Ref, Schema } from "effect"
+import { Context, Effect, Layer, Option, Ref, Result, Schema } from "effect"
 import type { AgentConfigId, AgentModel } from "@huntaway/contracts"
 import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
 import type { AgentConfigRow } from "../profiles/AgentConfigRepo.ts"
@@ -75,10 +75,13 @@ export class AcpModelsScript extends Context.Service<
   AcpModelsScript,
   {
     readonly get: Effect.Effect<ReadonlyArray<AgentModel>, AcpUnavailable>
-    /** The models to list, or the reason they can't be. */
-    readonly set: (models: ReadonlyArray<AgentModel> | AcpUnavailable) => Effect.Effect<void>
+    /** The models to list, or why they can't be. */
+    readonly set: (models: Result.Result<ReadonlyArray<AgentModel>, AcpUnavailable>) => Effect.Effect<void>
   }
 >()("huntaway-server/agents/AcpQueries/AcpModelsScript") {}
+
+/** A read-only server's answer: it starts no agent. */
+const noAgent = () => Effect.fail(new AcpUnavailable({ reason: "a read-only server starts no agent" }))
 
 export class AcpQueries extends Context.Service<AcpQueries, AcpQueriesShape>()("huntaway-server/agents/AcpQueries") {
   /** A read-only server's: no agent is started, so an ACP config's models are unavailable. */
@@ -86,8 +89,7 @@ export class AcpQueries extends Context.Service<AcpQueries, AcpQueriesShape>()("
     AcpQueries,
     Effect.gen(function* () {
       const repo = yield* AgentConfigRepo
-      const none = () => Effect.fail(new AcpUnavailable({ reason: "a read-only server starts no agent" }))
-      return AcpQueries.of({ models: none, configModels: acpConfigModelsWith(repo, none) })
+      return AcpQueries.of({ models: noAgent, configModels: acpConfigModelsWith(repo, noAgent) })
     }),
   )
 
@@ -103,11 +105,8 @@ export class AcpQueries extends Context.Service<AcpQueries, AcpQueriesShape>()("
     Layer.provideMerge(
       Layer.effect(
         AcpModelsScript,
-        Effect.map(Ref.make<ReadonlyArray<AgentModel> | AcpUnavailable>([]), (ref) =>
-          AcpModelsScript.of({
-            get: Effect.flatMap(Ref.get(ref), (v) => (v instanceof AcpUnavailable ? Effect.fail(v) : Effect.succeed(v))),
-            set: (v) => Ref.set(ref, v),
-          }),
+        Effect.map(Ref.make<Result.Result<ReadonlyArray<AgentModel>, AcpUnavailable>>(Result.succeed([])), (ref) =>
+          AcpModelsScript.of({ get: Effect.flatMap(Ref.get(ref), Effect.fromResult), set: (v) => Ref.set(ref, v) }),
         ),
       ),
     ),
