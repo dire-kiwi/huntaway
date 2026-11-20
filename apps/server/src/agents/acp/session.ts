@@ -1,3 +1,4 @@
+import { Predicate } from "effect"
 import { configOptions, selectValues } from "./protocol.ts"
 import type { ConfigOption, SessionResponse } from "./protocol.ts"
 
@@ -14,6 +15,8 @@ export type Choice =
   | { readonly _tag: "Unavailable"; readonly what: string }
   /** Nothing to do. */
   | { readonly _tag: "None" }
+
+const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> => Predicate.isObject(v) && !Array.isArray(v)
 
 const none: Choice = { _tag: "None" }
 
@@ -95,6 +98,13 @@ export const currentModel = (session: SessionResponse): string | null => current
 /** The session after its config options changed (`session/set_config_option` answers with all of them). */
 export const withConfigOptions = (session: SessionResponse, options: unknown): SessionResponse =>
   Array.isArray(options) ? { ...session, configOptions: options } : session
+
+/** After `session/set_config_option` answered with nothing: config option `configId` has `value`. */
+export const withValue = (session: SessionResponse, configId: string, value: string): SessionResponse => {
+  const options: Array<unknown> = []
+  for (const o of session.configOptions ?? []) options.push(isRecord(o) && o["id"] === configId ? { ...o, currentValue: value } : o)
+  return { ...session, configOptions: options }
+}
 
 /** After `session/set_model`/`session/set_mode`, which answer with nothing. */
 export const withModel = (session: SessionResponse, modelId: string): SessionResponse =>
