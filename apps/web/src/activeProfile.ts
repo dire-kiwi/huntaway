@@ -1,3 +1,6 @@
+import { parseJson, toJson } from "./components/ui/json"
+import { href } from "./router"
+
 const KEY = "ia.activeProfile"
 
 /** The profile picked last, whose projects the sidebar lists; kept in this browser. */
@@ -28,4 +31,37 @@ export function activeProfile(names: string[], saved: string | null, needs?: (cu
   if (current === undefined) return undefined
   const want = needs?.(current)
   return want !== undefined && names.includes(want) ? want : current
+}
+
+const PLACES = "ia.profilePlaces"
+
+function loadPlaces(): Record<string, string> {
+  try {
+    const places = parseJson(localStorage.getItem(PLACES))
+    return typeof places === "object" && places !== null
+      ? Object.fromEntries(Object.entries(places).filter((e): e is [string, string] => typeof e[1] === "string"))
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+/** HE-64: keeps `url` (a path and query) as where `profile`'s sidebar was last, for `profilePlace`. */
+export function saveProfilePlace(profile: string, url: string) {
+  const places = loadPlaces()
+  if (places[profile] === url) return
+  try {
+    localStorage.setItem(PLACES, toJson({ ...places, [profile]: url }))
+  } catch {
+    // Switching profiles opens its board when storage is unavailable.
+  }
+}
+
+/**
+ * HE-64: where switching to `profile` goes: the page it was last on (`saveProfilePlace`), or its board when that's
+ * not kept or is the page open (`here`), as clicking the profile already on goes to its board.
+ */
+export function profilePlace(profile: string, here: string): string {
+  const place = loadPlaces()[profile]
+  return place !== undefined && place !== here ? place : href({ name: "profile", profile })
 }

@@ -114,6 +114,7 @@ Preferences:
 - `ia.shortcuts`: only the changed keys, `{[ShortcutId]: key}`.
 - `ia.tint`: last shown profile tint (hex).
 - `ia.activeProfile`: profile name.
+- `ia.profilePlaces`: `{ <profile name>: <path and query> }`, the page each profile's sidebar was last on, which switching to it opens (HE-64).
 - `ia.collapsedGroups`, `ia.hiddenProjects`, `ia.pinnedProjects`, `ia.favoriteProjects`: JSON arrays of keys (`projectGroups.ts`).
 - `ia.sidebar.collapsedSections`: JSON array. `ia.usageOpen`: `"0"|"1"`.
 - `ia.boardView`: `board|list|triage|graph`. `ia.board.sort`. `ia.board.backlog`: `open|closed`. `ia.board.archived`: `open|closed`.

@@ -6,12 +6,12 @@ import { profileNames } from "../boardHelpers"
 import { board } from "../../state/board"
 
 /**
- * The shortcuts that work on every page (HA-396): the next or previous profile's board, as clicking it in the sidebar
- * opens, and the assistant of `active`, the profile this window's sidebar is on (the one saved in the browser is
+ * The shortcuts that work on every page (HA-396): the next or previous profile, at the page it was last on as clicking
+ * it in the sidebar opens (`switchTo`, HE-64), and the assistant of `active`, the profile this window's sidebar is on (the one saved in the browser is
  * whichever window's moved last). Not in the Changes tab, whose keys are its own whether or not a panel has one for
  * the key, and a key the page took first (a question card's digits) stays that page's.
  */
-export function usePageShortcuts(active: string | undefined) {
+export function usePageShortcuts(active: string | undefined, switchTo: (name: string) => void) {
   const at = useRef(active)
   useEffect(() => {
     at.current = active
@@ -33,9 +33,9 @@ export function usePageShortcuts(active: string | undefined) {
       }
       if (names.length < 2) return
       e.preventDefault()
-      navigate({ name: "profile", profile: names[(names.indexOf(current) + step + names.length) % names.length] ?? current })
+      switchTo(names[(names.indexOf(current) + step + names.length) % names.length] ?? current)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [])
+  }, [switchTo])
 }

@@ -1,17 +1,22 @@
-import { useEffect, useState } from "react"
-import { activeProfile, loadActiveProfile, saveActiveProfile } from "../../../activeProfile"
+import { useCallback, useEffect, useState } from "react"
+import { activeProfile, loadActiveProfile, profilePlace, saveActiveProfile, saveProfilePlace } from "../../../activeProfile"
 import type { HostProfile as Profile, HostProject as Project, HostTask as Task } from "@huntaway/client"
 
 import { profileTint, showProfileTint } from "../../../theme"
 import { groupProjects, groupTasks } from "../../../projectGroups"
-import type { Route } from "../../../router"
+import { type Route, withoutModal } from "../../../router"
+import { navigate, onNavigate } from "../../../state/route"
 import type { ProfileOf } from "./useProfileOf"
 import { useBoard } from "../../../state/board"
 import { setTitleProfile } from "../notifier"
 
+/** The page open, without a task dialog over it (which is only over it for now). */
+const here = (): string => withoutModal(window.location.pathname + window.location.search)
+
 /**
  * The profile whose projects the sidebar lists, which is saved in this browser, named in the
- * page's title when there are several, and whose tint the board shows.
+ * page's title when there are several, and whose tint the board shows; and `switchTo`, which moves to a profile at
+ * the page it was last on (HE-64).
  */
 export function useActiveProfile({
   route,
@@ -63,6 +68,30 @@ export function useActiveProfile({
     if (active !== undefined) saveActiveProfile(active)
   }, [active])
 
+  // HE-64: the page open is where the active profile is, once it's known whose it is: a profile's own pages, a project's
+  // or group's once loaded, and a plugin's (its documents). Not the pages of every profile (settings, analytics, the
+  // guide, a host's), nor a task's page, which moves on to its board.
+  const [url, setUrl] = useState(here)
+  useEffect(() => onNavigate(() => setUrl(here())), [])
+  const loaded = useBoard((s) => s.loaded)
+  const known =
+    route.name === "profile" || route.name === "assistant"
+      ? route.profile === active
+      : route.name === "board" || route.name === "projectSettings"
+        ? openProjects.length > 0
+        : route.name === "group"
+          ? loaded
+          : route.name === "plugin"
+  useEffect(() => {
+    if (active !== undefined && known) saveProfilePlace(active, url)
+  }, [active, known, url])
+  // The profile is picked first, so the page goes on with it even where the sidebar would stay on this one (a pinned
+  // project, a plugin's page).
+  const switchTo = useCallback((name: string) => {
+    setSavedProfile(name)
+    navigate(profilePlace(name, here()))
+  }, [])
+
   // The board takes on the active profile's tint (HA-397).
   const localHostId = useBoard((s) => s.localHostId)
   const tint = profileTint(profiles, active, localHostId)
@@ -76,5 +105,5 @@ export function useActiveProfile({
     setTitleProfile(titled)
   }, [titled])
 
-  return active
+  return { active, switchTo }
 }

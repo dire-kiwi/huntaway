@@ -12,6 +12,7 @@ export function ProfileNav({
   route,
   names,
   active,
+  switchTo,
   byProfile,
   setMenu,
 }: {
@@ -19,6 +20,8 @@ export function ProfileNav({
   names: string[]
   /** The profile whose projects the sidebar lists. */
   active: string | undefined
+  /** Moves to a profile, at the page it was last on (HE-64). */
+  switchTo: (name: string) => void
   /** Each profile's tasks by column, by profile name. */
   byProfile: Record<string, Partial<Record<Status, number>>>
   setMenu: (menu: { x: number; y: number; title: string; items: MenuItem[] }) => void
@@ -30,14 +33,20 @@ export function ProfileNav({
           key={name}
           active={route.name === "profile" && route.profile === name}
           current={names.length > 1 && name === active}
-          onClick={() => navigate({ name: "profile", profile: name })}
+          onClick={() => switchTo(name)}
           onContextMenu={(e) => {
             const items = newWindowItems({ name: "profile", profile: name })
             if (!items.length) return
             e.preventDefault()
             setMenu({ x: e.clientX, y: e.clientY, title: name, items })
           }}
-          title={names.length > 1 && name === active ? `All of ${name}'s tasks. The sidebar lists ${name}'s projects` : `All of ${name}'s tasks`}
+          title={
+            names.length > 1 && name === active
+              ? `All of ${name}'s tasks. The sidebar lists ${name}'s projects`
+              : names.length > 1
+                ? `Switch to ${name}, back on the page you were on there last`
+                : `All of ${name}'s tasks`
+          }
           icon={<ProfileAvatar name={name} muted={names.length > 1 && name !== active} />}
           right={<StatusBar counts={byProfile[name] ?? {}} />}
         >
