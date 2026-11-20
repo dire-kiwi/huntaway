@@ -92,8 +92,30 @@ test("switching profiles goes back to the page each was last on", async () => {
     await ui.run([`goto /p/${demo.id}`, "wait css=header >> text=Demo", `click ${testNav}`, at("/profile/test"), `wait ${testRow}`])
     await ui.run([`click ${testRow}`, "wait css=header >> text=Test", `click ${defaultNav}`, at(`/p/${demo.id}`), `wait ${demoRow}`])
     await ui.run(["goto /settings", "wait css=header >> text=Settings", "press p", at(`/p/${testProject.id}`), "wait css=header >> text=Test"])
-    await ui.run(["press P", at(`/p/${demo.id}`), "wait css=header >> text=Demo", `click ${defaultNav}`, at("/profile/Default")])
+    // The row of the profile already on opens its board, from its kept page and from a page of every profile alike.
+    await ui.run(["press P", at(`/p/${demo.id}`), "wait css=header >> text=Demo", "goto /settings", "wait css=header >> text=Settings"])
+    await ui.run([
+      `click ${defaultNav}`,
+      at("/profile/Default"),
+      `click ${demoRow}`,
+      "wait css=header >> text=Demo",
+      `click ${defaultNav}`,
+      at("/profile/Default"),
+    ])
     // It's kept in the browser for the next visit.
     await ui.run(["goto /guide", `click ${testNav}`, at(`/p/${testProject.id}`)])
+
+    // A pinned project open under both profiles: switching stays on it and only moves the sidebar.
+    await ui.run([`click ${defaultNav}`, at("/profile/Default"), `rclick ${demoRow}`, "click [role=menu] >> text=Pin to every profile", `click ${demoRow}`])
+    await ui.run(["wait css=header >> text=Demo", `click ${testNav}`, at(`/p/${testProject.id}`), `click ${demoRow}`, "wait css=header >> text=Demo"])
+    await ui.run([`click ${defaultNav}`, at(`/p/${demo.id}`), "wait css=aside [aria-current] >> text=/^D\\s*Default/"])
+    await ui.run([
+      "press p",
+      at(`/p/${demo.id}`),
+      "wait css=aside [aria-current] >> text=/^t\\s*test/",
+      "goto /guide",
+      `click ${defaultNav}`,
+      at(`/p/${demo.id}`),
+    ])
   })
 })

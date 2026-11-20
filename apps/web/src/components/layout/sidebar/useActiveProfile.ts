@@ -4,7 +4,7 @@ import type { HostProfile as Profile, HostProject as Project, HostTask as Task }
 
 import { profileTint, showProfileTint } from "../../../theme"
 import { groupProjects, groupTasks } from "../../../projectGroups"
-import { type Route, withoutModal } from "../../../router"
+import { href, type Route, withoutModal } from "../../../router"
 import { navigate, onNavigate } from "../../../state/route"
 import type { ProfileOf } from "./useProfileOf"
 import { useBoard } from "../../../state/board"
@@ -85,12 +85,16 @@ export function useActiveProfile({
   useEffect(() => {
     if (active !== undefined && known) saveProfilePlace(active, url)
   }, [active, known, url])
-  // The profile is picked first, so the page goes on with it even where the sidebar would stay on this one (a pinned
-  // project, a plugin's page).
-  const switchTo = useCallback((name: string) => {
-    setSavedProfile(name)
-    navigate(profilePlace(name, here()))
-  }, [])
+  // Another profile opens at its kept page, and the one already on at its board. The profile is picked first, so the
+  // page goes on with it even where the sidebar would stay on this one (a pinned project, a plugin's page), and when
+  // its kept page is the one open (the same pinned project, or plugin page, under both) it only moves the sidebar.
+  const switchTo = useCallback(
+    (name: string) => {
+      setSavedProfile(name)
+      navigate(name === active ? href({ name: "profile", profile: name }) : profilePlace(name))
+    },
+    [active],
+  )
 
   // The board takes on the active profile's tint (HA-397).
   const localHostId = useBoard((s) => s.localHostId)

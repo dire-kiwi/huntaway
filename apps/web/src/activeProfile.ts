@@ -57,11 +57,7 @@ export function saveProfilePlace(profile: string, url: string) {
   }
 }
 
-/**
- * HE-64: where switching to `profile` goes: the page it was last on (`saveProfilePlace`), or its board when that's
- * not kept or is the page open (`here`), as clicking the profile already on goes to its board.
- */
-export function profilePlace(profile: string, here: string): string {
-  const place = loadPlaces()[profile]
-  return place !== undefined && place !== here ? place : href({ name: "profile", profile })
+/** HE-64: where switching to `profile` goes: the page it was last on (`saveProfilePlace`), else its board. */
+export function profilePlace(profile: string): string {
+  return loadPlaces()[profile] ?? href({ name: "profile", profile })
 }
