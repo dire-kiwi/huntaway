@@ -10,7 +10,8 @@ import { SqlClient } from "effect/sql"
 import { TestPlatform } from "@huntaway/testing"
 import { TaskId, Timestamp } from "@huntaway/contracts"
 import { DataDir } from "../platform/DataDir.ts"
-import { foldersIn, Leftovers } from "./Leftovers.ts"
+import { TASK_ENV } from "../runs/devServers/proc.ts"
+import { agentMayHaveStarted, foldersIn, Leftovers } from "./Leftovers.ts"
 import type { LeftoverProc } from "./Leftovers.ts"
 import { folder, TaskTmp } from "./TaskTmp.ts"
 
@@ -106,10 +107,10 @@ const withFakes = <A, E, R>(started: ReadonlyArray<string>, body: Effect.Effect<
     ),
   )
 
-/** Starts a fake, marked as this run's (see `RUN`). */
-const start = (args: ReadonlyArray<string>, cwd?: string) =>
+/** Starts a fake, marked as this run's (see `RUN`), with this environment (else this process's). */
+const start = (args: ReadonlyArray<string>, cwd?: string, env: NodeJS.ProcessEnv = process.env) =>
   Effect.sync(() => {
-    const c = spawn(process.execPath, args, { cwd, env: { ...process.env, ...RUN }, stdio: "ignore", detached: true })
+    const c = spawn(process.execPath, args, { cwd, env: { ...env, ...RUN }, stdio: "ignore", detached: true })
     c.unref()
   })
 
@@ -143,6 +144,16 @@ const done = (id: TaskId) => Effect.flatMap(SqlClient.SqlClient, (sql) => sql`UP
 
 const LIVE = { timeout: 60_000 }
 const linux = process.platform === "linux"
+
+describe("agentMayHaveStarted", () => {
+  it("goes by whether the environment names a task or is intact", () => {
+    assert.isTrue(agentMayHaveStarted(null), "unknown")
+    assert.isTrue(agentMayHaveStarted("\0".repeat(64)), "zeroed")
+    assert.isTrue(agentMayHaveStarted("ess --enable-features=X\0\0\0"), "the tail of a command line, as Chromium leaves it")
+    assert.isTrue(agentMayHaveStarted("HOME=/home/u\0PATH=/usr/bin\0HUNTAWAY_TASK_ID=t\0"), "an agent's")
+    assert.isFalse(agentMayHaveStarted("HOME=/home/u\0PATH=/usr/bin\0TERM=xterm\0"), "the user's")
+  })
+})
 
 describe.skipIf(!linux)("Leftovers", () => {
   it.live(
@@ -335,9 +346,10 @@ describe.skipIf(!linux)("Leftovers", () => {
   )
 
   // HE-68: a headless Electron app or browser an agent left running isn't a server, and Chromium clears its environment,
-  // so it's found by its command line naming the temp folder (its profile there), with what it started.
+  // so it's found by its command line naming the temp folder (its profile there), with what it started; one with an
+  // intact environment is only if that names a task, as an agent's does. One the user opened on a file there is not.
   it.live(
-    "a program naming a done task's temp folder is stopped with it, or once it has gone",
+    "a program an agent left naming a done task's temp folder is stopped with it, or once it has gone",
     () =>
       run(
         Effect.gen(function* () {
@@ -348,19 +360,24 @@ describe.skipIf(!linux)("Leftovers", () => {
           writeFile(exe, SERVER)
           const profile = (t: TaskId) => join(tmp.root, folder(t), "profile")
           for (const t of [a, gone, open]) mkdirSync(profile(t), { recursive: true })
-          const tags = ["browser-a", "browser-gone", "browser-open"]
+          // As Chromium leaves it: no variables but the run's marker. The user's: this process's, without a task's id.
+          const wiped: NodeJS.ProcessEnv = {}
+          const users = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== TASK_ENV))
+          const tags = ["browser-a", "browser-gone", "browser-open", "viewer-a"]
           yield* withFakes(
             tags,
             Effect.gen(function* () {
-              yield* start([exe, "--headless", `--user-data-dir=${profile(a)}`, "--name", "browser-a"])
-              yield* start([exe, "--headless", `--user-data-dir=${profile(gone)}`, "--name", "browser-gone"])
-              yield* start([exe, "--headless", `--user-data-dir=${profile(open)}`, "--name", "browser-open"])
+              yield* start([exe, "--headless", `--user-data-dir=${profile(a)}`, "--name", "browser-a"], undefined, wiped)
+              yield* start([exe, "--headless", `--user-data-dir=${profile(gone)}`, "--name", "browser-gone"], undefined, { ...users, [TASK_ENV]: gone })
+              yield* start([exe, "--headless", `--user-data-dir=${profile(open)}`, "--name", "browser-open"], undefined, wiped)
+              yield* start([exe, `${profile(a)}/board.png`, "--name", "viewer-a"], undefined, users)
               yield* running([...tags, ...tags.map((t) => `${t}-child`)])
 
               yield* done(a)
               assert.isTrue(yield* tmp.remove(folder(a)))
               let left = yield* fakes
               assert.isTrue(!left.has("browser-a") && !left.has("browser-a-child"), "stopped with its folder")
+              assert.isTrue(left.has("viewer-a") && left.has("viewer-a-child"), "the user's is left alone")
 
               rmSync(join(tmp.root, folder(gone)), { recursive: true })
               rmSync(join(tmp.root, folder(open)), { recursive: true })
