@@ -70,6 +70,14 @@ export type Change =
       readonly attention: string | null
     }
   | {
+      /**
+       * 4.6: a task's agent finished in a project that reviews its work (`runs/RunEnds`), the task left in In progress for
+       * it (HE-66): the reactor hands it to `Reviews.held`, which reviews it or moves it on to In review.
+       */
+      readonly _tag: "ReviewDue"
+      readonly task: TaskId
+    }
+  | {
       /** 4.6: a prompt run of a task was registered (`runs/Runs`): its review and summaries in progress are out of date. */
       readonly _tag: "PromptStarted"
       readonly task: TaskId

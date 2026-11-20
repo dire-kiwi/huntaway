@@ -16,5 +16,5 @@ export const boardTools =
   "happened.\n" +
   "- For other tasks, list them in `tasks`. It ends when one changes status or a round of its review ends, watching " +
   "each from how it is when the wait starts, so give how you last saw each in `last_seen` (its status, with its " +
-  'review\'s state when you wait for its review: `{"ABC-12": {"status": "in_review", "review": "running"}}`).\n' +
+  'review\'s state when you wait for its review: `{"ABC-12": {"status": "in_progress", "review": "running"}}`).\n' +
   "- For a deploy, give it a `command` that exits once it's done."

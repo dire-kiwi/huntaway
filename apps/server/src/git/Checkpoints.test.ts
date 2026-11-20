@@ -719,6 +719,9 @@ describe("checkpoints through a run", () => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
         const { task, wt } = yield* taskRepo({ labels: ["plan"] })
+        // Its project doesn't review, so the work goes straight to In review (one that does holds it in In progress
+        // for its review: HE-66).
+        yield* sql`UPDATE projects SET auto_review = 0`.pipe(Effect.orDie)
         let version = 0
         /** A new version of the plan, written after the run's start. */
         const writePlan = Effect.gen(function* () {

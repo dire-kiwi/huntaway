@@ -23,8 +23,8 @@ export function ReviewTab({ form, set }: { form: ProjectForm; set: SetField }) {
           <ToggleField
             checked={form.auto_review}
             onChange={(v) => set("auto_review", v)}
-            label="Review each task's changes when it moves to In review"
-            help="A reviewer agent checks the changes in its own thread, and sends serious issues back to the task's agent to fix."
+            label="Review each task's changes when its agent finishes"
+            help="A reviewer agent checks the changes in its own thread while the task stays in In progress, and sends serious issues back to the task's agent to fix. Once the review passes, the task moves to In review."
           />
           <Field
             label="Fix rounds"

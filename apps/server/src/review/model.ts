@@ -219,9 +219,9 @@ export type IssuesDecision =
   /** Another round of fixes: its issues go to the task's agent, the review with `fixes` counted. */
   | { readonly _tag: "SendFixes"; readonly review: Review }
 
-/** Send the issues back if the task still waits in In review, idle, with rounds of fixes left. */
+/** Send the issues back if the task still waits in In progress (where it's reviewed, HE-66), idle, with rounds of fixes left. */
 export const decideIssues = (task: Pick<Task, "status" | "running">, review: Review, rounds: number): IssuesDecision => {
-  if (task.status !== "in_review" || task.running) return { _tag: "MovedOn" }
+  if (task.status !== "in_progress" || task.running) return { _tag: "MovedOn" }
   if (review.fixes >= rounds + review.extra_rounds) {
     const what = found(review)
     const reason = review.fixes === 0 ? what : review.fixes === 1 ? `${what} after a round of fixes` : `${what} after ${review.fixes} rounds of fixes`

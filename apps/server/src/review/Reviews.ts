@@ -63,7 +63,9 @@ import { readWork, revParse } from "./work.ts"
 // `submit_review` go back to the task's agent to fix; when it finishes, the new commit is reviewed again. After the
 // project's `review_rounds` rounds of that in a row, the task is left for the user, who can give it as many more
 // (`extend`). Only code changes are reviewed automatically: a branch with no commits of its own is skipped unless the
-// agent changed code somewhere else (`changedElsewhere`). The task stays in In review while it's reviewed.
+// agent changed code somewhere else (`changedElsewhere`). The task stays in In progress while it's reviewed (HE-66):
+// its agent's run ends there when a review is due (`RunEnds`, `held`), and it goes on to In review once the review
+// passes, or ends without issues to send back; with issues, its agent works on them there.
 
 /** What `submit_review` tells the reviewer. */
 export const RECORDED = "Recorded. End your turn now with a short summary of the review."
@@ -78,6 +80,11 @@ export interface ReviewsShape {
   readonly start: (task: TaskId, manual: boolean) => Effect.Effect<Task | null, ReviewRefused | SendRefused | TaskNotFound>
   /** A task entered In review (or a run of it ended there): review it if a review is due. Safe to call at any time. */
   readonly reconcile: (task: TaskId) => Effect.Effect<void>
+  /**
+   * A task's agent finished, the task left in In progress for its review (`ReviewDue`): review it, or move it on to In
+   * review when there's nothing to review or the review couldn't start.
+   */
+  readonly held: (task: TaskId) => Effect.Effect<void>
   /** `submit_review` from a reviewer's run: its verdict, acted on when its run ends. */
   readonly submit: (thread: Task, run: RunId, args: Submitted) => Effect.Effect<{ readonly ok: boolean; readonly note: string }, ReviewRefused>
   /** A review or summary thread's run ended: its part of the review (or its summary) ends; the last part acts on the review. */
@@ -156,7 +163,20 @@ export class Reviews extends Context.Service<Reviews, ReviewsShape>()("huntaway-
         return ended === null || ended.value.state === "running" ? null : { task: ended.after, review: ended.value }
       })
 
-      /** Ask the task's agent to fix what the review found, if it waits in In review with rounds left; else leave it for the user. */
+      /**
+       * The task's review is over: on to In review from In progress, where it was reviewed, unless it moved on, its agent
+       * is working (or waiting) again, or another review is running.
+       */
+      const leave = (id: TaskId) =>
+        changeTask(w, id, (task) =>
+          Effect.gen(function* () {
+            if (task.kind !== "task" || task.status !== "in_progress" || task.running || task.waiting || task.merging) return null
+            if (task.review?.state === "running" || (yield* runs.isRunning(id))) return null
+            return { status: "in_review" as const, attention_reason: null }
+          }),
+        ).pipe(Effect.asVoid)
+
+      /** Ask the task's agent to fix what the review found, if it waits in In progress with rounds left; else leave it for the user. */
       const sendIssues = Effect.fnUntraced(function* (id: TaskId, review: Review) {
         const task = yield* tasks.get(id)
         if (task === null) return
@@ -182,16 +202,23 @@ export class Reviews extends Context.Service<Reviews, ReviewsShape>()("huntaway-
             review_round: decision.review.fixes,
           }),
         )
-        if (Exit.isFailure(sent)) yield* notice(id, "error", "Couldn't send the review's issues to the agent", failureText(sent.cause))
+        if (Exit.isFailure(sent)) {
+          yield* notice(id, "error", "Couldn't send the review's issues to the agent", failureText(sent.cause))
+          yield* leave(id)
+        }
       })
 
       /** Every reviewer has finished: act on their combined review. */
       const act = Effect.fnUntraced(function* (task: Task, review: Review) {
         if (review.state === "passed") {
+          yield* leave(task.id)
           yield* notice(task.id, "info", "Review passed", review.summary)
           yield* summaries.reviewPassed(task.id)
         } else if (review.state === "issues") yield* sendIssues(task.id, review)
-        else yield* notice(task.id, "warning", "Review didn't finish", review.summary)
+        else {
+          yield* leave(task.id)
+          yield* notice(task.id, "warning", "Review didn't finish", review.summary)
+        }
       })
 
       const startLocked = Effect.fnUntraced(function* (id: TaskId, manual: boolean) {
@@ -350,14 +377,16 @@ export class Reviews extends Context.Service<Reviews, ReviewsShape>()("huntaway-
         if (failed !== null && started === 0) return yield* failed
         const who = parts.length > 1 ? ` with ${parts.length} reviewers` : ""
         yield* notice(task.id, "info", `Reviewing the changes (commit ${commit})${who}`)
-        if ((task.status === "in_progress" || task.status === "needs_attention") && !task.merging) {
-          // A task under review sits in In review (one reviewed again from Needs attention after its rounds of fixes,
-          // say), so the issues found can go back to its agent. Unless its agent has started again since (stopping the
-          // review): its column is that run's.
-          yield* changeTask(w, task.id, () =>
-            Effect.map(repo.laterRun(task.id, lastRun), (later) => (later ? null : { status: "in_review" as const, attention_reason: null })),
-          )
-        }
+        // A task under review sits in In progress (HE-66: one moved to In review, or reviewed again from Needs attention
+        // after its rounds of fixes, say), so the issues found can go back to its agent. Unless its agent has started
+        // again since (stopping the review): its column is that run's.
+        yield* changeTask(w, task.id, (now) =>
+          Effect.gen(function* () {
+            if ((now.status !== "in_review" && now.status !== "needs_attention") || now.merging || now.review?.state !== "running") return null
+            if (yield* repo.laterRun(task.id, lastRun)) return null
+            return { status: "in_progress" as const, attention_reason: null }
+          }),
+        )
         return yield* tasks.get(task.id)
       })
 
@@ -492,19 +521,25 @@ export class Reviews extends Context.Service<Reviews, ReviewsShape>()("huntaway-
         }
       }).pipe(Effect.withSpan("Reviews.reconcileAll"))
 
+      const reconcile = (id: TaskId) =>
+        start(id, false).pipe(
+          Effect.asVoid,
+          Effect.catchCause((cause) =>
+            Effect.gen(function* () {
+              const why = failureText(cause)
+              yield* Effect.logWarning(`task=${id} couldn't start a review: ${why}`)
+              yield* notice(id, "warning", "Couldn't start the review", why)
+            }),
+          ),
+        )
+
       return Reviews.of({
         start,
-        reconcile: (id) =>
-          start(id, false).pipe(
-            Effect.asVoid,
-            Effect.catchCause((cause) =>
-              Effect.gen(function* () {
-                const why = failureText(cause)
-                yield* Effect.logWarning(`task=${id} couldn't start a review: ${why}`)
-                yield* notice(id, "warning", "Couldn't start the review", why)
-              }),
-            ),
-          ),
+        reconcile,
+        held: Effect.fn("Reviews.held")(function* (id: TaskId) {
+          yield* reconcile(id)
+          yield* leave(id)
+        }),
         submit,
         finished,
         supersede: Effect.fn("Reviews.supersede")(function* (id: TaskId) {
@@ -515,7 +550,10 @@ export class Reviews extends Context.Service<Reviews, ReviewsShape>()("huntaway-
         stopTask: Effect.fn("Reviews.stopTask")(function* (id: TaskId) {
           const agent = (yield* runs.stop(id)).stopped
           const reviewing = yield* stopReviewOf(id, "Stopped by the user.")
-          if (reviewing) yield* notice(id, "warning", "Review stopped")
+          if (reviewing) {
+            yield* notice(id, "warning", "Review stopped")
+            yield* leave(id)
+          }
           const summarising = yield* summaries.stop(id, false)
           return { stopped: agent || reviewing || summarising }
         }),

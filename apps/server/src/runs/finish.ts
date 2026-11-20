@@ -1,4 +1,4 @@
-import type { Notice, Status, Task, Timestamp, Todo } from "@huntaway/contracts"
+import type { Notice, Project, Status, Task, Timestamp, Todo } from "@huntaway/contracts"
 import { TODO_NUDGE, todoList } from "../prompts/todoNudge.ts"
 import type { RunExitStatus } from "../platform/Changes.ts"
 import type { TaskColumns } from "../tasks/decide.ts"
@@ -67,6 +67,25 @@ export const lastingOf = (task: Pick<Task, "kind" | "task_type" | "project_id">)
   return null
 }
 
+/**
+ * 4.6: whether `task`'s project reviews its work when its agent finishes (`Reviews.start`'s first checks): a task in a
+ * project that reviews automatically and doesn't use workflows, with a ready worktree on a branch, on a host that runs
+ * agents. Whether there's anything new to review is for the review to say.
+ */
+export const reviewDue = (
+  task: Pick<Task, "kind" | "worktree_state" | "worktree_path" | "branch">,
+  project: Pick<Project, "auto_review" | "use_workflows"> | null,
+  noAgents: boolean,
+): boolean =>
+  task.kind === "task" &&
+  project !== null &&
+  project.auto_review &&
+  !project.use_workflows &&
+  !noAgents &&
+  task.worktree_state === "ready" &&
+  task.worktree_path !== null &&
+  task.branch !== null
+
 /** What the end of a run knows. */
 export interface FinishFacts {
   readonly outcome: Outcome
@@ -93,6 +112,11 @@ export interface FinishFacts {
   readonly nudged: boolean
   /** The end of the Ready for merge column, for a task rejoining the merge queue. */
   readonly endOfMergeQueue: number
+  /**
+   * 4.6: its project reviews its work automatically (`reviewDue`): one that would go to In review stays in In progress
+   * while it's reviewed (HE-66), and goes on to In review once the review lets it.
+   */
+  readonly reviewDue: boolean
 }
 
 /** What the end of a run writes to its task, says in its thread, and does next. */
@@ -109,6 +133,8 @@ export interface FinishDecision {
   readonly workDone: boolean
   /** 6.6: its merging agent said it's merged, for its workflow to move it to Done. */
   readonly mergeFinished: boolean
+  /** 4.6: the task stays in In progress for its review (`reviewDue`), which is started next. */
+  readonly review: boolean
 }
 
 type Column = readonly [Status | null, string | null]
@@ -122,7 +148,7 @@ export const decideFinish = (f: FinishFacts): FinishDecision => {
     // A compaction never moves the card.
     if (f.outcome._tag === "Cancelled") notices.push({ level: "warning", text: "Compacting stopped" })
     else if (failed !== null) notices.push({ level: "error", text: "Compacting failed", detail: failed })
-    return { notices, columns: { running: false }, sendQueued: true, nudge: null, workDone: false, mergeFinished: false }
+    return { notices, columns: { running: false }, sendQueued: true, nudge: null, workDone: false, mergeFinished: false, review: false }
   }
   const limit = failed !== null && f.limitAhead ? f.task.limit_reset_at : null
   const waitReset = limit !== null && isTask && !f.task.merging && f.limitWait
@@ -183,6 +209,9 @@ export const decideFinish = (f: FinishFacts): FinishDecision => {
       nudge = items
     }
   }
+  // A task its project reviews stays in In progress while it's reviewed (HE-66).
+  const review = isTask && column[0] === "in_review" && f.reviewDue
+  if (review) column = ["in_progress", null]
   const [status, reason] = column
   const columns: { -readonly [K in keyof TaskColumns]: TaskColumns[K] } = { running: false, attention_reason: reason }
   if (waitReset) columns.waiting = true
@@ -201,7 +230,7 @@ export const decideFinish = (f: FinishFacts): FinishDecision => {
     columns.position = f.endOfMergeQueue
     notices.push({ level: "info", text: "Back in the merge queue" })
   }
-  return { notices, columns, sendQueued: limit === null, nudge, workDone, mergeFinished }
+  return { notices, columns, sendQueued: limit === null, nudge, workDone, mergeFinished, review }
 }
 
 /** Why a task whose agent ended its turn without saying its work in a workflow's column was done needs attention. */

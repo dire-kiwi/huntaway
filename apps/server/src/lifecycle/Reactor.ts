@@ -92,6 +92,11 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           yield* engine.stepEnded(change.thread, change.run, change.outcome, change.attention)
           return
         }
+        // 4.6: a task's agent finished with a review due, the task left in In progress for it (HE-66).
+        if (change._tag === "ReviewDue") {
+          yield* reviews.held(change.task)
+          return
+        }
         // 6.6: the workflow column that held the task goes on from there, or its workflow moves the merged task to Done.
         if (change._tag === "WorkflowWorkDone") {
           yield* engine.workDone(change)
@@ -172,9 +177,12 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           // Done with no agent left in it, what its agents left running stops, such as the dev servers its runs' ends left (HA-409).
           const doneNow = change.after.kind === "task" && change.after.status === "done" && !change.after.running
           if (doneNow && (moved || change.before?.running === true)) yield* devServers.stopLeft(change.after.id, "it's done")
-          // 4.6: a task that entered In review (or whose run ended there) is reviewed, if a review is due.
+          // 4.6: a task that entered In review (or whose run ended there) is reviewed, if a review is due. Not one the board
+          // moved on from In progress, where it was reviewed (HE-66): that review is over, passed or not, and one that
+          // failed or was stopped would only start again.
           const ended = change.before?.running === true && !change.after.running
-          if (change.after.kind === "task" && change.after.status === "in_review" && (moved || ended)) yield* reviews.reconcile(change.after.id)
+          const reviewed = change.cause._tag === "Board" && change.before?.status === "in_progress" && !change.before.running
+          if (change.after.kind === "task" && change.after.status === "in_review" && ((moved && !reviewed) || ended)) yield* reviews.reconcile(change.after.id)
           // 6.6: the task entered a column: runs waiting at the one it left stop, and its new column's workflows start.
           if (moved) yield* engine.onStatus(change)
           // An unpinned title catches up with what was said since.
