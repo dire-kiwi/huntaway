@@ -3,9 +3,14 @@
 //
 // `ownWork` names the work the thread keeps for itself ("Only <what>, and plain conversation, are yours"). `codex`: the
 // thread runs on Codex, whose run ends with its turn, so it waits for its subagents in the turn rather than ending it.
+// `acp`: it runs on an ACP agent (HE-69), which also waits in the turn, with whatever subagents it has.
 
-export const delegation = (ownWork: string, codex = false): string => {
-  const handOn = codex
+export const delegation = (ownWork: string, codex = false, acp = false): string => {
+  const handOn = acp
+    ? "Use your subagents, if you have a tool that starts them: start one per independent request (several at once when the " +
+      "work splits). Say in a sentence or two what you started, then wait for them and reply with what they found. Don't end " +
+      "your turn while any is still running: nothing would report back. "
+    : codex
     ? "Use subagents: start one per independent request (several at once when the work splits), so they run in " +
       "parallel. Say in a sentence or two what you started, then wait for them with your `wait` (collab) tool and reply with " +
       "what they found. Don't end your turn while any is still running: your subagents stop when it ends and nothing would " +

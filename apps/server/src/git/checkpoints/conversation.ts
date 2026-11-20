@@ -1,4 +1,4 @@
-import type { Rewind, Task } from "@huntaway/contracts"
+import type { Agent, Rewind, Task } from "@huntaway/contracts"
 import type { Checkpoint } from "./model.ts"
 
 // What a rewind does to the agent's conversation (huntaway's git/checkpoints/handlers.ts `conversation`, and
@@ -14,13 +14,14 @@ export type ConvoResult = { readonly ok: Convo } | { readonly err: string }
 
 /**
  * How the agent's conversation goes back to before turn `turn` of `rows` (the task's checkpoints), or why it can't.
- * `session` is the task's session now; `firstUser` the thread's first user message (its write number).
+ * `session` is the task's session now; `agent` the agent it runs on; `firstUser` the thread's first user message (its
+ * write number). An ACP agent can't take its conversation back (ACP has no rewind, HE-69): only start a new one.
  */
 export const conversation = (
   session: string | null,
   rows: ReadonlyArray<Checkpoint>,
   turn: Checkpoint,
-  codex: boolean,
+  agent: Agent,
   firstUser: number | null,
 ): ConvoResult => {
   if (session === null) return { ok: { _tag: "Nothing" } }
@@ -41,7 +42,8 @@ export const conversation = (
   const changed = "the agent's conversation has changed since this message (a new session)"
   // The message started it: the next one starts a new one (with the task's description, as the first does).
   if (firstUser === message) return { ok: { _tag: "Fresh" } }
-  if (codex) {
+  if (agent === "acp") return { err: "an ACP agent can't take its conversation back to before a turn" }
+  if (agent === "codex") {
     // Codex reverts the thread to before the turn itself.
     if (turn.session !== null && turn.session === session && turn.agent_at !== null) return back(null, turn.agent_at)
     if (turn.session !== null && turn.session !== session) return { err: changed }

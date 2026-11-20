@@ -5,9 +5,9 @@ import type { LaunchSpec } from "../agents/AgentDriver.ts"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
 import { AgentTools } from "../agents/AgentTools.ts"
 import { cacheDirsIn, codexEffort, DOCS_SERVER, reviewFilesystem } from "../agents/claude/access.ts"
+import { acpLaunch, acpModel } from "../agents/acp/launch.ts"
 import { claudeLaunch, recordedEffort } from "../agents/claude/launch.ts"
-import { codexLaunch } from "../agents/codex/launch.ts"
-import type { LaunchRefused } from "../agents/codex/launch.ts"
+import { codexLaunch, LaunchRefused } from "../agents/codex/launch.ts"
 import { isClaudeModel } from "../agents/codex/spec.ts"
 import { CodexQueries } from "../agents/CodexQueries.ts"
 import { Prompts } from "../agents/Prompts.ts"
@@ -85,7 +85,7 @@ const threadConfigKey = (task: Task): "assistant_config_id" | "threads_config_id
 }
 
 export interface LaunchFactsShape {
-  /** Everything a run is launched with, by its thread's config's agent (Claude's, or Codex's: 5.2). */
+  /** Everything a run is launched with, by its thread's config's agent (Claude's, Codex's: 5.2, or an ACP agent's: HE-69). */
   readonly launch: (run: Run, text: string) => Effect.Effect<Prepared, TaskNotFound | LaunchRefused | WorktreeFailed | WorkspaceRefused>
   /** Everything a Claude run of `run` is launched with, its folder's contents included: prepared for `RunDir.prepare` and `Shim.spawn`. */
   readonly claude: (run: Run, text: string) => Effect.Effect<Prepared, TaskNotFound | WorktreeFailed | WorkspaceRefused>
@@ -100,7 +100,8 @@ export interface LaunchFactsShape {
   readonly threadConfig: (task: Task) => Effect.Effect<AgentConfigId | null | undefined>
   /**
    * 6.1: where the thread's agent works (its worktree while that is there), and what of its config a program run there
-   * gets: the config folder (`CLAUDE_CONFIG_DIR`, or `CODEX_HOME` for a Codex config) and its proxy. A task's terminal.
+   * gets: the config folder (`CLAUDE_CONFIG_DIR`, `CODEX_HOME` for a Codex config, `GEMINI_HOME` for an ACP one) and its
+   * proxy. A task's terminal.
    */
   readonly workEnv: (task: Task) => Effect.Effect<{ readonly cwd: string; readonly env: Readonly<Record<string, string>> }>
 }
@@ -185,7 +186,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
 
       /** The proxy a config sends its agents through (its own `api_url`): its URL and key; nothing without one. */
       const apiEnv = Effect.fnUntraced(function* (cfg: AgentConfigRow | null) {
-        const url = cfg === null || cfg.agent === "codex" ? null : nonBlank(cfg.api_url)
+        const url = cfg === null || cfg.agent !== "claude" ? null : nonBlank(cfg.api_url)
         if (cfg === null || url === null) return []
         const keys = yield* configs.keys(cfg.id)
         const key = keys.api_key === null ? "" : Redacted.value(keys.api_key)
@@ -484,15 +485,87 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         return prepared
       })
 
-      /** A run's launch, by its thread's config's agent: Claude's, or Codex's. */
+      // ---- ACP agents (HE-69): Codex's half without Codex's sandbox, rules, dynamic tools or compaction ----
+
+      const acp = Effect.fn("LaunchFacts.acp")(function* (run: Run, text: string, cfg: AgentConfigRow) {
+        // ACP has no compaction (`Compaction` doesn't ask for one; a `/compact` sent is refused before any work is made ready).
+        if (run.kind === "compact") return yield* new LaunchRefused({ reason: "an ACP agent's conversation can't be compacted" })
+        const before = yield* load(run.task_id)
+        // 6.11: as Claude's launch.
+        if (before.project_id !== null) yield* relocation.settled(before.project_id)
+        const project = before.project_id === null ? null : Option.getOrNull(yield* projects.get(before.project_id))
+        const task = yield* prepareWork(run, before, project)
+        const profile = Option.getOrNull(yield* profiles.get(task.profile_id))
+        const host = yield* settings.get
+        const review = task.kind === "review"
+        // 6.7: as Claude's launch.
+        const workspace = yield* assistantLaunch.workspace(task, { compact: false, message: text })
+        const cwd = workspace?.cwd ?? (yield* cwdOf(task, project?.repo_path ?? null))
+        const docs = task.kind === "task" && task.labels.length > 0 ? dataDir.documents(task.id) : null
+        if (docs !== null) yield* mkdir(docs)
+        const permissionMode: PermissionMode = task.permission_mode ?? project?.permission_mode ?? host.default_permission_mode ?? "default"
+        // The thread's own pick, unless it is Claude's or Codex's: else the agent's default. Its effort as given.
+        const model = acpModel(nonBlank(task.model))
+        const effort = nonBlank(task.effort)
+        const reports = yield* assistantLaunch.reports(task)
+        const prompt = withPreface((workspace?.update ?? "") + (reports?.preface ?? ""), yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
+        const tmp = yield* taskTmp.ensure(task)
+        const served = yield* requests.served
+        // The text for an agent other than Claude Code: its tools are MCP tools.
+        const systemPrompt = yield* prompts.system(task.id, {
+          codex: true,
+          acp: true,
+          permission_mode: permissionMode,
+          tmp,
+          desktopHost: served.desktop ? identity.hostName : null,
+          spacesHost: served.spaces === true ? identity.hostName : null,
+          browserTools: served.browser === true,
+          docsServer: (served.plugins ?? []).some((p) => p.name === DOCS_SERVER),
+          memory: workspace?.memory,
+        })
+        const configDir = yield* configDirOf(task, cfg)
+        const launched = yield* acpLaunch({
+          run: run.id,
+          runDir: dir.path(run.id),
+          kind: run.kind,
+          task,
+          cwd,
+          exe: config.exe,
+          home: config.home,
+          configDir,
+          command: cfg.command,
+          tmp,
+          model,
+          effort,
+          permissionMode,
+          tools: yield* agentTools.forRun(task),
+          served,
+          githubAccount: nonBlank(project?.github_account) ?? nonBlank(profile?.github_account),
+          systemPrompt,
+          prompt,
+          promptId: yield* random.uuidV4(),
+          mcp: {
+            url: `http://127.0.0.1:${yield* listening.port}/api/mcp/${encodeURIComponent(run.id)}/`,
+            secret: yield* identity.runSecret(run.id),
+            manifest: yield* requests.manifest(review),
+          },
+        })
+        yield* runs.update(run.id, { config_dir: configDir ?? "", effort: effort ?? "" })
+        const runStart = { runtime: "acp", model: model ?? "", effort: effort ?? "", permission_mode: permissionMode, resume: task.session_id !== null }
+        // No conversation rollback: an ACP agent can't make one (`Checkpoints` refuses it).
+        const prepared: Prepared = { spec: launched.spec, writesDocuments: docs !== null, rewind: null, started: startedWith(workspace, reports), runStart }
+        return prepared
+      })
+
+      /** A run's launch, by its thread's config's agent: Claude's, Codex's or an ACP agent's. */
       const launch = Effect.fn("LaunchFacts.launch")(function* (run: Run, text: string) {
         const task = yield* load(run.task_id)
         const cfg = yield* configOf(task)
-        if (cfg?.agent !== "codex") return yield* claude(run, text)
+        if (cfg === null || cfg.agent === "claude") return yield* claude(run, text)
         // A thread created while its profile had no configs takes the default it has now, and keeps it with its
         // conversation.
         if (task.claude_config_id === null && task.session_id === null) yield* tasks.write(task.id, { claude_config_id: cfg.id }, run.created_at)
-        return yield* codex(run, text, cfg)
+        return cfg.agent === "acp" ? yield* acp(run, text, cfg) : yield* codex(run, text, cfg)
       })
 
       const threadConfig = Effect.fnUntraced(function* (task: Task) {
@@ -515,7 +588,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const cfg = yield* configOf(task)
         const configDir = yield* configDirOf(task, cfg)
         const env: Record<string, string> = Object.fromEntries(yield* apiEnv(cfg))
-        if (configDir !== null) env[cfg?.agent === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"] = expand(configDir)
+        const homeVar = cfg?.agent === "codex" ? "CODEX_HOME" : cfg?.agent === "acp" ? "GEMINI_HOME" : "CLAUDE_CONFIG_DIR"
+        if (configDir !== null) env[homeVar] = expand(configDir)
         return { cwd, env }
       })
 

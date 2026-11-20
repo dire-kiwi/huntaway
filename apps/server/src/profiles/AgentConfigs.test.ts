@@ -152,6 +152,34 @@ describe("AgentConfigs", () => {
       const e = yield* reason(configs.update(cfg.id, { agent: "codex" }))
       assert.strictEqual(e, "has_session")
       assert.strictEqual((yield* configs.update(cfg.id, { agent: "claude", name: "d" })).name, "d", "the same agent is no change")
+      assert.strictEqual(yield* reason(configs.update(cfg.id, { agent: "acp" })), "has_session")
+    }).pipe(Effect.provide(TestBoard())),
+  )
+
+  // HE-69: an ACP config's command line, refused for the others; no proxy for it either.
+  it.effect("keeps an ACP config's command line, blank as the default, and refuses one for Claude Code and Codex", () =>
+    Effect.gen(function* () {
+      const configs = yield* AgentConfigs
+      const acp = yield* configs.create({ name: "gemini", agent: "acp", config_dir: " ~/.gemini-work ", command: "  agy   acp " })
+      assert.deepStrictEqual([acp.agent, acp.command, acp.config_dir, acp.api_url, acp.settings_api_url], ["acp", "agy   acp", "~/.gemini-work", null, null])
+      assert.strictEqual((yield* configs.create({ name: "d", agent: "acp", command: " " })).command, null)
+      assert.strictEqual((yield* configs.update(acp.id, { command: "my-agent --acp" })).command, "my-agent --acp")
+      assert.strictEqual((yield* configs.update(acp.id, { name: "g" })).command, "my-agent --acp", "left out is left as it is")
+      assert.strictEqual((yield* configs.update(acp.id, { command: "" })).command, null)
+      for (const agent of ["claude", "codex"] as const) {
+        assert.strictEqual(yield* reason(configs.create({ name: "x", agent, command: "agy acp" })), "a command line is for ACP agent configs")
+        assert.strictEqual((yield* configs.create({ name: "x", agent, command: " " })).command, null)
+      }
+      assert.strictEqual(yield* reason(configs.create({ name: "x", agent: "acp", api_url: "http://x:1" })), "a proxy is for Claude Code configs")
+      assert.strictEqual(yield* reason(configs.update(acp.id, { api_url: "http://x:1" })), "a proxy is for Claude Code configs; clear api_url first")
+      // One that stops being an ACP config loses its command line, and can't be given one.
+      yield* configs.update(acp.id, { command: "agy acp" })
+      assert.strictEqual(yield* reason(configs.update(acp.id, { agent: "codex", command: "agy" })), "a command line is for ACP agent configs")
+      const codex = yield* configs.update(acp.id, { agent: "codex" })
+      assert.deepStrictEqual([codex.agent, codex.command], ["codex", null])
+      assert.strictEqual(yield* reason(configs.update(acp.id, { command: "agy" })), "a command line is for ACP agent configs")
+      const claude = yield* configs.create({ name: "c", api_url: "http://x:1" })
+      assert.strictEqual(yield* reason(configs.update(claude.id, { agent: "acp" })), "a proxy is for Claude Code configs; clear api_url first")
     }).pipe(Effect.provide(TestBoard())),
   )
 })

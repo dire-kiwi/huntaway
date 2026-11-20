@@ -819,7 +819,7 @@ describe("conversation", () => {
     const rows = [cp(0, null, "s", null, 0), cp(1, 1, "s", "u1", 0), cp(2, 2, "s", "u2", 2), cp(3, 3, "s", "u3", 1), cp(4, 4, "s", "u4", 0)]
     const [r0, r1, , r3, r4] = rows
     if (r0 === undefined || r1 === undefined || r3 === undefined || r4 === undefined) return assert.fail("rows")
-    const back = (t: Checkpoint, codex: boolean) => conversation("s", rows, t, codex, 10)
+    const back = (t: Checkpoint, codex: boolean) => conversation("s", rows, t, codex ? "codex" : "claude", 10)
     // Turn 2 was taken out of the conversation already; turn 3 only had its files rewound.
     assert.deepStrictEqual(back(r4, false), resume("u3", 4))
     assert.deepStrictEqual(back(r3, false), resume("u1", 3))
@@ -827,10 +827,14 @@ describe("conversation", () => {
     assert.deepStrictEqual(back(r4, true), { ok: { _tag: "Back", rewind: { turn: 4, message_id: 40, session: "s", before_turn: "u4" } } })
     assert.deepStrictEqual(back(r1, true), { ok: { _tag: "Fresh" } })
     // A new session since, or no record of where the conversation was.
-    assert.isTrue("err" in conversation("other", rows, r4, false, 10))
-    assert.isTrue("err" in conversation("other", rows, r4, true, 10))
-    assert.isTrue("err" in conversation("s", rows, r1, false, 5))
-    assert.deepStrictEqual(conversation(null, rows, r4, false, 10), { ok: { _tag: "Nothing" } })
+    assert.isTrue("err" in conversation("other", rows, r4, "claude", 10))
+    assert.isTrue("err" in conversation("other", rows, r4, "codex", 10))
+    assert.isTrue("err" in conversation("s", rows, r1, "claude", 5))
+    assert.deepStrictEqual(conversation(null, rows, r4, "claude", 10), { ok: { _tag: "Nothing" } })
+    // HE-69: an ACP agent can't take its conversation back, only start a new one (its files still rewind).
+    assert.deepStrictEqual(conversation("s", rows, r4, "acp", 10), { err: "an ACP agent can't take its conversation back to before a turn" })
+    assert.deepStrictEqual(conversation("s", rows, r1, "acp", 10), { ok: { _tag: "Fresh" } })
+    assert.deepStrictEqual(conversation(null, rows, r4, "acp", 10), { ok: { _tag: "Nothing" } })
     return undefined
   })
 })
