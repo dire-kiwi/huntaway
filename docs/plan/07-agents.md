@@ -1083,6 +1083,34 @@ assistant's and its routines' (`trackedList.owner`, as for tracked work; a proje
   run on the real `codex` (codex-cli 0.167.1, `gpt-6-luna`, low effort, the default mode) on a test server called
   `list_projects` as a dynamic tool, replied, and ended in In review.
 
+## ACP agents (HE-69)<a id="acp"></a>
+
+A third agent kind, `acp`: any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com)
+(JSON-RPC 2.0 over newline-delimited stdio), with Google's Antigravity CLI (`agy acp`) as the default, which is how the
+board supports Google's models. t3code (`~/personal/t3code`, `packages/effect-acp`, `apps/server/src/provider/acp/`)
+was the reference for the protocol and Antigravity's dialect.
+
+- **The config**: `AgentConfig.agent = "acp"` and `command`, its command line (null or blank for `agy acp`); its
+  `config_dir`, when set, is the agent's home (`GEMINI_HOME` for Antigravity), blank for the agent's own. No proxy.
+- **`acp-run`, the adapter**: `apps/server/src/acp-run.ts` over `agents/acp/adapter/`, exec'd by the launcher as
+  `codex-run` is, reading `acp.json` (`agents/acp/spec.ts`' `AcpSpec`, which also marks the run as an ACP agent's). It is
+  a Codex run to the rest of the board: the same stream-json input (user message, `interrupt`, `codex_response`) and
+  Codex-shaped output lines, so `runs/codex/output.ts`, the Codex translator, `Permissions.onCodex` and `ToolCalls`
+  handle it. The mapping is at the top of `spec.ts`. What ACP has no counterpart for: a steer (a message during a turn
+  starts the next turn), compaction (an ACP run is never compacted), a rewind of the conversation (refused; files
+  still rewind), a system prompt (put before the first prompt of a new session).
+- **The board's tools** reach the agent as MCP servers in `session/new`: the board's own server over HTTP (as for an
+  older Codex session: `in_process` false) and the others of `mcp.json`. An agent that doesn't take http MCP servers
+  (Antigravity doesn't) gets each through `huntaway mcp-stdio <url>`, a stdio-to-HTTP MCP bridge (`apps/server/src/mcp-stdio.ts`),
+  with the run's bearer secret in its environment.
+- **Permissions**: the board's permission mode picks one of the agent's session modes when it has a match
+  (`bypassPermissions` → `yolo`, `acceptEdits` → `auto_edit`, `plan` → `plan`, else `default`); every
+  `session/request_permission` is asked in the thread as a Codex approval is.
+- **Sign-in** is the agent's own: the adapter never calls `authenticate` interactively. A `session/new` refused with
+  `-32000` (Antigravity signed out) fails the run with "sign in by running `agy` once".
+- **Tests**: `packages/testing/bin/fake-acp` (an ACP agent with fake-codex's markers), the adapter's tests against it,
+  and `tests/e2e/acp.test.ts`.
+
 ## Prompts
 
 Every piece of text the board gives an agent is in `apps/server/src/prompts/`, one file per piece, **copied from the

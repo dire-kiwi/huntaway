@@ -3,7 +3,7 @@ import { Rpc, RpcGroup } from "effect/rpc"
 import { Conflict, Invalid, NotFound, Unavailable } from "../errors.ts"
 import { RunId, TaskId } from "../ids.ts"
 import { Auth, RequiredScope } from "../session.ts"
-import { Rewind, Task } from "../task.ts"
+import { Agent, Rewind, Task } from "../task.ts"
 import { Timestamp } from "../time.ts"
 
 // Checkpoints of a task's worktree (docs/plan/06-server.md, Git; inventory 04, section 2.9; the old `/tasks/{id}/turns`
@@ -75,7 +75,7 @@ export const Turns = Schema.Union([
     head: Schema.NullOr(Schema.String),
     /** The conversation rollback its next run makes. */
     rewind: Schema.NullOr(Rewind),
-    agent: Schema.Literals(["claude", "codex"]),
+    agent: Agent,
   }),
   Schema.Struct({ available: Schema.Literal(false), reason: Schema.String, turns: Schema.Array(Turn), rewind: Schema.NullOr(Rewind) }),
 ])

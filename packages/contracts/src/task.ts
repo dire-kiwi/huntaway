@@ -39,8 +39,8 @@ export type PermissionMode = typeof PermissionMode.Type
 export const Effort = Schema.Literals(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
 export type Effort = typeof Effort.Type
 
-/** The agent CLI that runs a config's threads. */
-export const Agent = Schema.Literals(["claude", "codex"])
+/** The agent CLI that runs a config's threads: Claude Code, Codex, or an ACP agent (Agent Client Protocol; Google's Antigravity, `agy acp`, by default). */
+export const Agent = Schema.Literals(["claude", "codex", "acp"])
 export type Agent = typeof Agent.Type
 
 export const WorktreeState = Schema.Literals(["none", "setting_up", "ready", "tearing_down", "error"])
