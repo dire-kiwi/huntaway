@@ -402,6 +402,8 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
 
       /** Close the headless pages nobody has used or watched for `IDLE_MS`, and Chrome once it has none. */
       const reap = Effect.gen(function* () {
+        // No Chrome, no page to close: the minute's tick costs one read (a test's clock moving a day runs it 1,440 times).
+        if ((yield* Ref.get(running)) === null) return
         const now = yield* Clock.currentTimeMillis
         for (const [task, t] of yield* Ref.get(tabs)) {
           if (t.headless !== null && t.viewers === 0 && now - t.usedAt > IDLE_MS) yield* closeHeadless(task)
