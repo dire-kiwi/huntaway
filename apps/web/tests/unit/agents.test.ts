@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest"
 import type { HostAgentConfig } from "@huntaway/client"
 import { type Agent, AgentConfigId, HostId, Timestamp } from "@huntaway/contracts"
-import { effortOptions, inheritedModel, modelOptions, modelPlaceholder, type AgentModel } from "../../src/agents"
+import { effortOptions, inheritedModel, modelOptions, modelPlaceholder, ownModelPick, type AgentModel } from "../../src/agents"
 
 // What the pickers offer for each agent (HE-69): Claude's aliases for Claude Code, the listed models for Codex and an ACP
 // agent, which skip Claude's when inheriting one.
@@ -33,6 +33,17 @@ const listing = (efforts: ReadonlyArray<string>): ReadonlyArray<AgentModel> => [
 ]
 
 describe("agents' models", () => {
+  it("a new task keeps a Claude-named model its ACP config lists, and drops one left from a Claude config", () => {
+    const antigravity: ReadonlyArray<AgentModel> = [
+      ...GEMINI,
+      { id: "claude-opus-4-6", name: "Claude Opus", is_default: false, efforts: [], default_effort: null },
+    ]
+    expect(ownModelPick("claude-opus-4-6", antigravity)).toBe("claude-opus-4-6")
+    expect(ownModelPick("gemini-pro", antigravity)).toBe("gemini-pro")
+    expect(["opus", "claude-sonnet-4-5"].map((m) => ownModelPick(m, antigravity))).toEqual(["", ""])
+    expect(ownModelPick("opus", null)).toBe("")
+  })
+
   it("an ACP config offers the models it lists, not Claude's aliases", () => {
     expect(modelOptions(config("acp"), GEMINI)).toEqual([
       { id: "gemini-pro", label: "Gemini Pro" },

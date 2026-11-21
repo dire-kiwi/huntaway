@@ -556,7 +556,17 @@ describe("ACP sessions' settings", () => {
   it("picks the model, the effort and the mode the agent offers", () => {
     assert.deepStrictEqual(modelChoice(session, "pro"), { _tag: "Config", configId: "model", value: "pro" })
     assert.deepStrictEqual(modelChoice(session, "flash"), { _tag: "None" })
-    assert.deepStrictEqual(modelChoice(session, "gpt"), { _tag: "Unavailable", what: "the model gpt" })
+    assert.deepStrictEqual(modelChoice(session, "gemini-9"), { _tag: "Unavailable", what: "the model gemini-9" })
+    // Claude's or Codex's name: the agent's if it offers it, else a pick left from another config, said nothing of.
+    const served = {
+      configOptions: [{ id: "model", category: "model", type: "select", currentValue: "pro", options: [{ value: "claude-opus-4-6" }, { value: "gpt-5.4" }] }],
+    }
+    assert.deepStrictEqual(modelChoice(served, "claude-opus-4-6"), { _tag: "Config", configId: "model", value: "claude-opus-4-6" })
+    assert.deepStrictEqual(modelChoice(served, "gpt-5.4"), { _tag: "Config", configId: "model", value: "gpt-5.4" })
+    assert.deepStrictEqual(
+      ["opus", "claude-sonnet-4-5", "gpt-5.1", "codex-mini", "o3"].map((m) => modelChoice(session, m)._tag),
+      Array(5).fill("None"),
+    )
     assert.deepStrictEqual(modelChoice({ models: { currentModelId: "a", availableModels: [{ modelId: "a" }, { modelId: "b" }] } }, "b"), {
       _tag: "SetModel",
       modelId: "b",

@@ -1,4 +1,5 @@
 import { Predicate } from "effect"
+import { isClaudeModel } from "../codex/spec.ts"
 import { configOptions, selectValues } from "./protocol.ts"
 import type { ConfigOption, SessionResponse } from "./protocol.ts"
 
@@ -39,18 +40,26 @@ const modeOption = (session: SessionResponse): ConfigOption | undefined => selec
 
 const current = (option: ConfigOption | undefined): string | null => (typeof option?.currentValue === "string" ? option.currentValue : null)
 
-/** How to select model `wanted` (null: the agent's own). */
+/** A model name Codex's (`gpt-5.1`, `codex-mini`, `o3`). */
+const isCodexModel = (model: string): boolean => /^(gpt-|codex|o\d)/iu.test(model.trim())
+
+/**
+ * How to select model `wanted` (null: the agent's own): the agent's if it offers it, whatever its name (Antigravity
+ * serves `claude-…` and `gpt-…` models). One it doesn't offer is a warning, unless it is Claude's or Codex's: a pick
+ * left from a thread's earlier config, for which the agent's own is said nothing of.
+ */
 export const modelChoice = (session: SessionResponse, wanted: string | null): Choice => {
   if (wanted === null || wanted === "") return none
+  const missing: Choice = isClaudeModel(wanted) || isCodexModel(wanted) ? none : { _tag: "Unavailable", what: `the model ${wanted}` }
   const option = modelOption(session)
   if (option !== undefined) {
     if (current(option) === wanted) return none
-    return offers(option, wanted) ? { _tag: "Config", configId: option.id, value: wanted } : { _tag: "Unavailable", what: `the model ${wanted}` }
+    return offers(option, wanted) ? { _tag: "Config", configId: option.id, value: wanted } : missing
   }
   const legacy = session.models
   if (legacy?.currentModelId === wanted) return none
   if ((legacy?.availableModels ?? []).some((m) => m.modelId === wanted)) return { _tag: "SetModel", modelId: wanted }
-  return { _tag: "Unavailable", what: `the model ${wanted}` }
+  return missing
 }
 
 /** How to select effort `wanted` (null: the agent's own); an agent without a `thought_level` option has none to set. */

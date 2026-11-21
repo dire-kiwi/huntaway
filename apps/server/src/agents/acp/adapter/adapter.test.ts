@@ -359,6 +359,25 @@ describe("acp-run", () => {
   )
 
   it.live(
+    "a model the agent lists is set whatever its name; Claude's it doesn't is the agent's own, unsaid",
+    () =>
+      Effect.gen(function* () {
+        const env = { FAKE_ACP_MODELS: "gemini-3,claude-opus-4-6" }
+        const listed = yield* drive({ fields: { model: "claude-opus-4-6" }, env, stdin: "Hello" })
+        assert.strictEqual(listed.code, 0, listed.err)
+        assert.deepStrictEqual(at(byMethod(listed.sent, "session/set_config_option")[0], "params", "value"), "claude-opus-4-6")
+        assert.strictEqual(at(byMethod(listed.out, "huntaway/model")[0], "params", "model"), "claude-opus-4-6")
+
+        const stale = yield* drive({ fields: { model: "sonnet" }, env, stdin: "Hello" })
+        assert.strictEqual(stale.code, 0, stale.err)
+        assert.deepStrictEqual(byMethod(stale.sent, "session/set_config_option"), [])
+        assert.deepStrictEqual(byMethod(stale.out, "warning"), [])
+        assert.strictEqual(at(byMethod(stale.out, "huntaway/model")[0], "params", "model"), "gemini-3")
+      }),
+    30_000,
+  )
+
+  it.live(
     "a signed-out agent fails the run with how to sign in",
     () =>
       Effect.gen(function* () {

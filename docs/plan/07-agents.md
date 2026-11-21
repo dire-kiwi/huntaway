@@ -1130,9 +1130,12 @@ was the reference for the protocol and Antigravity's dialect.
   is optional on the wire (absent from older servers). `ConfigArchives` copies Antigravity's login
   (`antigravity-acp/acp_token.json`, `antigravity-acp/settings.json`, `settings.json`, `GEMINI.md`, `config`; folder
   `~/.gemini`), a best guess from t3code.
-- **Launch** (`agents/acp/launch.ts`, the ACP half of `LaunchFacts`): the model is the task's own unless it is a Claude
-  or Codex model (`gpt-*`, `codex*`, `o<digit>`), not the project's or profile's defaults, which name other agents'
-  models; the effort is the task's. A compaction is refused before any work is set up, and `Compaction` skips every
+- **Launch** (`agents/acp/launch.ts`, the ACP half of `LaunchFacts`): the model is the task's own, not the project's or
+  profile's defaults, which name other agents' models; the effort is the task's. The adapter decides on the model where
+  the session's are known: one the agent offers is set whatever its name (Antigravity serves `claude-*` and `gpt-*`
+  models); one it doesn't is a warning, unless it is a Claude or Codex model (`gpt-*`, `codex*`, `o<digit>`), a pick
+  left from another config, which is the agent's own unsaid. The new-task dialog drops a Claude-named pick only when the
+  config's listed models don't have it (`ownModelPick`). A compaction is refused before any work is set up, and `Compaction` skips every
   config that isn't Claude's. A rewind of an ACP task's conversation is refused (`checkpoints/conversation.ts`); its
   files still rewind.
 - **The adapter** (`agents/acp/`: `protocol.ts` lenient schemas, `map.ts` the pure mapping, `session.ts` model, effort

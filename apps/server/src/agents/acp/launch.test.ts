@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest"
 import { Effect } from "effect"
 import { TaskId } from "@huntaway/contracts"
 import { noRunTools } from "../claude/access.ts"
-import { acpLaunch, acpModel, acpServers } from "./launch.ts"
+import { acpLaunch, acpServers } from "./launch.ts"
 import type { AcpLaunchInput } from "./launch.ts"
 
 // How an ACP agent's run is launched (HE-69): the adapter on acp.json, the board's servers over HTTP (its own among
@@ -129,18 +129,6 @@ describe("an ACP agent's run's launch", () => {
       ])
     }),
   )
-
-  it("asks for the thread's model unless it is Claude's or Codex's", () => {
-    assert.deepStrictEqual(["gemini-3-pro", "opus", "claude-sonnet-4-5", "gpt-5.1", "codex-mini", "o3", null].map(acpModel), [
-      "gemini-3-pro",
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-    ])
-  })
 
   it("turns mcp.json's entries into ACP's, leaving out what it can't give", () => {
     assert.deepStrictEqual(acpServers({ a: { command: "x" }, b: null, c: { type: "http" }, d: "no" }), [{ name: "a", command: "x", args: [], env: [] }])

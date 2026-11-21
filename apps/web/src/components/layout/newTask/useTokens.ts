@@ -4,7 +4,7 @@ import { useState } from "react"
 import { useShallow } from "../../boardHelpers"
 import { agentOf, documentsOnly, isMerged, isScratch, LABELS, query, type QueryResult, type HostTask as Task } from "@huntaway/client"
 import { ProjectId, type DocumentLabel as DocumentType } from "@huntaway/contracts"
-import { effortOptions, inheritedModel, isClaudeModel, modelOptions } from "../../../agents"
+import { effortOptions, inheritedModel, modelOptions, ownModelPick } from "../../../agents"
 import { harnessesOf, harnessWords, type Harness, type HarnessConfig, type HarnessWord } from "../harnesses"
 import { allValues, lastValue, removeTokens, stripTokens, type Token } from "../taskTokens"
 
@@ -175,7 +175,7 @@ function useHarnesses({ resolve, inProject }: Where, agent: AgentChoice, { descr
   // A task for each harness named (`!opus !gpt-5.5` makes two from one prompt); with none, one in the picked config
   // with the model last picked there.
   const named = harnessesOf(harnessVocab, allValues(resolve({ "!": modelVocab }), "!"))
-  const runs: Harness[] = named.length ? named : [{ config, model: ownModels && isClaudeModel(model) ? "" : model }]
+  const runs: Harness[] = named.length ? named : [{ config, model: ownModels ? ownModelPick(model, configModels[config] ?? null) : model }]
   // Several harnesses make a task each. After only some of them could be made, those left (even one) are made as part
   // of the same set when it's tried again: linked to the others by its id (null on hosts before API 61), in a worktree.
   // Kept with the draft, so closing the dialog (or reloading) before trying again doesn't lose it.

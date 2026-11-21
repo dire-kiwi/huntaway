@@ -6,7 +6,6 @@ import type { RunTools } from "../claude/access.ts"
 import { boardServers, mcpRun, pluginServers, TASK_ENV, userInput } from "../claude/launch.ts"
 import type { BoardManifest, ServedServers } from "../claude/launch.ts"
 import { LaunchRefused } from "../codex/launch.ts"
-import { isClaudeModel } from "../codex/spec.ts"
 import { commandLine } from "./spec.ts"
 import type { AcpMcpServer, AcpSpec } from "./spec.ts"
 
@@ -49,12 +48,6 @@ export interface AcpLaunchInput {
   /** The board's MCP servers: their URLs start with `url`, with the run's secret; the board server's handshake. */
   readonly mcp: { readonly url: string; readonly secret: string; readonly manifest: BoardManifest }
 }
-
-/** A model name Codex's (`gpt-5.1`, `codex-mini`, `o3`). */
-const isCodexModel = (model: string): boolean => /^(gpt-|codex|o\d)/iu.test(model.trim())
-
-/** The model an ACP agent is asked for: the one given unless it is Claude's or Codex's, else null (the agent's own). */
-export const acpModel = (model: string | null): string | null => (model === null || isClaudeModel(model) || isCodexModel(model) ? null : model)
 
 /** What an ACP launch makes: the launch spec (with `acp.json`). */
 export interface AcpLaunch {

@@ -22,6 +22,13 @@ export const isClaudeModel = (m: string): boolean => {
   return MODEL_ALIASES.includes(v) || v === "default" || v === "opusplan" || v.startsWith("claude")
 }
 
+/**
+ * The model a new task in a config that lists its own models (Codex, an ACP agent) runs with: the pick, unless it is
+ * Claude's and the config doesn't list it (a pick left from a Claude config). Antigravity lists `claude-…` models.
+ */
+export const ownModelPick = (model: string, models: ReadonlyArray<AgentModel> | null): string =>
+  isClaudeModel(model) && !(models ?? []).some((m) => m.id === model) ? "" : model
+
 /** Whether a config's agent lists its own models (Codex, an ACP agent) rather than taking Claude's aliases. */
 const listed = (config: ClaudeConfig | undefined): boolean => listsModels(agentOf(config))
 

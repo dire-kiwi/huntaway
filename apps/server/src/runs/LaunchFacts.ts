@@ -5,7 +5,7 @@ import type { LaunchSpec } from "../agents/AgentDriver.ts"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
 import { AgentTools } from "../agents/AgentTools.ts"
 import { cacheDirsIn, codexEffort, DOCS_SERVER, reviewFilesystem } from "../agents/claude/access.ts"
-import { acpLaunch, acpModel } from "../agents/acp/launch.ts"
+import { acpLaunch } from "../agents/acp/launch.ts"
 import { claudeLaunch, recordedEffort } from "../agents/claude/launch.ts"
 import { codexLaunch, LaunchRefused } from "../agents/codex/launch.ts"
 import { isClaudeModel } from "../agents/codex/spec.ts"
@@ -504,8 +504,9 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const docs = task.kind === "task" && task.labels.length > 0 ? dataDir.documents(task.id) : null
         if (docs !== null) yield* mkdir(docs)
         const permissionMode: PermissionMode = task.permission_mode ?? project?.permission_mode ?? host.default_permission_mode ?? "default"
-        // The thread's own pick, unless it is Claude's or Codex's: else the agent's default. Its effort as given.
-        const model = acpModel(nonBlank(task.model))
+        // The thread's own pick and effort as given: the adapter selects the model if the agent offers it (and says
+        // nothing of a Claude or Codex model left from another config that it doesn't).
+        const model = nonBlank(task.model)
         const effort = nonBlank(task.effort)
         const reports = yield* assistantLaunch.reports(task)
         const prompt = withPreface(
