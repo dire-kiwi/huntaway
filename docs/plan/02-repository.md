@@ -171,6 +171,12 @@ that skips the rest when exactly these files have already passed, then `check`, 
 `ui (1/3 to 3/3)`, `e2e` and `rust` in parallel, then `green` to record the pass. Self-hosted runners for
 the owner's branches. `.github/workflows/release.yml` builds a release ([Releases](#releases)).
 
+The server's browser tests (`apps/server/src/browser`) use the runner image's Chromium (`CHROMIUM=/usr/bin/chromium`
+in the `test` job, which fails if it's missing rather than skipping them). The job starts it once before `pnpm test`:
+a runner's disk is read in from its image on first use, and the first start of Chromium in the middle of the tests,
+with every CPU busy, took longer than the 20 s the server gives Chrome to answer (HE-73). On an idle runner the first
+start took 3 s on one and 49 s on another, and 0.5 s once it had been read.
+
 ## Releases<a id="releases"></a>
 
 As the old repository makes them (task 8.5), less the phone app. Publishing a GitHub release whose tag is its version
