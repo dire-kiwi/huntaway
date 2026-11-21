@@ -112,7 +112,9 @@ comes back is dialled as soon as the hub says so. A ticket refused is a socket o
 as it does a host that is down.
 
 A terminal is relayed the same way: `terminal.open` on the host's session returns a ticket for the host, and the
-client reaches `/api/terminal/<ticket>` through a relay ticket whose path is that terminal.
+client reaches `/api/terminal/<ticket>` through a relay ticket whose path is that terminal. As built (HE-74): the client's
+`hostSocketUrl(host, path)` (`packages/client/src/session/sessions.ts`) asks `hub.hosts.openRelay({ host_id, path })`
+for a host that isn't the page's own, and the Terminal tab opens that.
 
 What this removes: the JSON-only HTTP proxy with its body limits and status rewriting, the tunnel's request and
 stream frames, the event socket's mixed-in call frames, `host_id` stamping of events, and the rule that uploads must

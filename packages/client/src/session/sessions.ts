@@ -3,7 +3,7 @@ import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity"
 import { type Host, type HostId, PROTOCOL, Unavailable } from "@huntaway/contracts"
 import { HostClient } from "./HostClient.ts"
 import { connecting, HostSession, type SessionView } from "./HostSession.ts"
-import { relayTransport } from "./relay.ts"
+import { relayTransport, relayUrl } from "./relay.ts"
 import { type Transport, websocketTransport } from "./transport.ts"
 
 // Sessions (docs/plan/09-frontend.md): one RPC connection per host, each an atom runtime, so every atom of a host
@@ -145,3 +145,21 @@ export const hostSessionAtom: (host: HostId) => Atom.Atom<SessionView> = Atom.fa
     return AsyncResult.getOrElse(get(sessionRef(host)), () => connecting)
   }).pipe(Atom.keepAlive),
 )
+
+/**
+ * The websocket URL of `path` on `host` (a terminal's `/api/terminal/<ticket>`, with `search` such as `?cols=…`): on the
+ * page's own server for its own host (or before the hub has said which that is), else through the hub's relay, with a
+ * relay ticket for `path` (docs/plan/08-hosts.md, Relay). The relay passes no query on, so `search` is only for the
+ * page's own host: a relayed terminal starts at the host's default size and takes the pane's from its `resize` frames.
+ */
+export const hostSocketUrl = (host: HostId, path: string, search = ""): Effect.Effect<string, Unavailable, AtomRegistry.AtomRegistry> =>
+  Effect.gen(function* () {
+    const server = yield* Atom.get(serverUrlAtom)
+    const local = yield* Atom.get(localHostIdAtom)
+    if (local === null || local === host) return `${server.replace(/\/api\/rpc\/?$/, "")}${path}${search}`
+    const hub = yield* Atom.getResult(hubRuntime, { suspendOnWaiting: true })
+    const { ticket } = yield* Context.get(hub, HostClient)("hub.hosts.openRelay", { host_id: host, path }).pipe(
+      Effect.mapError((e) => new Unavailable({ what: `host ${host}`, reason: `the hub gave no relay ticket (${e._tag})` })),
+    )
+    return relayUrl(server, ticket)
+  })
