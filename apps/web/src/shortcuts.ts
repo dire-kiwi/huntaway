@@ -136,5 +136,5 @@ export const forPage = (e: KeyboardEvent) =>
   !e.ctrlKey &&
   !e.metaKey &&
   !e.altKey &&
-  !(e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable]")) &&
+  !(e.target instanceof Element && e.target.closest("input, textarea, [role=combobox], [contenteditable]")) &&
   !document.querySelector("[data-modal], [data-task-modal]")

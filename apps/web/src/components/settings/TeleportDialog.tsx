@@ -5,7 +5,7 @@ import { Exit } from "effect"
 import { Loader2, ShieldAlert, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useAction } from "../../state/mutation"
-import { Button, Modal, ModalFooter, resultError, resultValue, timeAgo } from "../ui"
+import { Button, Modal, ModalFooter, resultError, resultValue, Select, timeAgo } from "../ui"
 
 // Bring sign-ins into a Space (HE-49, teleport): pick a browser profile on the host, tick the sites to send (those that
 // look signed in are pre-ticked; identity providers never are), and send. Nothing is decrypted until you send. Below
@@ -45,11 +45,11 @@ export function BringSignInsModal({ host, space, onClose }: { host: string; spac
           <div className="flex gap-2">
             <label className="flex-1">
               <div className="mb-1 text-[11px] font-medium tracking-wide text-faint uppercase">Browser</div>
-              <select
+              <Select
                 className={selectClass}
                 value={source?.key ?? ""}
-                onChange={(e) => {
-                  setBrowser(e.target.value)
+                onChange={(v) => {
+                  setBrowser(v)
                   setProfile(null)
                 }}
               >
@@ -58,17 +58,17 @@ export function BringSignInsModal({ host, space, onClose }: { host: string; spac
                     {s.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label className="flex-1">
               <div className="mb-1 text-[11px] font-medium tracking-wide text-faint uppercase">Profile</div>
-              <select className={selectClass} value={chosenProfile?.id ?? ""} onChange={(e) => setProfile(e.target.value)}>
+              <Select className={selectClass} value={chosenProfile?.id ?? ""} onChange={setProfile}>
                 {(source?.profiles ?? []).map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           </div>
           {source && chosenProfile && (
@@ -133,17 +133,13 @@ function SitePicker({ host, space, browser, profile, onClose }: { host: string; 
       </div>
       {action.error && <div className="rounded bg-red-500/10 p-2 text-[12px] whitespace-pre-wrap text-red-300">{action.error}</div>}
       <ModalFooter className="flex items-center justify-between gap-2">
-        <select
-          className={`${selectClass} w-auto`}
-          value={wipe}
-          onChange={(e) => setWipe(WIPE_LABELS.find((w) => w.value === e.target.value)?.value ?? "never")}
-        >
+        <Select className={`${selectClass} w-auto`} value={wipe} onChange={(v) => setWipe(WIPE_LABELS.find((w) => w.value === v)?.value ?? "never")}>
           {WIPE_LABELS.map((w) => (
             <option key={w.value} value={w.value}>
               {w.label}
             </option>
           ))}
-        </select>
+        </Select>
         <Button disabled={chosen.size === 0 || action.busy} onClick={submit}>
           {action.busy && <Loader2 size={12} className="animate-spin" />} Bring {chosen.size > 0 ? `${chosen.size} site${chosen.size === 1 ? "" : "s"}` : ""}
         </Button>

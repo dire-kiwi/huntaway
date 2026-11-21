@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createHmac } from "node:crypto"
 import { afterAll, beforeAll, describe, test } from "vite-plus/test"
-import { failure, routeRpc, seedBoard, startServer, withBrowser } from "./harness.mjs"
+import { failure, pick, pickedValue, routeRpc, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
 // A project's automations in its settings (the old automations.test.mjs): a new webhook's URL and secret, its deliveries
 // shown as they come, the editor keeping what an automation was saved with, a URL that can't be renewed and a secret
@@ -93,19 +93,19 @@ describe("automations", () => {
       await server.rpc("automations.update", { id: sched.id, patch: { trigger: { kind: "interval", every_minutes: 360 } } })
       await ui.run([`goto /p/${project.id}/settings/automations`, "wait Every 6 hours", "click Mondays", "wait Edit Mondays"])
       assert.equal(await ui.page.getByRole("spinbutton", { name: "Every" }).inputValue(), "6")
-      assert.equal(await ui.page.getByRole("combobox", { name: "Unit" }).inputValue(), "hours")
+      assert.equal(await pickedValue(ui.page.getByRole("combobox", { name: "Unit" })), "hours")
       // HA-403: the model and effort are picked as in the new task dialog, saved, and shown in the list.
       const dialog = ui.page.getByRole("dialog")
-      assert.equal(await dialog.getByRole("combobox", { name: "Model" }).inputValue(), "")
-      await dialog.getByRole("combobox", { name: "Model" }).selectOption("opus")
-      await dialog.getByRole("combobox", { name: "Effort" }).selectOption("low")
+      assert.equal(await pickedValue(dialog.getByRole("combobox", { name: "Model" })), "")
+      await pick(dialog.getByRole("combobox", { name: "Model" }), "opus")
+      await pick(dialog.getByRole("combobox", { name: "Effort" }), "low")
       await ui.run(["click Save automation", "gone [role=dialog]", "wait (opus, low effort)"])
       const picked = (await get(sched.id)).action
       assert.equal(picked.model, "opus")
       assert.equal(picked.effort, "low")
       await ui.run(["click Weekly", "wait Edit Weekly"])
-      assert.equal(await dialog.getByRole("combobox", { name: "Model" }).inputValue(), "claude-sonnet-4-6")
-      assert.equal(await dialog.getByRole("combobox", { name: "Effort" }).inputValue(), "high")
+      assert.equal(await pickedValue(dialog.getByRole("combobox", { name: "Model" })), "claude-sonnet-4-6")
+      assert.equal(await pickedValue(dialog.getByRole("combobox", { name: "Effort" })), "high")
     })
   })
 

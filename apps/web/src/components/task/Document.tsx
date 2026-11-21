@@ -30,7 +30,7 @@ import planCss from "./planTheme.css?raw"
 import { useThreadView } from "./thread/threadView"
 import { Composer } from "./thread/Composer"
 import { Markdown } from "./thread/Markdown"
-import { Button, copyText, download, errorText, IconButton, OpenLinkBar, resultError, RunningDot, timeAgo } from "../ui"
+import { Button, copyText, download, errorText, IconButton, OpenLinkBar, resultError, RunningDot, Select, timeAgo } from "../ui"
 
 /**
  * What the agent last said, as the server's `last_assistant_text` finds it, from the thread's items: its latest
@@ -233,12 +233,12 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
           {info.icon} {info.label}
         </span>
         {versions.length > 0 && (
-          <select
+          <Select
             className="h-6 rounded border border-line bg-panel px-1 text-[12px] text-fg outline-none"
             title="Versions: one from each turn that changed it"
             value={doc?.version ?? ""}
-            onChange={(e) => {
-              const v = Number(e.target.value)
+            onChange={(version) => {
+              const v = Number(version)
               setPicked(v === latest?.version ? null : v)
             }}
           >
@@ -248,7 +248,7 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
                 {v.version === latest?.version ? (v.open && task.running ? " (being written)" : " (latest)") : ""}
               </option>
             ))}
-          </select>
+          </Select>
         )}
         {writing && (
           <span className="flex items-center gap-1.5 text-muted">

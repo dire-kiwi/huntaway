@@ -20,7 +20,7 @@ export function useDeleteKey({
     if (e.key !== "Delete" && e.key !== "Backspace" && e.key !== "x" && e.key !== "X") return
     if (e.ctrlKey || e.metaKey || e.altKey) return
     const t = e.target instanceof HTMLElement ? e.target : null
-    if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return
+    if (t && (t.isContentEditable || ["INPUT", "TEXTAREA"].includes(t.tagName) || t.role === "combobox")) return
     if (!sel) return
     if ("edge" in sel) {
       e.preventDefault()

@@ -4,7 +4,7 @@ import { useShallow } from "../boardHelpers"
 import { dependencyQueued, isMerged, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
 import { openTask } from "../../state/route"
 
-import { CARD_BADGE, StatusIcon, Wide } from "../ui"
+import { CARD_BADGE, Select, StatusIcon, Wide } from "../ui"
 import { useMutation } from "../../state/mutation"
 import { TaskId } from "@huntaway/contracts"
 import { useBoard } from "../../state/board"
@@ -101,9 +101,9 @@ export function Dependencies({ task, project, listOnly }: { task: Task; project?
         <div className="text-[12px] text-faint">Moved to In progress, it waits for these to be merged before its agent starts.</div>
       )}
       {!listOnly && candidates.length > 0 && (
-        <select
+        <Select
           value=""
-          onChange={(e) => e.target.value && save([...(task.depends_on ?? []), e.target.value])}
+          onChange={(v) => v && save([...(task.depends_on ?? []), v])}
           className="h-7 w-full rounded-md border border-line bg-panel px-2 text-[12px] text-muted outline-none"
         >
           <option value="">Add a task it depends on…</option>
@@ -112,7 +112,7 @@ export function Dependencies({ task, project, listOnly }: { task: Task; project?
               {keyOf(t, project)} {t.title}
             </option>
           ))}
-        </select>
+        </Select>
       )}
       {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
     </div>

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, seedBoard, startServer, withBrowser } from "./harness.mjs"
+import { eventually, pick, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
 let server, project
 beforeAll(async () => {
@@ -43,7 +43,7 @@ test("a reviewer's own instructions and skills are saved, and kept when its othe
     await prompt.fill("Only look for security holes.")
     await page.getByLabel("Skills it uses", { exact: true }).fill("audit, /security-review")
     // Changing its effort (or config or model) keeps them.
-    await page.locator("select[title='Effort']").nth(1).selectOption({ index: 1 })
+    await pick(page.locator("[role=combobox][title='Effort']").nth(1), { index: 1 })
     await ui.run(["click Save changes"])
     let reviewers = await saved((r) => r[1].prompt)
     assert.equal(reviewers.length, 2)

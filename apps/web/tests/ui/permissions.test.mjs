@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, makeTask, seedBoard, startServer, withBrowser } from "./harness.mjs"
+import { eventually, makeTask, pick, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
 // What agents ask, answered from the cards in the thread (the old questions.test.mjs's AskUserQuestion and plan cases,
 // and the permission card's buttons): a test server whose agent is the fake `claude`, which asks for permission on its
@@ -38,7 +38,7 @@ test("a permission is allowed, a question answered with a key, a plan approved i
     await ui.run(["wait Claude asks", "click css=[aria-label='Questions from Claude'] >> text=Which one?", "press 2"])
     await ui.run(["wait Plan ready for approval", "wait Do a fake thing"])
     assert.equal(await page.getByRole("radio", { name: "b" }).getAttribute("aria-checked"), "true")
-    await page.getByLabel("Mode to continue in").selectOption("acceptEdits")
+    await pick(page.getByLabel("Mode to continue in"), "acceptEdits")
     await ui.run(["click Approve", "wait Continued in Accept edits"])
     const said = await reply(page).textContent()
     assert.match(said, /permission Bash: allow/)

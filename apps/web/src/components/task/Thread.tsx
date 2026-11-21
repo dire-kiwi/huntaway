@@ -199,7 +199,7 @@ function ThreadView({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return
       const target = e.target instanceof Element ? e.target : null
-      if (target?.closest("input, textarea, select, [contenteditable]") || document.querySelector("[data-modal]")) return
+      if (target?.closest("input, textarea, [role=combobox], [contenteditable]") || document.querySelector("[data-modal]")) return
       // With a task open in a dialog over the page (TaskModal), only the thread in it.
       const modal = document.querySelector("[data-task-modal]")
       if (modal && !modal.contains(root.current)) return

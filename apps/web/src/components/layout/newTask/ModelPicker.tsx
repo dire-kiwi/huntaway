@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Input } from "../../ui"
+import { Input, Select } from "../../ui"
 
 export const pickerClass = "h-7 rounded-md border border-line bg-panel px-1.5 text-[12.5px] text-fg outline-none"
 
@@ -74,7 +74,7 @@ export function ModelPicker({
     )
   }
   return (
-    <select className={className} title="Model" value={value} onChange={(e) => (e.target.value === "__custom" ? startEditing() : onChange(e.target.value))}>
+    <Select className={className} title="Model" value={value} onChange={(v) => (v === "__custom" ? startEditing() : onChange(v))}>
       <option value="">{inherited ? `Default model (${inherited})` : "Default model"}</option>
       {options.map((m) => (
         <option key={m.id} value={m.id}>
@@ -83,6 +83,6 @@ export function ModelPicker({
       ))}
       {value && !options.some((m) => m.id === value) && <option value={value}>{value}</option>}
       <option value="__custom">Specific model…</option>
-    </select>
+    </Select>
   )
 }

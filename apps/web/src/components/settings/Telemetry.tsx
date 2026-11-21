@@ -8,7 +8,7 @@ import { mutate, query } from "@huntaway/client"
 import type { TelemetryPatch, TelemetryStatus } from "@huntaway/contracts"
 import { nowMillis } from "../../state/clock"
 import { exitError, useAction, useMutation } from "../../state/mutation"
-import { Button, Field, Input, millisOf, resultValue, timeAgo, Toggle, useConfirm } from "../ui"
+import { Button, Field, Input, millisOf, resultValue, Select, timeAgo, Toggle, useConfirm } from "../ui"
 
 const LOGS: Array<[TelemetryStatus["logs"], string]> = [
   ["off", "None"],
@@ -145,10 +145,10 @@ export function HostTelemetry({ hostId }: { hostId: string }) {
           </Field>
         </div>
         <Field label="The server's log lines">
-          <select
+          <Select
             value={form.logs}
-            onChange={(e) => {
-              const logs = LOGS.find(([v]) => v === e.target.value)?.[0]
+            onChange={(picked) => {
+              const logs = LOGS.find(([v]) => v === picked)?.[0]
               if (logs) set({ logs })
             }}
             className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
@@ -158,7 +158,7 @@ export function HostTelemetry({ hostId }: { hostId: string }) {
                 {l}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
         <div className="space-y-1.5">
           <Toggle checked={form.agents} onChange={(agents) => set({ agents })} label="Include the agents' own events" />

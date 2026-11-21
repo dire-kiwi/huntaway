@@ -7,7 +7,7 @@ import { useMemo, useState } from "react"
 import { useShallow } from "../boardHelpers"
 import { board, useBoard } from "../../state/board"
 import { exitError, runExit, useAction, useMutation } from "../../state/mutation"
-import { Button, Field, Input, Modal, ModalFooter, useConfirm } from "../ui"
+import { Button, Field, Input, Modal, ModalFooter, Select, useConfirm } from "../ui"
 import { usageAlert } from "../ui/usageConfigs"
 import { CopyLoginModal, type CopyRequest } from "./hosts/CopyLoginModal"
 import { PanelHeading } from "./parts"
@@ -527,7 +527,7 @@ export function ConfigSelect({
   // Which are running low or out, so another can be picked before the work starts.
   const alert = (c: ClaudeConfig): ReturnType<typeof usageAlert> => usageAlert(usage[usageKey(c.host_id, c.id)])
   return (
-    <select className={className} title="Agent config" value={value} onChange={(e) => onChange(e.target.value)}>
+    <Select className={className} title="Agent config" value={value} onChange={onChange}>
       {configs.map((c) => (
         <option key={c.id} value={c.id}>
           {c.name}
@@ -535,7 +535,7 @@ export function ConfigSelect({
           {alert(c) ? ` · ${alert(c)?.short}` : ""}
         </option>
       ))}
-    </select>
+    </Select>
   )
 }
 

@@ -77,7 +77,7 @@ function Overlay({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented || ref.current?.querySelector("[data-modal]") || document.querySelector("[data-task-modal]")) return
-      if (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable]")) return
+      if (e.target instanceof Element && e.target.closest("input, textarea, [role=combobox], [contenteditable]")) return
       // Not the task panel's Escape too, once this has gone.
       e.preventDefault()
       closeCompare()
@@ -196,7 +196,7 @@ function Compare({ task }: { task: Task }) {
     if (mode !== "one") return undefined
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || document.querySelector("[data-compare] [data-modal], [data-task-modal]")) return
-      if (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable]")) return
+      if (e.target instanceof Element && e.target.closest("input, textarea, [role=combobox], [contenteditable]")) return
       const numbered = /^[1-9]$/.test(e.key) ? tasks[Number(e.key) - 1] : undefined
       if (e.key === "ArrowRight" || isShortcut(e, "compare.next")) move(1)
       else if (e.key === "ArrowLeft" || isShortcut(e, "compare.previous")) move(-1)

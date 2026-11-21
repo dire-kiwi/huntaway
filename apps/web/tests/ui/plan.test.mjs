@@ -5,7 +5,7 @@
 // and the board hears that a version was written over from a `task` event the check gives it.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { seedThread, startServer, withBrowser } from "./harness.mjs"
+import { pick, seedThread, startServer, withBrowser } from "./harness.mjs"
 import { demoBoard, docFrame, PLAN, planDocument, routeDocuments, saved } from "./documents.mjs"
 
 let server, project, plan
@@ -224,7 +224,7 @@ test("going back to the latest version in the source view doesn't offer to send 
     let frame = await openPlan(ui)
     await frame.locator("input[name=v2]").fill("for v2")
     await ui.run(["wait 1 of 1 question answered"])
-    await page.locator('select[title^="Versions"]').selectOption("1")
+    await pick(page.locator('[role=combobox][title^="Versions"]'), "1")
     await ui.run(["wait Back to the latest"])
     frame = docFrame(page)
     await frame.waitForFunction(() => document.querySelector("input[name=v1]"))

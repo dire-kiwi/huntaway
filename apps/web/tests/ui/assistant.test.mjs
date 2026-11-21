@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
 import { join } from "node:path"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, gate, makeProject, makeTask, routeRpc, seedBoard, startServer, withBrowser } from "./harness.mjs"
+import { eventually, gate, makeProject, makeTask, pick, routeRpc, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
 // The profile's assistant (6.7; the old assistant.test.mjs): its page, its Memory tab, and its approval rules and action
 // log. The old checks called `/profiles/{id}/assistant…` and routed `POST /assistant/memory/file`; these call the
@@ -226,7 +226,7 @@ test("the rules dialog won't save two rules for one tool, and what it saves deci
       await ui.run(["click Add a rule"])
       const n = await page.locator("[aria-label='Rules'] input").count()
       await page.getByRole("textbox", { name: `Rule ${n}'s tool` }).fill(tool)
-      await page.getByRole("combobox", { name: `Rule ${n}'s decision` }).selectOption(decision)
+      await pick(page.getByRole("combobox", { name: `Rule ${n}'s decision` }), decision)
     }
     assert.equal(await page.locator("[aria-label='Rules'] input").count(), rows + 2)
     await ui.run(["click css=[aria-label='A tool name to try the rules on']", "type Bash", "wait never (bash)", "wait has more than one rule"])
