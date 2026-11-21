@@ -136,11 +136,25 @@ jobs:
     if: needs.tree.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # The browser's tests (apps/server/src/browser) run in the runner image's Chromium (a link to
+      # /usr/local/share/chromium), named here so that they fail rather than skip if the image stops having it.
+      CHROMIUM: /usr/bin/chromium
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: *setup-vp
         with: *setup-vp-with
+
+      # A runner's disk is read in from its image on first use: the first start of Chromium took 3 s on one idle runner
+      # and 49 s on another, and 0.5 s after that, and in the middle of the tests, with every CPU busy, more than the
+      # 20 s the server gives Chrome to answer (HE-73). Starting it once here reads it in before the tests.
+      - name: Chromium
+        run: |
+          [ -x "$CHROMIUM" ] || { echo "::error::$CHROMIUM isn't on this runner: the browser's tests need a Chromium"; exit 1; }
+          timeout 300 "$CHROMIUM" --headless --no-sandbox --disable-gpu --no-first-run --user-data-dir="$RUNNER_TEMP/chromium" \
+            --dump-dom about:blank > /dev/null 2> "$RUNNER_TEMP/chromium.log" || { cat "$RUNNER_TEMP/chromium.log"; exit 1; }
+          echo "$("$CHROMIUM" --version) started in ${SECONDS}s"
 
       - name: pnpm test
         run: pnpm test
