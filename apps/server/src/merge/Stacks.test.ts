@@ -469,6 +469,8 @@ describe("where held tasks go now", () => {
         assert.include(failure(nothing), "there's nothing to choose")
       }),
     ),
+    // Three levels restacked in a git repository: about a second alone, past the default 5 s on a loaded CI runner.
+    20_000,
   )
 
   it.effect("a closed level below can close the levels on it too", () =>

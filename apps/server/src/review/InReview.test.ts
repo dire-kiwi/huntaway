@@ -259,6 +259,8 @@ describe("the in-review watcher", () => {
         yield* settle(t.id)
       }),
     ),
+    // A dozen sweeps of a whole board: about a second alone, past the default 5 s on a loaded CI runner.
+    20_000,
   )
 
   it.effect("a merged pull request isn't read again", () =>
