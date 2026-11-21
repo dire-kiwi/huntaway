@@ -127,7 +127,7 @@ function ContextDialog({ ctx, onClose }: { ctx: ContextSummary; onClose: () => v
             </>
           ) : null}
           <div className="text-[11.5px] text-faint">
-            No breakdown yet. Claude Code agents send one at the end of each turn; Codex agents only report the total.
+            No breakdown yet. Claude Code agents send one at the end of each turn; Codex and ACP agents only report the total.
           </div>
         </div>
 

@@ -122,6 +122,7 @@ export function board(host: Partial<Host> = {}): Board {
       name: "Claude",
       config_dir: "",
       agent: "claude",
+      command: null,
       show_usage: false,
       restart_window: false,
       api_url: null,

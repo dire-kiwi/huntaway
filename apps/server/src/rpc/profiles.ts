@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import { ConfigRpcs, NotFound, ProfileRpcs, Unavailable } from "@huntaway/contracts"
+import { AcpQueries } from "../agents/AcpQueries.ts"
 import { CodexQueries } from "../agents/CodexQueries.ts"
 import { Worktrees } from "../git/Worktrees.ts"
 import { AgentConfigs } from "../profiles/AgentConfigs.ts"
@@ -28,16 +29,23 @@ export const ConfigHandlers = ConfigRpcs.toLayer(
   Effect.gen(function* () {
     const configs = yield* AgentConfigs
     const codex = yield* CodexQueries
+    const acp = yield* AcpQueries
     return ConfigRpcs.of({
       "configs.list": () => configs.list,
       "configs.create": ({ config }) => configs.create(config),
       "configs.update": ({ id, patch }) => configs.update(id, patch).pipe(Effect.catchTag("AgentConfigNotFound", configNotFound)),
       "configs.delete": ({ id }) => configs.delete(id).pipe(Effect.catchTag("AgentConfigNotFound", configNotFound)),
+      // An ACP config's are its agent's (HE-69); the others' Codex's (none for Claude's).
       "configs.models": ({ id }) =>
-        codex.configModels(id).pipe(
+        acp.configModels(id).pipe(
+          Effect.filterOrElse(
+            (listed) => listed !== null,
+            () => codex.configModels(id),
+          ),
           Effect.catchTags({
             AgentConfigNotFound: configNotFound,
             CodexUnavailable: (e) => Effect.fail(new Unavailable({ what: "Codex", reason: `couldn't list Codex models: ${e.reason}` })),
+            AcpUnavailable: (e) => Effect.fail(new Unavailable({ what: "ACP agent", reason: `couldn't list the agent's models: ${e.reason}` })),
           }),
         ),
     })

@@ -169,12 +169,13 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
         return out
       }).pipe(Effect.withSpan("Spaces.status"))
 
-      /** A config the Space is given, checked to be the agent's. */
+      /** A config the Space is given, checked to be the agent's (an ACP agent's config gives a Space nothing: HE-69). */
       const configFor = Effect.fnUntraced(function* (id: AgentConfigId | null | undefined, agent: "claude" | "codex", field: string) {
         if (id === null || id === undefined) return null
         const cfg = Option.getOrNull(yield* configs.get(id))
         if (cfg === null) return yield* new NotFound({ what: "agent config", id })
-        if (cfg.agent !== agent) return yield* new Invalid({ field, reason: `${cfg.name} is a ${cfg.agent === "codex" ? "Codex" : "Claude Code"} config` })
+        const kind = cfg.agent === "codex" ? "a Codex" : cfg.agent === "acp" ? "an ACP agent's" : "a Claude Code"
+        if (cfg.agent !== agent) return yield* new Invalid({ field, reason: `${cfg.name} is ${kind} config` })
         return cfg
       })
 

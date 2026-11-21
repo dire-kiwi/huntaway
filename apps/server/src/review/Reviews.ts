@@ -303,7 +303,7 @@ export class Reviews extends Context.Service<Reviews, ReviewsShape>()("huntaway-
           const afterRun = (yield* repo.latestRun(thread.id)) ?? RunId.make("")
           const skills = spec.skills ?? []
           yield* repo.setSkills(thread.id, skills)
-          instructions.push(reviewerInstructions(project, spec) + reviewSkills(skills, cfg?.agent === "codex"))
+          instructions.push(reviewerInstructions(project, spec) + reviewSkills(skills, (cfg?.agent ?? "claude") !== "claude"))
           parts.push({ thread_id: thread.id, label: lbl, state: "running", summary: null, issues: [], after_run: afterRun })
         }
         const first = parts[0]

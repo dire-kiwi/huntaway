@@ -255,3 +255,41 @@ describe("a Codex run's output", () => {
     }).pipe(Effect.scoped, Effect.provide(TestBoard())),
   )
 })
+
+// HE-69: an ACP agent's run writes Codex's lines (its adapter's), so its folder's `acp.json` routes it here too.
+describe("an ACP agent's run's output", () => {
+  const acpAgent = Effect.gen(function* () {
+    const agent = yield* fakeAgent()
+    const fs = yield* FileSystem.FileSystem
+    yield* fs.writeFileString(`${agent.dir}/acp.json`, '{"cwd":"/","program":"agy","args":["acp"]}').pipe(Effect.orDie)
+    return agent
+  })
+
+  it.effect("goes to the Codex handler: its session, its reply, and a tool's permission asked and answered on its input", () =>
+    run(
+      Effect.gen(function* () {
+        const permissions = yield* Permissions
+        const agent = yield* acpAgent
+        yield* feed(agent, [
+          { method: "thread/started", params: { thread: { id: "th1" } } },
+          { method: "turn/started", params: { ...t, turn: { id: "turn1" } } },
+          { id: 3, method: "acp/requestPermission", params: { ...t, itemId: "tc1", tool: "fetch", title: "Fetch https://x", input: { url: "https://x" } } },
+        ])
+        const call = `stdio:${agent.run.id}:codex:3`
+        const id = yield* permissions.asking(call)
+        const pending = yield* permissions.pending({ task: agent.run.task_id })
+        assert.deepStrictEqual(
+          pending.map((p) => [p.tool_name, p.input]),
+          [["WebFetch", { url: "https://x", description: "Fetch https://x" }]],
+        )
+        yield* permissions.answer(id, { decision: "deny" }, "user")
+        yield* permissions.settled(call)
+        assert.deepStrictEqual(yield* agent.input, [{ type: "codex_response", id: 3, result: { decision: "decline" } }])
+        yield* feed(agent, [said("m1", "Couldn't fetch it."), { method: "turn/completed", params: { ...t, turn: { id: "turn1", status: "completed" } } }])
+        assert.strictEqual((yield* (yield* TaskRepo).get(agent.run.task_id))?.session_id, "th1")
+        assert.strictEqual(yield* (yield* ThreadReaders).lastAssistantText(agent.run.task_id), "Couldn't fetch it.")
+        assert.isTrue(yield* agent.inputClosed)
+      }),
+    ),
+  )
+})

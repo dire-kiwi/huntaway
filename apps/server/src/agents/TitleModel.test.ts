@@ -16,6 +16,7 @@ const config = (fields: Partial<AgentConfigRow> = {}): AgentConfigRow => ({
   name: "c",
   config_dir: "~/.claude-work",
   agent: "claude",
+  command: null,
   show_usage: false,
   restart_window: false,
   api_url: null,
@@ -103,6 +104,12 @@ describe("TitleModel", () => {
       // A Codex config's title is Codex's (`CodexQueries.title`, whose test layer writes none): claude is not called.
       answer = yield* ask(`${notResult}/claude`, config({ agent: "codex" }))
       assert.isTrue(Result.isFailure(answer.reply))
+      // HE-69: an ACP config's is Claude Code's, in its default folder, as with no config.
+      const fs = yield* FileSystem.FileSystem
+      const acp = yield* withClaude('{"type":"result","is_error":false,"result":"From Claude."}')
+      answer = yield* ask(`${acp}/claude`, config({ agent: "acp", config_dir: "~/.gemini-work" }))
+      assert.deepStrictEqual(answer.reply, Result.succeed("From Claude."))
+      assert.notInclude(yield* fs.readFileString(`${acp}/seen`).pipe(Effect.orDie), "gemini")
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })

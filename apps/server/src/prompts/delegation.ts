@@ -3,17 +3,22 @@
 //
 // `ownWork` names the work the thread keeps for itself ("Only <what>, and plain conversation, are yours"). `codex`: the
 // thread runs on Codex, whose run ends with its turn, so it waits for its subagents in the turn rather than ending it.
+// `acp`: it runs on an ACP agent (HE-69), which also waits in the turn, with whatever subagents it has.
 
-export const delegation = (ownWork: string, codex = false): string => {
-  const handOn = codex
-    ? "Use subagents: start one per independent request (several at once when the work splits), so they run in " +
-      "parallel. Say in a sentence or two what you started, then wait for them with your `wait` (collab) tool and reply with " +
-      "what they found. Don't end your turn while any is still running: your subagents stop when it ends and nothing would " +
-      "report back. If the user sends a message meanwhile, it reaches you in this turn: answer it, then carry on waiting. "
-    : "Use a subagent that runs in the background: Claude Code's `Agent` tool with `run_in_background: true`. Start one " +
-      "per independent request (several at once when the work splits), tell the user in a sentence or two what you started, " +
-      "then end your turn so they can go on talking to you. Don't poll for it, and don't call `wait` just to sit there; " +
-      "you're woken when a subagent finishes. "
+export const delegation = (ownWork: string, codex = false, acp = false): string => {
+  const handOn = acp
+    ? "Use your subagents, if you have a tool that starts them: start one per independent request (several at once when the " +
+      "work splits). Say in a sentence or two what you started, then wait for them and reply with what they found. Don't end " +
+      "your turn while any is still running: nothing would report back. "
+    : codex
+      ? "Use subagents: start one per independent request (several at once when the work splits), so they run in " +
+        "parallel. Say in a sentence or two what you started, then wait for them with your `wait` (collab) tool and reply with " +
+        "what they found. Don't end your turn while any is still running: your subagents stop when it ends and nothing would " +
+        "report back. If the user sends a message meanwhile, it reaches you in this turn: answer it, then carry on waiting. "
+      : "Use a subagent that runs in the background: Claude Code's `Agent` tool with `run_in_background: true`. Start one " +
+        "per independent request (several at once when the work splits), tell the user in a sentence or two what you started, " +
+        "then end your turn so they can go on talking to you. Don't poll for it, and don't call `wait` just to sit there; " +
+        "you're woken when a subagent finishes. "
   const report = codex
     ? "When they finish, tell the user what they found or did in your own words, leading with what they asked for, and say so " +
       "plainly if one failed or found nothing. If one finishes well before the others, say what it found while you wait for the rest."

@@ -1083,6 +1083,116 @@ assistant's and its routines' (`trackedList.owner`, as for tracked work; a proje
   run on the real `codex` (codex-cli 0.167.1, `gpt-6-luna`, low effort, the default mode) on a test server called
   `list_projects` as a dynamic tool, replied, and ended in In review.
 
+## ACP agents (HE-69)<a id="acp"></a>
+
+A third agent kind, `acp`: any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com)
+(JSON-RPC 2.0 over newline-delimited stdio), with Google's Antigravity CLI (`agy acp`) as the default, which is how the
+board supports Google's models. t3code (`~/personal/t3code`, `packages/effect-acp`, `apps/server/src/provider/acp/`)
+was the reference for the protocol and Antigravity's dialect.
+
+- **The config**: `AgentConfig.agent = "acp"` and `command`, its command line (null or blank for `agy acp`); its
+  `config_dir`, when set, is the agent's home (`GEMINI_HOME` for Antigravity), blank for the agent's own. No proxy.
+- **`acp-run`, the adapter**: `apps/server/src/acp-run.ts` over `agents/acp/adapter/`, exec'd by the launcher as
+  `codex-run` is, reading `acp.json` (`agents/acp/spec.ts`' `AcpSpec`, which also marks the run as an ACP agent's). It is
+  a Codex run to the rest of the board: the same stream-json input (user message, `interrupt`, `codex_response`) and
+  Codex-shaped output lines, so `runs/codex/output.ts`, the Codex translator, `Permissions.onCodex` and `ToolCalls`
+  handle it. The mapping is at the top of `spec.ts`. What ACP has no counterpart for: a steer (a message during a turn
+  starts the next turn), compaction (an ACP run is never compacted), a rewind of the conversation (refused; files
+  still rewind), a system prompt (put before the first prompt of a new session).
+- **The board's tools** reach the agent as MCP servers in `session/new`: the board's own server over HTTP (as for an
+  older Codex session: `in_process` false) and the others of `mcp.json`. An agent that doesn't take http MCP servers
+  (Antigravity doesn't) gets each through `huntaway mcp-stdio <url>`, a stdio-to-HTTP MCP bridge (`apps/server/src/mcp-stdio.ts`),
+  with the run's bearer secret in its environment. The board's tools run unasked only when the agent named the board's
+  server: `acp/requestPermission` carries the call's `server` and `server_tool` each, and the board accepts only an
+  exact board server name with one of `BOARD_TOOLS` (a project's server may be named `huntaway__x`; a title
+  `mcp__a__b__c`, which splits two ways, names no server).
+- **Permissions**: the board's permission mode picks one of the agent's session modes, every run
+  (`bypassPermissions` → `yolo`, `acceptEdits` → `auto_edit`, `plan` → `plan`, else `default`). Every mode but
+  `bypassPermissions` falls back to `default`, so a resumed session left in `yolo` by an earlier run is taken out of it
+  (Antigravity offers only `default` and `yolo`); an agent with modes but none of these is a warning in the thread.
+  Out of `bypassPermissions` the run fails, before a turn, when the session is in a mode that asks nothing (one of
+  `bypassPermissions`' candidates) and can't be taken out of it, or was resumed and its mode change failed; a resumed
+  session that reports no modes is sent `session/set_mode default` all the same (only `-32601` is let pass). Nothing
+  sandboxes an ACP agent, so a mode that asks nothing would run its commands and edits without the board.
+  Every `session/request_permission` is asked in the thread as a Codex approval is, its request's metadata
+  `agent: "acp"` (the run has `acp.json`) so the card says "The agent" and not "Codex". `dontAsk` is the agent's
+  `default` mode, so the board denies what isn't allowed already: ACP has no sandbox like the one that makes Codex's
+  `dontAsk` safe.
+- **Sign-in** is the agent's own: the adapter never calls `authenticate` interactively. A `session/new` refused with
+  `-32000` (Antigravity signed out) fails the run with "sign in by running `agy` once".
+- **Tests**: `packages/testing/bin/fake-acp` (an ACP agent with fake-codex's markers), the adapter's tests against it,
+  and `tests/e2e/acp.test.ts`.
+
+### As built (HE-69)
+
+- **Config** (migration `2026-11-21-acp-command.ts`, `agent_configs.command`): blank is null; a command on a Claude or
+  Codex config is `Invalid`, and a config that stops being ACP loses it; only Claude configs take a proxy. `command`
+  is optional on the wire (absent from older servers). `ConfigArchives` copies Antigravity's login
+  (`antigravity-acp/acp_token.json`, `antigravity-acp/settings.json`, `settings.json`, `GEMINI.md`, `config`; folder
+  `~/.gemini`), a best guess from t3code.
+- **Launch** (`agents/acp/launch.ts`, the ACP half of `LaunchFacts`): the model is the task's own, not the project's or
+  profile's defaults, which name other agents' models; the effort is the task's. The adapter decides on the model where
+  the session's are known: one the agent offers is set whatever its name (Antigravity serves `claude-*` and `gpt-*`
+  models); one it doesn't is a warning, unless it is a Claude or Codex model (`gpt-*`, `codex*`, `o<digit>`), a pick
+  left from another config, which is the agent's own unsaid. The new-task dialog drops a Claude-named pick only when the
+  config's listed models don't have it (`ownModelPick`). A compaction is refused before any work is set up, and `Compaction` skips every
+  config that isn't Claude's. A rewind of an ACP task's conversation is refused (`checkpoints/conversation.ts`); its
+  files still rewind.
+- **The adapter** (`agents/acp/`: `protocol.ts` lenient schemas, `map.ts` the pure mapping, `session.ts` model, effort
+  and mode, `rpc.ts` the JSON-RPC client, `adapter/{setup,run,models}.ts`): item ids start with a random seed per run
+  (`<seed>:tool:<toolCallId>`), so a resumed session's next run reuses none. `thread/started` is written for a resume
+  too. Resume is `session/resume`, else `session/load` (its replayed history dropped), else a new session with a
+  warning. A `usage_update` gives the context (`last.totalTokens` = `used`, `modelContextWindow` = `size`) and counts no
+  tokens; the prompt's `usage` adds to the run's total. An `interaction_` tool call is Antigravity's question: no item,
+  asked as `item/tool/requestUserInput` with one question `answer`. `acceptForSession` answers `allow_always`. After a
+  `session/cancel` the turn has 10 s to end, then the agent is killed and the turn written as interrupted. The agent's
+  `BROWSER` is `true`, so a sign-in never opens one.
+- **Robustness** (after review): the agent runs as `sh -c LAUNCH <program> <args>` (`agents/acp/rpc.ts`) in its own
+  process group, with a watchdog on a pipe the adapter holds, so the group dies with the adapter however it ends; at
+  the end its input closes and it has 3 s to exit before the group is stopped. Setup calls time out (60 s; resume and
+  load 120 s, then a fresh session). Antigravity's MCP calls (`Run wait?`, `_meta.is_mcp_tool_call`, the server and
+  tool in `rawInput`) are named by `rawInput`, and a bare tool name of the board's (`BOARD_TOOLS`, now in
+  `packages/shared`) is the board's server's. Text after a turn's end is still written; a cancel the agent answers
+  with an error ends the turn interrupted; an agent dying mid-turn ends it failed. The http MCP servers'
+  `Authorization` headers (the run's bearer secret) are redacted from the strings of everything the adapter writes;
+  other headers and a stdio server's environment are paths and ports a thread shows, and are left. A config's command takes simple quotes (`commandWords`, no shell).
+- **`acp-run --list-models <spec.json>`** prints one line, `{models: [{id, name, description}], current, efforts,
+  default_effort}` (the `model` config option, else the legacy `models`; efforts from a `thought_level` option); exit 3
+  is a sign-in refusal. `AcpQueries` (`agents/AcpQueries.ts`, live in `agents/acp/AcpQueriesLive.ts`) runs it in a temp
+  folder (30 s, cached 10 minutes per config) for `configs.models`.
+- **`huntaway mcp-stdio <url>`**: each stdin message is its own POST (concurrent, so a `wait` holds up nothing) with
+  the headers in `HUNTAWAY_MCP_HEADERS` and the server's `Mcp-Session-Id`; every JSON-RPC message of a JSON or SSE answer
+  goes to stdout; an HTTP failure is a JSON-RPC error; a broken stream reconnects with `Last-Event-ID`.
+- **Requests**: `acp/requestPermission {threadId, turnId, itemId, tool, title, input}` is asked as Read, Edit, Grep,
+  WebFetch, Bash or Think by the ACP kind, else as `mcp__acp__<kind or title>` (a title never passes for another
+  server's tool); a board tool (`mcp__huntaway__*`) is allowed at once only when the agent named the board's server
+  (`server_named`), not when the board's server was guessed from a bare tool name a project's server may have too. A
+  call's kind (`execute`, an edit, a diff) decides what it is before its title, and only a bare `mcp__<server>__<tool>`
+  title names an MCP call.
+- **Elsewhere**: an ACP run's tokens are `countAcp` (Codex's counting, runtime `acp`, no rollout file, each run on its
+  own: the adapter's totals start at zero every run, a resumed session's too); it never reviews
+  its own waits; its titles are written by Claude Code as when there's no config; no usage limits or window restarts;
+  no Claude skills (`AgentTools.taskSkills` gives none); its prompts are the non-Claude texts (`codex: true` and `acp`:
+  no Codex `wait` or apps notes); `host.info`'s `agent_clis` has `acp` when `agy` is on the PATH.
+- **Web**: `AGENTS` has `acp` ("ACP agent (Antigravity)", short "ACP", `~/.gemini`, `GEMINI_HOME`); helpers
+  `listsModels`, `agentSuffix`, `askerName`, `modelPlaceholder`. The effort pickers (`effortOptions`) offer the
+  model's `thought_level` values that are `Effort`s, in its order (a task carries no other, so "none" or "extra-high"
+  is left out), and only the default effort when none are. The config form has a Command field for ACP (help
+  behind its `?`), the list an ACP badge with the command; usage, the 5-hour window, copying the login and `/compact`
+  are hidden for ACP; its skills are `/` commands. Its mark (`ui/AgentIcon.tsx`) is the board's own drawing of two
+  four-pointed sparkles.
+- **Left out**: approval rules and a reviewer's restrictions (Codex's read-only sandbox and gh's write tools turned
+  off) are not applied to an ACP run, which runs in the task's permission mode. Antigravity was never run for real (it
+  was signed out where this was built): how it names MCP tools (a call without a server name is server `mcp`, which
+  would also hide the board's `wait`), whether its `inputTokens` include cached ones, and whether a signed-in `agy acp`
+  wants `authenticate` before `session/new` are unverified. The system prompt goes before the first prompt, though
+  Antigravity advertises `_meta.antigravity.systemPrompt.append`, whose shape t3code doesn't show.
+- **Tests**: `agents/acp/map.test.ts` (every line decodes and translates), `agents/acp/adapter/adapter.test.ts`
+  (`acp-run` against `fake-acp`), `mcp-stdio.test.ts` (against the board's real MCP route), `agents/acp/launch.test.ts`,
+  `AcpQueries` tests, `tests/e2e/acp.test.ts` (a whole server: permission, Bash, `list_projects` over `mcp-stdio`, the
+  reply, In review, `configs.models`, signed out), the web's `tests/ui/acpConfig.test.mjs`. fake-acp's markers and knobs
+  are at its top.
+
 ## Prompts
 
 Every piece of text the board gives an agent is in `apps/server/src/prompts/`, one file per piece, **copied from the

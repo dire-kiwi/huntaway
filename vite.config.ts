@@ -176,6 +176,8 @@ export default defineConfig({
           // HE-71: `serve`, which bin.ts loads for it.
           "apps/server/src/serve.ts",
           "apps/server/src/codex-run.ts",
+          "apps/server/src/acp-run.ts",
+          "apps/server/src/mcp-stdio.ts",
           "apps/server/src/Main.ts",
           // 9.1: the read-only server's composition root, the second one.
           "apps/server/src/ReadOnlyMain.ts",

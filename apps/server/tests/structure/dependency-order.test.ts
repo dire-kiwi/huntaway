@@ -52,7 +52,7 @@ const order: ReadonlyArray<ReadonlyArray<string>> = [
   // The transports.
   ["rpc", "http", "mcp/transport", "cli"],
   // The entry files.
-  ["Main.ts", "ReadOnlyMain.ts", "serve.ts", "bin.ts", "entry.ts", "codex-run.ts"],
+  ["Main.ts", "ReadOnlyMain.ts", "serve.ts", "bin.ts", "entry.ts", "codex-run.ts", "acp-run.ts", "mcp-stdio.ts"],
 ]
 
 /** A file's place: its folder (`mcp/transport` before `mcp`) or, at the top of src, its name. */

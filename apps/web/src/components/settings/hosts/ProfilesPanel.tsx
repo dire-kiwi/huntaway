@@ -30,7 +30,7 @@ export function ProfilesPanel() {
       <PanelHeading
         title="Profiles"
         description="A board of its own for each kind of work (work, personal), with its own projects and agent settings."
-        help="Profiles are set up on each host and appear together by name. Each picks which of its host's agent configs (Claude Code or Codex) its agents use; with more than one, new tasks ask which."
+        help="Profiles are set up on each host and appear together by name. Each picks which of its host's agent configs (Claude Code, Codex or an ACP agent) its agents use; with more than one, new tasks ask which."
       >
         <Button size="sm" disabled={!agentHost} onClick={() => agentHost && setEditing({ host: agentHost })}>
           <Plus size={13} /> Add profile

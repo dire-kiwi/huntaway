@@ -318,6 +318,8 @@ export const convertConfig = (old: OldConfig): Converted => ({
   config_dir: old.config_dir,
   created_at: old.created_at,
   agent: old.agent,
+  // HE-69: the old board had no ACP agents, so no command lines.
+  command: null,
   show_usage: bit(old.show_usage),
   restart_window: bit(old.restart_window),
   api_url: old.api_url,

@@ -1,3 +1,4 @@
+import { askerName } from "@huntaway/client"
 import { clsx } from "clsx"
 import { CalendarClock, CalendarPlus, Check, ChevronRight, Clock, Mail, MapPin, Paperclip, Pencil, Repeat, Send, Users, Video } from "lucide-react"
 import { memo, useState, type ReactNode } from "react"
@@ -13,7 +14,7 @@ import type { PromptData } from "./threadModel"
 // body go back as the tool's input (`permissions.answer`'s `input`, Claude's `updatedInput`). An event is added or
 // changed, or discarded. _Always allow_ stays where it is.
 
-const asker = (data: PromptData) => (data.agent === "codex" ? "Codex" : "Claude")
+const asker = (data: PromptData) => askerName(data.agent)
 
 /** What became of a draft, once it's settled. */
 function Settled({ data, allowed }: { data: PromptData; allowed: string }) {
@@ -187,8 +188,8 @@ function Folded({ summary, open, onToggle, children }: { summary: ReactNode; ope
 
 const MailCard = memo(function MailCard({ data, hostId, from, footer, mail }: CardProps & { mail: MailDraft }) {
   const pending = data.status === "pending"
-  // Codex's approval says yes or no: it can't carry an edited mail.
-  const editable = data.agent !== "codex"
+  // Codex's (and an ACP agent's) approval says yes or no: it can't carry an edited mail.
+  const editable = data.agent !== "codex" && data.agent !== "acp"
   const [edit, setEdit] = useState<MailEdit | null>(null)
   const [open, setOpen] = useState(false)
   const [{ busy, error }, run] = useAction()
