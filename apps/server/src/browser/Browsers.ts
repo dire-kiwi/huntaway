@@ -30,7 +30,7 @@ import { Tasks } from "../tasks/Tasks.ts"
 import type { TaskNotFound } from "../tasks/Tasks.ts"
 import { isRecord, makeCdp, pageOf, str } from "./cdp.ts"
 import type { Cdp, CdpError, CdpPage, CdpResult } from "./cdp.ts"
-import { startChrome } from "./chrome.ts"
+import { lastSaid, startChrome } from "./chrome.ts"
 import type { ChromeProcess } from "./chrome.ts"
 import { ChromeInstall, ChromeUnavailable } from "./ChromeInstall.ts"
 import type { ChromeInstalling } from "./ChromeInstall.ts"
@@ -234,7 +234,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           const alive = yield* started.cdp.send("Browser.getVersion", {}, undefined, "20 seconds").pipe(Effect.result)
           if (alive._tag === "Failure") {
             yield* Scope.close(scope, Exit.void)
-            const said = (yield* started.stderr).trim().split("\n").slice(-3).join(" / ")
+            const said = lastSaid(yield* started.stderr)
             const sandbox = /sandbox/iu.test(said) ? " Chrome's sandbox can't start here: set HUNTAWAY_CHROME_SANDBOX=0 in the server's environment." : ""
             return yield* new ChromeUnavailable({
               reason: `The headless browser didn't start: ${alive.failure.reason}${said === "" ? "" : ` (${said})`}.${sandbox}`,

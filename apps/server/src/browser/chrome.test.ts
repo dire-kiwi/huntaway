@@ -2,7 +2,7 @@ import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, FileSystem, Stream } from "effect"
 import { str } from "./cdp.ts"
-import { splitMessages, startChrome } from "./chrome.ts"
+import { lastSaid, splitMessages, startChrome } from "./chrome.ts"
 import { systemChrome } from "@huntaway/testing"
 
 describe("splitMessages", () => {
@@ -12,6 +12,18 @@ describe("splitMessages", () => {
       assert.deepStrictEqual(out, ['{"a":1}', '{"b":2}', '{"c":3}'])
     }),
   )
+})
+
+/** What Chrome writes when it finds no D-Bus session. */
+const dbus = (n: number) =>
+  `[13085:${n}:1121/063720.998639:ERROR:dbus/bus.cc:406] Failed to connect to the bus: Could not parse server address: Unknown address type`
+
+describe("lastSaid", () => {
+  it("keeps Chrome's last three lines, less its complaints that there's no D-Bus", () => {
+    const said = ["first", "[1:2:1121/0.1:ERROR:content/a.cc:1] second", dbus(1), "", "  third  ", dbus(2), "[1:2:1121/0.1:ERROR:dbus/object_proxy.cc:572] x"]
+    assert.strictEqual(lastSaid(said.join("\n")), "first / [1:2:1121/0.1:ERROR:content/a.cc:1] second / third")
+    assert.strictEqual(lastSaid(dbus(3)), "")
+  })
 })
 
 describe.skipIf(systemChrome === null)("startChrome", () => {

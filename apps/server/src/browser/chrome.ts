@@ -50,6 +50,18 @@ export interface ChromeProcess {
 
 const encoder = new TextEncoder()
 
+/**
+ * The last three lines of what Chrome wrote to stderr, joined, for an error: less what it says when there is no D-Bus
+ * session (as on a server or a CI runner), which it writes all through its start and which is never why it failed.
+ */
+export const lastSaid = (stderr: string) =>
+  stderr
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !/:ERROR:dbus\//u.test(l))
+    .slice(-3)
+    .join(" / ")
+
 /** Whole messages from the pipe's text: each ends with a NUL. */
 export const splitMessages = <E, R>(text: Stream.Stream<string, E, R>): Stream.Stream<string, E, R> =>
   text.pipe(
@@ -71,7 +83,7 @@ export const startChrome = Effect.fnUntraced(function* (
   const writes = yield* Queue.unbounded<Uint8Array, Cause.Done>()
   const errText = yield* Ref.make("")
   const lastLines = Effect.map(Ref.get(errText), (all) => {
-    const last = all.trim().split("\n").slice(-3).join(" / ")
+    const last = lastSaid(all)
     return last === "" ? "" : `: ${last}`
   })
 
