@@ -856,6 +856,9 @@ list drawn by the page, in the menus' style (`ContextMenu`), with a tick by the 
   button), and its baseline is the picked option's text, as a native select's is.
   Its button's base class is `inline-flex`, which a `hidden` in the caller's class doesn't reliably beat: a select
   shown only in one layout is wrapped in an element that hides it (the Guide's page picker).
+- **The highlight is kept by the option's value**, not its place: a board update that adds, removes or reorders
+  options while the list is open leaves it on the same option, so Enter picks what was arrowed to (or, the option gone,
+  the picked one). `tests/ui/select.test.mjs` adds a task above the highlighted one in a task's Depends on list.
 - **The highlighted option is scrolled into view** as the list opens and as the highlight moves, not on every redraw:
   a board update while the list is open doesn't undo the wheel's scrolling of it.
 - **The keyboard's focus stays on the button** (a `combobox` with `aria-activedescendant`): the arrows, Home and End

@@ -76,16 +76,23 @@ export function Select({
   const picked = options.findIndex((o) => o.value === String(value))
   const shown = options[picked] ?? options[0]
   const [open, setOpen] = useState(false)
-  const [active, setActive] = useState(0)
+  // The highlighted option, by its value: the options can change while the list is open (a board update adds a task
+  // above it), and the highlight stays on the option, not on its place. Null, or a value that's gone, is the picked
+  // option, else the first that can be picked.
+  const [highlighted, setHighlighted] = useState<string | null>(null)
+  const kept = options.findIndex((o) => o.value === highlighted && !o.disabled)
+  const active = kept >= 0 ? kept : picked >= 0 && !options[picked]?.disabled ? picked : step(options, -1, 1)
+  const activeValue = options[active]?.value
+  const setActive = (i: number) => setHighlighted(options[i]?.value ?? null)
   const button = useRef<HTMLButtonElement>(null)
   const list = useRef<HTMLSpanElement>(null)
   const [pos, setPos] = useState<CSSProperties | null>(null)
   const typed = useRef({ text: "", at: -Infinity })
   const id = useId()
-  const optionId = (i: number) => `${id}-${i}`
+  const optionId = (optionValue: string | undefined) => `${id}-option-${optionValue}`
 
   const show = () => {
-    setActive(picked >= 0 && !options[picked]?.disabled ? picked : step(options, -1, 1))
+    setHighlighted(null)
     setPos(null)
     setOpen(true)
     button.current?.focus()
@@ -146,8 +153,8 @@ export function Select({
   // update, a scroll that moves the list), which would undo the wheel's scrolling of the list.
   const placed = pos !== null
   useEffect(() => {
-    if (open && placed) document.getElementById(`${id}-${active}`)?.scrollIntoView({ block: "nearest" })
-  }, [open, placed, active, id])
+    if (open && placed) document.getElementById(`${id}-option-${activeValue}`)?.scrollIntoView({ block: "nearest" })
+  }, [open, placed, activeValue, id])
 
   /**
    * The option a key typed at `at` (the event's time) picks, with the keys typed just before it: the next one starting
@@ -227,7 +234,7 @@ export function Select({
           {options.map((o, i) => (
             <span
               key={o.value}
-              id={optionId(i)}
+              id={optionId(o.value)}
               role="option"
               aria-selected={i === picked}
               data-value={o.value}
@@ -256,7 +263,7 @@ export function Select({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? `${id}-list` : undefined}
-        aria-activedescendant={open && pos ? optionId(active) : undefined}
+        aria-activedescendant={open && pos ? optionId(activeValue) : undefined}
         aria-label={ariaLabel}
         title={title}
         disabled={disabled}
