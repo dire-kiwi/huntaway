@@ -884,8 +884,11 @@ and 100 ms (on localhost, under 0.1 s either way). Three changes:
   whole app; another page tries again. Task views that failed show `ChunkError` on a task's page and floating over the
   board for the panel or the dialog; a Markdown renderer that failed leaves texts as they are, shown (`whitespace-pre-wrap`).
 - **The RPC socket is compressed.** Both listeners (`Main.ts`, `ReadOnlyMain.ts`) turn on `ws`'s permessage-deflate
-  for messages of 1 KiB or more: the first `board.watch` message is about 1.8 KB a task as JSON and deflates about 7
-  times smaller. It applies to every websocket the server accepts (the terminal, the task's browser, links).
+  (`http/websocket.ts`) for messages of 1 KiB or more: the first `board.watch` message is about 1.8 KB a task as JSON
+  and deflates about 7 times smaller. It applies to the websockets the server accepts (the terminal, the task's
+  browser), except the relay's piped ones (`hosts/pipe.ts`): `ws` queues a frame for zlib before it reaches the
+  connection, out of sight of the pipe's wait for a drain, so a fast sender would be read into memory. `accept` takes
+  the extension out of the upgrade request and `dial` doesn't offer it; `pipe.test.ts` runs its hub with these options.
 
 After: 0.41 s to the first card at 20 Mbit/s and 40 ms, 1.0 s at 5 Mbit/s and 100 ms (Chromium's network emulation,
 the demo board, an empty cache). Not done: `board.watch` still waits for `public.health`'s answer (one round trip on
