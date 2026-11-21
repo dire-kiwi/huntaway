@@ -11,7 +11,7 @@ import { ContextStats } from "../task/ContextStats"
 import { POOR_HIT, POOR_HIT_MIN, tokens } from "./tokenStatsData"
 import { TokenStats } from "./TokenStats"
 import { DiskUsage } from "./DiskUsage"
-import { Button, download, IconButton, localeDateString, MenuButton } from "../ui"
+import { Button, download, IconButton, localeDateString, MenuButton, Select } from "../ui"
 import { isPreset, Preset, PRESETS, type Range, presetRange } from "./analytics/range"
 import { usePersisted } from "./analytics/usePersisted"
 import { stored } from "../../state/storage"
@@ -142,13 +142,13 @@ export function Analytics({ profile }: { profile: string | null }) {
           <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-2">
             {tab === "report" || tab === "context" || tab === "tokens" ? (
               <>
-                <select className={selectClass} value={preset} onChange={(e) => isPreset(e.target.value) && setPreset(e.target.value)} title="Time range">
+                <Select className={selectClass} value={preset} onChange={(v) => isPreset(v) && setPreset(v)} title="Time range">
                   {PRESETS.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.label}
                     </option>
                   ))}
-                </select>
+                </Select>
                 {preset === "custom" && (
                   <span className="flex items-center gap-1.5 text-[12px] text-faint">
                     <input
@@ -204,7 +204,7 @@ export function Analytics({ profile }: { profile: string | null }) {
                 </span>
               </>
             )}
-            <select className={selectClass} value={project} onChange={(e) => setProject(e.target.value)} title="Project">
+            <Select className={selectClass} value={project} onChange={setProject} title="Project">
               <option value="all">All projects</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -212,29 +212,29 @@ export function Analytics({ profile }: { profile: string | null }) {
                 </option>
               ))}
               <option value={SCRATCH}>In no project</option>
-            </select>
+            </Select>
             <div className="ml-auto flex items-center gap-2">
               {tab !== "context" && tab !== "tokens" && (
                 <>
                   <label className="flex items-center gap-1.5 text-[12px] text-faint" title="A longer gap between prompts counts as a break">
                     Break after
-                    <select className={selectClass} value={rules.idleMin} onChange={(e) => setRules({ ...rules, idleMin: Number(e.target.value) })}>
+                    <Select className={selectClass} value={rules.idleMin} onChange={(v) => setRules({ ...rules, idleMin: Number(v) })}>
                       {[10, 15, 30, 45, 60, 90, 120].map((m) => (
                         <option key={m} value={m}>
                           {hm(m * 60_000)}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                   <label className="flex items-center gap-1.5 text-[12px] text-faint" title="Time credited to the first prompt after a break">
                     First prompt
-                    <select className={selectClass} value={rules.leadMin} onChange={(e) => setRules({ ...rules, leadMin: Number(e.target.value) })}>
+                    <Select className={selectClass} value={rules.leadMin} onChange={(v) => setRules({ ...rules, leadMin: Number(v) })}>
                       {[0, 2, 5, 10, 15].map((m) => (
                         <option key={m} value={m}>
                           {hm(m * 60_000)}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                 </>
               )}

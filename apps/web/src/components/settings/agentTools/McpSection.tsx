@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react"
 import type { McpServer, McpServerConfig, ProjectAgentTools as AgentTools } from "@huntaway/contracts"
 import { Exit, Option, Schema } from "effect"
 import { useAction } from "../../../state/mutation"
-import { Button, errorText, Field, Input, Modal, ModalFooter, parseJson, Textarea, Toggle } from "../../ui"
+import { Button, errorText, Field, Input, Modal, ModalFooter, parseJson, Select, Textarea, Toggle } from "../../ui"
 import { OtherList, Section, serverSummary, type Save } from "./parts"
 
 /** A server as saved: its name and its `mcpServers` entry. */
@@ -198,15 +198,15 @@ export function McpEditor({
           </Field>
           {json === null && (
             <Field label="Transport">
-              <select
+              <Select
                 value={form.type}
-                onChange={(e) => set("type", e.target.value === "http" || e.target.value === "sse" ? e.target.value : "stdio")}
+                onChange={(v) => set("type", v === "http" || v === "sse" ? v : "stdio")}
                 className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
               >
                 <option value="stdio">stdio</option>
                 <option value="http">HTTP</option>
                 <option value="sse">SSE</option>
-              </select>
+              </Select>
             </Field>
           )}
         </div>

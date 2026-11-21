@@ -1,5 +1,5 @@
 import { workflowDataInputs, type WorkflowGraph, type WorkflowNode } from "@huntaway/contracts"
-import { Field, Input } from "../../ui"
+import { Field, Input, Select } from "../../ui"
 import { TemplateField } from "../TemplateField"
 import { CheckFields } from "./CheckFields"
 import { TEMPLATES, Wired, selectClass } from "./fields"
@@ -49,11 +49,11 @@ export function ValueInspector({
       {n.kind === "task" && <p className="text-[11.5px] text-faint">The task's title, description, key, branch, commit, pull request and labels, as values.</p>}
       {n.kind === "project_prompt" && (
         <Field label="Prompt" hint="The project's own, from its Prompts settings, or the board's if it has none.">
-          <select className={selectClass} value={n.which} onChange={(e) => isPrompt(e.target.value) && onChange({ which: e.target.value })}>
+          <Select className={selectClass} value={n.which} onChange={(v) => isPrompt(v) && onChange({ which: v })}>
             <option value="start">Starting a task</option>
             <option value="review">Reviewing its changes</option>
             <option value="merge">Merging it</option>
-          </select>
+          </Select>
         </Field>
       )}
       {n.kind === "compose" && (

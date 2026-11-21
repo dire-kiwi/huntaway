@@ -3,7 +3,7 @@ import { agentOf, canRunAgents, holdsProjects, type HostAgentConfig as ClaudeCon
 import { clsx } from "clsx"
 import { profileNames, useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
-import { resultError, resultValue } from "../../ui"
+import { resultError, resultValue, Select } from "../../ui"
 
 // The fields of a profile's form (docs/plan/09-frontend.md). gh's accounts are 6.11's `profiles.githubAccounts`.
 
@@ -12,18 +12,14 @@ const label = (c: ClaudeConfig | undefined): string => (c ? `${c.name}${agentOf(
 /** One of a profile's configs for its assistant or its threads, or "" for its default (the first). */
 export function ThreadConfigSelect({ configs, value, onChange }: { configs: ReadonlyArray<ClaudeConfig>; value: string; onChange: (id: string) => void }) {
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
-    >
+    <Select value={value} onChange={onChange} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
       <option value="">Default ({label(configs[0])})</option>
       {configs.map((c) => (
         <option key={c.id} value={c.id}>
           {label(c)}
         </option>
       ))}
-    </select>
+    </Select>
   )
 }
 
@@ -33,11 +29,7 @@ export function AssistantHostSelect({ value, onChange }: { value: string; onChan
   const hosts = useBoard(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected)))
   const picked = useBoard((s) => s.hosts.find((h) => h.id === value))
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
-    >
+    <Select value={value} onChange={onChange} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
       <option value="">This host{local ? ` (${local.name})` : ""}</option>
       {hosts.map((h) => (
         <option key={h.id} value={h.id}>
@@ -45,7 +37,7 @@ export function AssistantHostSelect({ value, onChange }: { value: string; onChan
         </option>
       ))}
       {value && !hosts.some((h) => h.id === value) && <option value={value}>{picked ? `${picked.name} (offline)` : "A host that's gone"}</option>}
-    </select>
+    </Select>
   )
 }
 
@@ -71,11 +63,7 @@ export function GithubAccountSelect({
   const missing = value && list && !accounts.some((a) => a.account === value)
   return (
     <div className="space-y-1">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
-      >
+      <Select value={value} onChange={onChange} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
         <option value="">{inherit(active?.account)}</option>
         {accounts.map((a) => (
           <option key={a.account} value={a.account}>
@@ -90,7 +78,7 @@ export function GithubAccountSelect({
             {missing ? " (not signed in to gh)" : ""}
           </option>
         )}
-      </select>
+      </Select>
       {list?.error && <div className="text-[11.5px] text-faint">Couldn't list gh's accounts: {list.error}</div>}
       {list && !list.error && accounts.length === 0 && (
         <div className="text-[11.5px] text-faint">gh isn't signed in to any accounts on this host (gh auth login).</div>
@@ -127,11 +115,7 @@ export function HostSelect({ value, onChange, projects = false }: { value: strin
   const hosts = useBoard(useShallow((s) => s.hosts.filter((h) => (projects ? holdsProjects(h, s.hostSettings[h.id]?.role) : canRunAgents(h)))))
   const picked = useBoard((s) => s.hosts.find((h) => h.id === value))
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
-    >
+    <Select value={value} onChange={onChange} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
       {hosts.map((h) => (
         <option key={h.id} value={h.id}>
           {h.name}
@@ -139,6 +123,6 @@ export function HostSelect({ value, onChange, projects = false }: { value: strin
         </option>
       ))}
       {value && picked && !hosts.some((h) => h.id === value) && <option value={value}>{`${picked.name} (offline)`}</option>}
-    </select>
+    </Select>
   )
 }

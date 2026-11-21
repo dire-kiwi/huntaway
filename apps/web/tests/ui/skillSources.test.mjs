@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, seedBoard, startServer, withBrowser } from "./harness.mjs"
+import { eventually, pick, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
 // Skill sources in Settings → Skills and MCP (HA-140; the old skillSources check, 6.4): a git repository's skills added,
 // switched on for a profile, updated and removed. The repository is a local one the check makes.
@@ -98,7 +98,7 @@ test("adds, edits and deletes a global skill and MCP server, and switches one on
     await ui.run(["click Add MCP server"])
     const dialog = page.getByRole("dialog")
     await dialog.getByPlaceholder("github", { exact: true }).fill("search")
-    await dialog.getByRole("combobox").selectOption("http")
+    await pick(dialog.getByRole("combobox"), "http")
     await dialog.getByPlaceholder("https://mcp.example.com/mcp").fill("https://search.example/mcp")
     await ui.run(["click Add server", "wait http · https://search.example/mcp"])
     const t = await tools()

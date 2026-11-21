@@ -4,7 +4,7 @@
 // (6.4: until then a step's skills are typed).
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, makeTask, seedBoard, startServer, withBrowser } from "./harness.mjs"
+import { eventually, makeTask, pick, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
 let server, project
 beforeAll(async () => {
@@ -65,7 +65,7 @@ test("a column step's prompt and done signal are saved, with what's added to the
     ])
     const note = await ui.page.textContent("[data-testid=column-done-note]")
     assert.ok(note.includes("The board then pushes your branch and opens its pull request (so don't open one yourself) and moves the task to In review"), note)
-    await ui.page.selectOption("[data-testid=workflow-inspector] select >> nth=1", "finish")
+    await pick(ui.page.locator("[data-testid=workflow-inspector] button[role=combobox] >> nth=1"), "finish")
     await ui.run(["wait call `finish_work`", "click Create workflow", "gone [role=dialog]"])
     const w = await workflow("Work, pull request and review")
     const work = w.graph.nodes.find((n) => n.id === "work")

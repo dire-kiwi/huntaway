@@ -5,7 +5,7 @@ import { useRef, useState } from "react"
 import type { McpServer, ProjectAgentTools as AgentTools, SeenTools, Skill } from "@huntaway/contracts"
 import { mutate, query, type HostProject as Project } from "@huntaway/client"
 import { useAction } from "../../state/mutation"
-import { resultError, resultValue, useConfirm } from "../ui"
+import { resultError, resultValue, Select, useConfirm } from "../ui"
 import { describe, rejectFailure, type Change } from "./agentTools/parts"
 import { SkillsSection } from "./agentTools/SkillsSection"
 import { McpSection } from "./agentTools/McpSection"
@@ -188,15 +188,15 @@ function SharedList({
                   )}
                 </div>
               </div>
-              <select
+              <Select
                 value={o === null ? "" : o ? "on" : "off"}
-                onChange={(e) => onChange(i.id, e.target.value === "" ? null : e.target.value === "on")}
+                onChange={(v) => onChange(i.id, v === "" ? null : v === "on")}
                 className="h-7 shrink-0 rounded-md border border-line bg-panel px-2 text-[12px] outline-none"
               >
                 <option value="">Profile default ({profileOn(i.id) ? "on" : "off"})</option>
                 <option value="on">On</option>
                 <option value="off">Off</option>
-              </select>
+              </Select>
             </div>
           )
         })}

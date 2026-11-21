@@ -1,7 +1,7 @@
 import { LABELS } from "@huntaway/client"
 import { WorkflowCheck, type WorkflowNode } from "@huntaway/contracts"
 import { Schema } from "effect"
-import { Field } from "../../ui"
+import { Field, Select } from "../../ui"
 import { selectClass } from "./fields"
 import type { NodePatch } from "./graph"
 import { CHECK_LABELS } from "./text"
@@ -25,11 +25,10 @@ export function CheckFields({
   return (
     <>
       <Field label={label}>
-        <select
+        <Select
           className={selectClass}
           value={n.check}
-          onChange={(e) => {
-            const check = e.target.value
+          onChange={(check) => {
             if (isCheck(check)) onChange({ check, value: check === "task_type" ? "code" : check === "label" ? FIRST_LABEL : undefined })
           }}
         >
@@ -38,25 +37,25 @@ export function CheckFields({
               {CHECK_LABELS[c]}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
       {n.check === "task_type" && (
         <Field label="Type">
-          <select className={selectClass} value={n.value ?? "code"} onChange={(e) => onChange({ value: e.target.value })}>
+          <Select className={selectClass} value={n.value ?? "code"} onChange={(v) => onChange({ value: v })}>
             <option value="code">Code</option>
             <option value="scratch">Scratch</option>
-          </select>
+          </Select>
         </Field>
       )}
       {n.check === "label" && (
         <Field label="Label">
-          <select className={selectClass} value={n.value ?? FIRST_LABEL} onChange={(e) => onChange({ value: e.target.value })}>
+          <Select className={selectClass} value={n.value ?? FIRST_LABEL} onChange={(v) => onChange({ value: v })}>
             {LABELS.map((l) => (
               <option key={l} value={l}>
                 {l}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
       )}
     </>

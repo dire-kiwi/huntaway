@@ -178,7 +178,7 @@ export function useGitKeys(o: GitKeysOptions) {
   }, [taken])
   const onKey = (e: ReactKeyboardEvent) => {
     if (dialog || menu || rewinding) return
-    if (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable], [data-modal]")) return
+    if (e.target instanceof Element && e.target.closest("input, textarea, [role=combobox], [contenteditable], [data-modal]")) return
     if (e.ctrlKey || e.metaKey || e.altKey) return
     // While a change is made, keys wait for it (the next space stages the next line, not one from the old diff), in a
     // file's diff, for the diff, and after a key, for what it did to be rendered.

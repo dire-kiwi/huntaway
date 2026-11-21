@@ -6,7 +6,7 @@ import { KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../state/board"
 import { useAction } from "../../state/mutation"
-import { Button, Field, Input, Modal, ModalFooter, resultError, resultValue, timeAgo, useConfirm } from "../ui"
+import { Button, Field, Input, Modal, ModalFooter, resultError, resultValue, Select, timeAgo, useConfirm } from "../ui"
 
 // Site sign-ins (HE-48): a profile's saved logins on a host, which the host's server types into a Space's browser, on
 // the site's own address only, when the user allows it (an agent's `space_sign_in` asks first) or asks for it here. A
@@ -172,10 +172,10 @@ export function SpaceSignInModal({ hostId, space, onClose }: { hostId: string; s
       ) : (
         <div className="space-y-4">
           <Field label="Sign-in" help="The board opens the site in a new Chromium window in the Space and fills in the form there.">
-            <select
+            <Select
               className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] text-fg outline-none focus:border-accent/60"
               value={chosen}
-              onChange={(e) => setPicked(e.target.value)}
+              onChange={setPicked}
             >
               {list.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -183,7 +183,7 @@ export function SpaceSignInModal({ hostId, space, onClose }: { hostId: string; s
                   {s.label ? ` (${s.label})` : ""} · {profileName(s.profile_id)}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
           {done && (
             <div className="rounded bg-emerald-500/10 p-2 text-[12px] text-emerald-300">

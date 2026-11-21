@@ -1,7 +1,7 @@
 import { WatchPullRequests } from "@huntaway/contracts"
 import { Schema } from "effect"
 import { useBoard } from "../../../state/board"
-import { Field, Input, ToggleField } from "../../ui"
+import { Field, Input, Select, ToggleField } from "../../ui"
 import { Group, selectClass } from "../parts"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
@@ -24,10 +24,9 @@ export function PullRequestsTab({ form, set }: { form: ProjectForm; set: SetFiel
         label="Watch pull requests in review"
         help="While a task is in In review, the board reads its pull request every couple of minutes and sends its agent what's new, which starts its turn. Comments and reviews count only from people who can push to the repository, not from bots or the agents' own GitHub account."
       >
-        <select
+        <Select
           value={form.watch_pull_requests}
-          onChange={(e) => {
-            const v = e.target.value
+          onChange={(v) => {
             if (isWatch(v)) set("watch_pull_requests", v)
           }}
           className={selectClass}
@@ -35,7 +34,7 @@ export function PullRequestsTab({ form, set }: { form: ProjectForm; set: SetFiel
           <option value="off">Off</option>
           <option value="failures">Failed checks and conflicts wake the agent</option>
           <option value="all">Failed checks, conflicts, comments and reviews wake the agent</option>
-        </select>
+        </Select>
       </Field>
       <Field
         label="Pull request previews"
@@ -71,11 +70,11 @@ function ProjectMergeApproval({ project, onChange }: { project: ProjectForm; onC
       label="Approve merges"
       help="When a task moves to Ready for merge, its agent first summarizes what will be merged, and merges only once you approve in its thread. Denied, the task goes back to In review."
     >
-      <select value={value} onChange={(e) => onChange(e.target.value === "profile" ? null : e.target.value === "on")} className={selectClass}>
+      <Select value={value} onChange={(v) => onChange(v === "profile" ? null : v === "on")} className={selectClass}>
         <option value="profile">The profile's setting ({profile?.merge_approval ? "approve each merge first" : "merge without asking"})</option>
         <option value="on">Approve each merge first</option>
         <option value="off">Merge without asking</option>
-      </select>
+      </Select>
     </Field>
   )
 }
@@ -89,11 +88,11 @@ function ProjectPrApproval({ project, onChange }: { project: ProjectForm; onChan
       label="Require GitHub approval"
       help="A task can only move to Ready for merge once its pull request has an approving review on GitHub, and none asking for changes. Tasks that get no pull request aren't held."
     >
-      <select value={value} onChange={(e) => onChange(e.target.value === "profile" ? null : e.target.value === "on")} className={selectClass}>
+      <Select value={value} onChange={(v) => onChange(v === "profile" ? null : v === "on")} className={selectClass}>
         <option value="profile">The profile's setting ({profile?.require_pr_approval ? "require an approving review" : "no review needed"})</option>
         <option value="on">Require an approving review</option>
         <option value="off">No review needed</option>
-      </select>
+      </Select>
     </Field>
   )
 }

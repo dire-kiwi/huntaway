@@ -5,7 +5,7 @@ import { Loader2, Radar, RefreshCw } from "lucide-react"
 import { useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
 import { useMutation } from "../../../state/mutation"
-import { Button, Field, Help, resultError, resultValue } from "../../ui"
+import { Button, Field, Help, resultError, resultValue, Select } from "../../ui"
 
 /**
  * Hosts found on the LAN and Tailscale that aren't on this board yet, each offered for linking by URL. Finding them
@@ -72,11 +72,7 @@ export function ScratchHostRow() {
   return (
     <div className="rounded-xl border border-line px-4 py-3">
       <Field label="Scratch task host" help="This board can't run agents, so new scratch tasks (which are in no project) run on this host.">
-        <select
-          value={picked}
-          onChange={(e) => save(e.target.value)}
-          className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
-        >
+        <Select value={picked} onChange={save} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
           <option value="">Automatic (first available host)</option>
           {hosts.map((h) => (
             <option key={h.id} value={h.id}>
@@ -84,7 +80,7 @@ export function ScratchHostRow() {
             </option>
           ))}
           {picked && !hosts.some((h) => String(h.id) === String(picked)) && <option value={picked}>Unavailable host</option>}
-        </select>
+        </Select>
       </Field>
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
     </div>

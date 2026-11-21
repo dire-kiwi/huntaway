@@ -8,7 +8,7 @@ import { Effect, Exit } from "effect"
 import { Plus, RotateCcw, X } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useAction } from "../../state/mutation"
-import { Button, IconButton, Input, Modal, ModalFooter, resultError, resultValue, Toggle, toJson } from "../ui"
+import { Button, IconButton, Input, Modal, ModalFooter, resultError, resultValue, Select, Toggle, toJson } from "../ui"
 
 /** A profile's approval rules, read again as they change on its host (its `approval_rules` events, invalidate.ts). */
 export function useApprovalRules(hostId: string, profileId: string): { rules: ApprovalRules | null; error: string | null } {
@@ -148,18 +148,18 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
                 className={clsx("h-7 flex-1 font-mono text-[12px]", repeated.has(patternKey(r.tool)) && "border-red-500/60")}
                 onChange={(e) => change(i, { tool: e.target.value })}
               />
-              <select
+              <Select
                 className={clsx("h-7 rounded-md border border-line bg-panel px-1.5 text-[12px] outline-none", DECISION_STYLE[r.decision])}
                 value={r.decision}
                 aria-label={`Rule ${i + 1}'s decision`}
-                onChange={(e) => change(i, { decision: decisionOf(e.target.value) })}
+                onChange={(v) => change(i, { decision: decisionOf(v) })}
               >
                 {RULE_DECISIONS.map((d) => (
                   <option key={d} value={d}>
                     {d}
                   </option>
                 ))}
-              </select>
+              </Select>
               <IconButton title={`Remove rule ${i + 1}`} onClick={() => setDraft((d) => d.filter((_, j) => j !== i))}>
                 <X size={13} />
               </IconButton>

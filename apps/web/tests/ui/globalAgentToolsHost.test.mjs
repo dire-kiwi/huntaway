@@ -5,7 +5,7 @@
 // HE-46, hosts have the same global skills and profiles; these are hosts where it is off.)
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, makeProfile, startServer, withBrowser } from "./harness.mjs"
+import { eventually, makeProfile, pick, startServer, withBrowser } from "./harness.mjs"
 
 let board, home, profile
 beforeAll(async () => {
@@ -43,9 +43,7 @@ test("the panel starts on the host with profiles, and says so of one without", a
       assert.equal((await home.rpc("agentTools.get")).profile_switches[profile.id]?.[(await home.rpc("agentTools.get")).skills[0].id], true),
     )
     // The board's own host has no profiles: picked, it says so.
-    const picker = page.locator("#settings-tab-panel select")
-    const own = await page.locator("#settings-tab-panel select option", { hasText: "(this host)" }).getAttribute("value")
-    await picker.selectOption(own)
+    await pick(page.locator("#settings-tab-panel [role=combobox]"), { label: /\(this host\)$/ })
     await ui.run(["wait has no profiles", "gone home-skill"])
   })
 })
@@ -61,7 +59,7 @@ test("a host that goes offline stays shown, with its open editor", async () => {
     home.kill()
     await ui.run(["wait homeserver is offline"])
     assert.equal(await editor.inputValue(), "---\nname: half-typed\n---\n")
-    assert.equal(await page.locator("#settings-tab-panel select option:checked").innerText(), "homeserver (offline)")
+    assert.equal(await page.locator("#settings-tab-panel [role=combobox]").innerText(), "homeserver (offline)")
     await ui.run(["gone has no profiles"])
   })
 })

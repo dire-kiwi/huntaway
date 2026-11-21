@@ -9,7 +9,7 @@ import { nowMillis } from "../../../state/clock"
 import { useAction } from "../../../state/mutation"
 import { useAvailableConfigs, useShallow } from "../../boardHelpers"
 import { ModelPicker } from "../../layout/newTask/ModelPicker"
-import { Button, errorText, Field, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle } from "../../ui"
+import { Button, errorText, Field, Input, Modal, ModalFooter, Select, SUBMIT_KEYS, Textarea, Toggle } from "../../ui"
 import { type TimeZone, type Owner, DAY_LABELS } from "./text"
 import { type Unit, type Draft, LABELS, localInput, draftOf, inputMillis, inputOf, WEEKDAYS } from "./draft"
 
@@ -163,19 +163,19 @@ export function AutomationEditor({
                 value={d.every}
                 onChange={(e) => set("every", Math.max(1, Number(e.target.value) || 1))}
               />
-              <select
+              <Select
                 className={clsx(selectClass, "w-28")}
                 aria-label="Unit"
                 value={d.unit}
-                onChange={(e) => {
-                  const unit = UNITS.find((u) => u === e.target.value)
+                onChange={(v) => {
+                  const unit = UNITS.find((u) => u === v)
                   if (unit) set("unit", unit)
                 }}
               >
                 <option value="minutes">minutes</option>
                 <option value="hours">hours</option>
                 <option value="days">days</option>
-              </select>
+              </Select>
               <span className="text-[12px] text-faint">from when it's turned on (at least 5 minutes)</span>
             </div>
           )}
@@ -299,21 +299,21 @@ export function AutomationEditor({
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Type">
-                  <select className={selectClass} value={d.taskType} onChange={(e) => set("taskType", e.target.value === "scratch" ? "scratch" : "")}>
+                  <Select className={selectClass} value={d.taskType} onChange={(v) => set("taskType", v === "scratch" ? "scratch" : "")}>
                     <option value="">Code task</option>
                     <option value="scratch">Scratch task</option>
-                  </select>
+                  </Select>
                 </Field>
                 {configs.length > 1 ? (
                   <Field label="Agent config">
-                    <select className={selectClass} value={d.config} onChange={(e) => setConfig(e.target.value)}>
+                    <Select className={selectClass} value={d.config} onChange={setConfig}>
                       <option value="">Project default ({configs[0]?.name})</option>
                       {configs.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </Field>
                 ) : (
                   <div />
@@ -329,14 +329,14 @@ export function AutomationEditor({
                   />
                 </Field>
                 <Field label="Effort">
-                  <select className={selectClass} title="Effort" value={d.effort} onChange={(e) => set("effort", e.target.value)}>
+                  <Select className={selectClass} title="Effort" value={d.effort} onChange={(v) => set("effort", v)}>
                     <option value="">{hostSettings?.default_effort ? `Default effort (${hostSettings.default_effort})` : "Default effort"}</option>
                     {[...new Set([...efforts, ...(d.effort ? [d.effort] : [])])].map((e) => (
                       <option key={e} value={e}>
                         {e} effort
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
               </div>
               <Field
@@ -365,14 +365,10 @@ export function AutomationEditor({
                 {!d.start && (
                   <label className="flex items-center gap-2 text-[13px] text-muted">
                     Put it in
-                    <select
-                      className={clsx(selectClass, "w-32")}
-                      value={d.status}
-                      onChange={(e) => set("status", e.target.value === "backlog" ? "backlog" : "todo")}
-                    >
+                    <Select className={clsx(selectClass, "w-32")} value={d.status} onChange={(v) => set("status", v === "backlog" ? "backlog" : "todo")}>
                       <option value="todo">To do</option>
                       <option value="backlog">Backlog</option>
-                    </select>
+                    </Select>
                   </label>
                 )}
               </div>
@@ -387,7 +383,7 @@ export function AutomationEditor({
             <>
               <Field label="Task" hint="One of this project's tasks. Messages to a task whose agent is running go to it as it works.">
                 {/* (Only a project's automations message its tasks.) */}
-                <select className={selectClass} value={d.taskId} onChange={(e) => set("taskId", e.target.value)}>
+                <Select className={selectClass} value={d.taskId} onChange={(v) => set("taskId", v)}>
                   <option value="">Pick a task…</option>
                   {tasks.map((t) => (
                     <option key={t.id} value={t.id}>
@@ -395,7 +391,7 @@ export function AutomationEditor({
                       {t.status === "done" ? " (done)" : ""}
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
               <Field label="Message" hint={templateHint}>
                 <Textarea

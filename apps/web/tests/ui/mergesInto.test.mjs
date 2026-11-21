@@ -2,7 +2,7 @@
 // once the task they merge into is closed. The old mergesInto check, on a project of its own on a git repository.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, makeProfile, makeProject, startServer, withBrowser } from "./harness.mjs"
+import { eventually, makeProfile, makeProject, pick, startServer, withBrowser } from "./harness.mjs"
 
 let server, project, target, open, merged, plain
 const make = (title, more = {}) => server.rpc("tasks.create", { task: { project_id: project.id, title, use_worktree: true, ...more } })
@@ -53,11 +53,13 @@ test("the sidebar picks what a task merges into", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     await ui.run([`goto /p/${project.id}?task=${plain.id}`, "wait Merges into"])
-    const picker = page.locator('select[aria-label="Merges into"]')
+    const picker = page.getByRole("combobox", { name: "Merges into" })
     // Not itself or a done task; newest first.
-    const options = await picker.locator("option").allInnerTexts()
+    await picker.click()
+    const options = await page.getByRole("listbox").getByRole("option").allInnerTexts()
     assert.deepEqual(options.slice(1), ["SHOP-2 Cart totals", "SHOP-1 Checkout rework"])
-    await picker.selectOption({ label: "SHOP-1 Checkout rework" })
+    await page.keyboard.press("Escape")
+    await pick(picker, { label: "SHOP-1 Checkout rework" })
     const t = await until(plain.id, (x) => x.merges_into === target.id)
     assert.deepEqual(t.start_from, { type: "task", task_id: target.id })
     await ui.run(["wait 1/3"])

@@ -17,7 +17,7 @@ import { clonePath, defaultCloneDir, loadProjectSource, saveProjectSource, type 
 import { DirPicker } from "./DirPicker"
 import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos"
 import { HostSelect } from "./hosts/profileFields"
-import { Button, Field, Input, Modal, ModalFooter } from "../ui"
+import { Button, Field, Input, Modal, ModalFooter, Select } from "../ui"
 
 /** The last folder in a path. */
 const lastPart = (path: string) => path.split("/").findLast((p) => p !== "")
@@ -195,17 +195,13 @@ export function NewProjectModal({ profile, onClose }: { profile?: string | undef
         )}
         {names.length > 1 && (
           <Field label="Profile" hint="The Claude profile the project's agents run under.">
-            <select
-              value={profileName}
-              onChange={(e) => setProfileName(e.target.value)}
-              className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
-            >
+            <Select value={profileName} onChange={setProfileName} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
               {names.map((n) => (
                 <option key={n} value={n}>
                   {n}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
         )}
         {fromGithub ? (
