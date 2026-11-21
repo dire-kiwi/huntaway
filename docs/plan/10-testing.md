@@ -211,3 +211,19 @@ there was nothing of it left to try. What the measurement found instead:
 `copy-live-board.sh` had never run to the end since 9.1: it put the snapshot inside the test server's data folder, and
 `import-legacy` refuses an old folder inside the new one. The snapshot is now beside it (`<data dir>-legacy-source`),
 which `test-server.sh stop` removes with the data folder.
+
+### Start-up (HE-71)
+
+Time to ready on a `copy-live-board.sh` copy (2,931 tasks, 272k thread items, 7,298 runs; 1.55 GB), `test-server.sh
+restart` to `HUNTAWAY_READY`, five each, `main` and HE-71 alternating on the same data: **2.29 to 2.40 s before, 0.70
+to 0.75 s after**. Where it went before: loading code ~0.8 s (2,120 modules), `ImportGuard`'s `/proc` scan ~0.1 s, and
+`Recovery` ~1.4 s, nearly all of it three reconcilers each reading and decoding every task to filter in JS
+(`GhStacks.linkAll` 650 ms, `Worktrees.recover` 450, `Restack.resume` 220). Now: Node's compile cache for `serve`
+(`entry.ts`), `@effect/platform-node` by module (its index loads `redis`: 2,109 to 1,119 modules), slim SQL reads for
+the reconcilers and Push's baseline, `linkAll` after the ready line, a synchronous `/proc` scan. Other commands no
+longer load the server: `--version` 0.81 to 0.17 s, `rpc --list` 0.80 to 0.21 s (warm cache).
+
+The UI, cold cache, time to the first card: 20 Mbit/s at 40 ms 1,006 to 410 ms, 5 Mbit/s at 100 ms 3,556 to 1,009 ms
+(precompressed `.br`/`.gz` assets, the pages split from the entry chunk: first load 1,892 KiB raw, 455 KiB brotli, to
+1,269 and 329); unchanged on localhost (~90 ms). The desktop app starts its server before Electron is ready, and no
+longer waits for `pacman -Qqo` (twice, 35 to 150 ms each) or the shell's stamp before its first window.
