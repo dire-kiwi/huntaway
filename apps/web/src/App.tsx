@@ -8,6 +8,7 @@ import { Loader2 } from "lucide-react"
 import { activeProfile, loadActiveProfile } from "./activeProfile"
 import { Board, GroupBoard, ProfileBoard } from "./components/board/Board"
 import { profileNames, useProfileName } from "./components/boardHelpers"
+import { ChunkBoundary, ChunkError } from "./components/layout/ChunkError"
 import { Sidebar } from "./components/layout/Sidebar"
 import { RehearsalBanner } from "./components/layout/RehearsalBanner"
 import { UnhandledErrors } from "./components/layout/UnhandledErrors"
@@ -44,7 +45,11 @@ export function App() {
   const route = useRoute()
   const panel = usePanel()
   const modal = useTaskModal()
-  const views = AsyncResult.getOrElse(useAtomValue(taskViewsAtom), () => undefined)
+  const viewsResult = useAtomValue(taskViewsAtom)
+  const views = AsyncResult.getOrElse(viewsResult, () => undefined)
+  // The task's views didn't load (the network, or a build that changed under this tab): say so, with Reload, rather than
+  // loading for ever.
+  const viewsFailed = AsyncResult.isFailure(viewsResult)
   useAtomMount(markdownViewAtom)
   const routeTask = useBoard((s) => (route.name === "task" ? s.tasks[route.taskId] : undefined))
   const narrow = useNarrow()
@@ -99,7 +104,11 @@ export function App() {
   // A board with none of its own can still link hosts that have some (Settings → Hosts, M7).
   if (profiles.length === 0) {
     if (!loaded) return <BoardLoading />
-    return <Suspense fallback={<PageLoading />}>{route.name === "settings" ? <Settings tab={route.tab} /> : <Onboarding />}</Suspense>
+    return (
+      <ChunkBoundary resetKey={route.name}>
+        <Suspense fallback={<PageLoading />}>{route.name === "settings" ? <Settings tab={route.tab} /> : <Onboarding />}</Suspense>
+      </ChunkBoundary>
+    )
   }
 
   return (
@@ -127,28 +136,33 @@ export function App() {
         {/* The task panel slides in over the content below its top bar, rather than squeezing it. */}
         <div className="relative min-w-0 flex-1">
           <div className="h-full min-w-0">
-            <Suspense fallback={<PageLoading />}>
-              {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
-              {route.name === "board" && <Board projectId={route.projectId} />}
-              {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
-              {route.name === "task" && (views ? <views.TaskView taskId={route.taskId} /> : <PageLoading />)}
-              {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
-              {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
-              {route.name === "settings" && <Settings tab={route.tab} />}
-              {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}
-              {route.name === "guide" && <Guide page={route.page} />}
-              {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
-              {route.name === "plugin" && <PluginPage key={route.plugin} route={route} />}
-            </Suspense>
+            <ChunkBoundary resetKey={page}>
+              <Suspense fallback={<PageLoading />}>
+                {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
+                {route.name === "board" && <Board projectId={route.projectId} />}
+                {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
+                {route.name === "task" && (views ? <views.TaskView taskId={route.taskId} /> : viewsFailed ? <ChunkError /> : <PageLoading />)}
+                {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
+                {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
+                {route.name === "settings" && <Settings tab={route.tab} />}
+                {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}
+                {route.name === "guide" && <Guide page={route.page} />}
+                {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
+                {route.name === "plugin" && <PluginPage key={route.plugin} route={route} />}
+              </Suspense>
+            </ChunkBoundary>
           </div>
           {panel && hasPanel(route) && views && <views.TaskPanel panel={panel} />}
         </div>
         {panel?.compare === true && hasPanel(route) && (
-          <Suspense fallback={null}>
-            <CompareView taskId={panel.taskId} />
-          </Suspense>
+          <ChunkBoundary resetKey={panel.taskId}>
+            <Suspense fallback={null}>
+              <CompareView taskId={panel.taskId} />
+            </Suspense>
+          </ChunkBoundary>
         )}
         {modal !== null && views && <views.TaskModal key={modal} taskId={modal} />}
+        {viewsFailed && route.name !== "task" && ((panel && hasPanel(route)) || modal !== null) && <ChunkError floating />}
         <UnhandledErrors />
       </div>
     </div>

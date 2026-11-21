@@ -878,6 +878,11 @@ and 100 ms (on localhost, under 0.1 s either way). Three changes:
   The entry went from 1,443 KB to 742 KB (the first load from 1,892 KiB in 8 files to 1,270 KiB in 24, 455 to 330 KiB
   as brotli). What is left in it: the board, the layout, the New task dialog, `mdast-util-from-markdown` (the
   composer's tokens, `layout/taskTokens.ts`) and react-dom.
+- **A chunk that doesn't load.** A tab opened before an update asks for chunks the new build doesn't have (404), and a
+  network blip fails one. The pages and the compare view are inside `ChunkBoundary` (`layout/ChunkError.tsx`), an error
+  boundary that shows `ChunkError` (it couldn't load, with Reload) in the page's place, rather than React unmounting the
+  whole app; another page tries again. Task views that failed show `ChunkError` on a task's page and floating over the
+  board for the panel or the dialog; a Markdown renderer that failed leaves texts as they are, shown (`whitespace-pre-wrap`).
 - **The RPC socket is compressed.** Both listeners (`Main.ts`, `ReadOnlyMain.ts`) turn on `ws`'s permessage-deflate
   for messages of 1 KiB or more: the first `board.watch` message is about 1.8 KB a task as JSON and deflates about 7
   times smaller. It applies to every websocket the server accepts (the terminal, the task's browser, links).

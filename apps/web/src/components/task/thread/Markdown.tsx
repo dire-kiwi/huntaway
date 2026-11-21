@@ -13,11 +13,13 @@ export const markdownViewAtom = Atom.make(Effect.promise(() => import("./Markdow
 
 /**
  * `text` as Markdown. While the renderer is still loading, the text takes its room unseen, so the page doesn't jump
- * and the source doesn't flash.
+ * and the source doesn't flash. A renderer that failed to load (the network, or a build that changed under this tab)
+ * leaves the text as it is, shown.
  */
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   const view = useAtomValue(markdownViewAtom)
   if (AsyncResult.isSuccess(view)) return <view.value.MarkdownView text={text} />
+  if (AsyncResult.isFailure(view)) return <div className="prose-chat whitespace-pre-wrap">{text}</div>
   return (
     <div className="prose-chat invisible whitespace-pre-wrap" aria-hidden>
       {text}
