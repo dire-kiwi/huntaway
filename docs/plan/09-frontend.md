@@ -853,6 +853,10 @@ list drawn by the page, in the menus' style (`ContextMenu`), with a tick by the 
   there, as wide as the button at least and at most 360 px tall, and moved with it when anything scrolls; inline,
   not in a portal, so a dialog's focus trap and a popover's press-outside see it as theirs. It's in a `contents`
   span, so the button is laid out as the select was and a parent's `space-y` margin lands on nothing.
+  Its button's base class is `inline-flex`, which a `hidden` in the caller's class doesn't reliably beat: a select
+  shown only in one layout is wrapped in an element that hides it (the Guide's page picker).
+- **The highlighted option is scrolled into view** as the list opens and as the highlight moves, not on every redraw:
+  a board update while the list is open doesn't undo the wheel's scrolling of it.
 - **The keyboard's focus stays on the button** (a `combobox` with `aria-activedescendant`): the arrows, Home and End
   move, Enter or Space picks, Tab and a press elsewhere close it (it closes on the button's blur; a press in the list
   is kept from taking the focus). Escape is taken in the window's capture phase, so it closes the list and not the

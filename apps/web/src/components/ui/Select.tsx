@@ -142,9 +142,12 @@ export function Select({
     return () => window.removeEventListener("keydown", onKey, true)
   }, [open])
 
+  // The highlighted option is kept in view as the list opens and as the highlight moves; not on other redraws (a board
+  // update, a scroll that moves the list), which would undo the wheel's scrolling of the list.
+  const placed = pos !== null
   useEffect(() => {
-    if (open && pos) document.getElementById(optionId(active))?.scrollIntoView({ block: "nearest" })
-  })
+    if (open && placed) document.getElementById(`${id}-${active}`)?.scrollIntoView({ block: "nearest" })
+  }, [open, placed, active, id])
 
   /**
    * The option a key typed at `at` (the event's time) picks, with the keys typed just before it: the next one starting
