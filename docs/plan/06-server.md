@@ -1487,7 +1487,8 @@ take the same code, with no Playwright in the server.
   only. The tab keeps only a web page's address (`keptAddress`): Chrome's error page records the address that failed
   (`unreachableUrl`), and an address a pane reports that isn't a web page's (`file:`) is dropped, since a page opened
   again loads the tab's address. Role `desktop`: the socket carries CDP itself, the
-  server's commands to the app's pane and its answers and events back (`attachDesktop`, a `makeCdp` over the socket).
+  server's commands to the app's pane and its answers and events back (`attachDesktop`, a `makeCdp` over the socket);
+  the pane sends a message over 1 MiB in parts, under the listener's 16 MiB a message (`paneParts`, `paneText`, HE-71).
   On attach the pane loads the address the headless page was on, the headless page closes, and its viewers are told
   `desktop` and let go. When the pane's socket closes, the tab falls back to headless at the pane's last address.
 - **The `browser` MCP server** (`BuiltInServer`, served while `HUNTAWAY_CHROME` is set or Chrome for Testing has a build

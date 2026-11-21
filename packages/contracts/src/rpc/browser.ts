@@ -15,6 +15,8 @@ import { Auth, RequiredScope } from "../session.ts"
 // - `desktop`: the desktop app's own browser pane (a <webview>) for the task, given to the server to drive. The server
 //   sends DevTools protocol commands (`{id, method, params}`) as JSON; the client answers each with what the
 //   webview's debugger said (`{id, result}` or `{id, error: {message}}`) and sends its events (`{method, params}`).
+//   A message over 1 MiB goes as `{"parts":n}` and its UTF-8 in `n` binary messages (`paneParts`, HE-71): the server
+//   takes at most 16 MiB a websocket message.
 
 export const BrowserRole = Schema.Literals(["view", "desktop"])
 export type BrowserRole = typeof BrowserRole.Type

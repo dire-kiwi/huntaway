@@ -1,5 +1,6 @@
 import { useAtom, useAtomValue } from "@effect/atom-react"
 import { mutate, query, type HostTask as Task } from "@huntaway/client"
+import { paneParts } from "@huntaway/shared"
 import { clsx } from "clsx"
 import { Exit } from "effect"
 import { Bug, ExternalLink } from "lucide-react"
@@ -188,8 +189,17 @@ export function BrowserWebview({ task, onClose }: { task: Task; onClose: () => v
       cancelRetry: undefined,
       unsubscribe: [],
     }
+    // A big answer (a long page's accessibility tree, a screenshot) goes in parts, under the server's websocket limit.
     const send = (v: unknown) => {
-      if (at.ws?.readyState === WebSocket.OPEN) at.ws.send(toJson(v))
+      const ws = at.ws
+      if (ws?.readyState !== WebSocket.OPEN) return
+      const parts = paneParts(toJson(v))
+      if (parts === null) {
+        const cmd = field(v, "id")
+        if (typeof cmd === "number") ws.send(toJson({ id: cmd, error: { message: "the answer is too big to pass on (over 100 MiB)" } }))
+        return
+      }
+      for (const part of parts) ws.send(part)
     }
     const retry = (why: string) => {
       setRelay({ on: false, problem: why })

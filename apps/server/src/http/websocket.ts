@@ -9,6 +9,8 @@ export const MAX_MESSAGE = 16 * 1024 * 1024
  *
  * `maxPayload` bounds what a message inflates to: `/api/rpc` upgrades before any token, and `ws` would otherwise
  * inflate up to its default of 100 MiB from a few kilobytes on the wire before RPC rejected it. A message over it is
- * closed with 1009; nothing the board sends a server comes near it (terminal and browser input are small).
+ * closed with 1009. RPC refuses more already, and terminal and viewer input are small; the desktop pane's DevTools
+ * answers can be far bigger (a long page's accessibility tree is tens of MiB), so it sends those in parts
+ * (`paneParts` in `@huntaway/shared`, joined by `browser/viewer.ts`'s `paneText`).
  */
 export const websocketOptions = { perMessageDeflate: { threshold: 1024 }, maxPayload: MAX_MESSAGE } as const
