@@ -405,8 +405,11 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 - **The Terminal tab and the terminal tools** in the task view (`task/TaskView.tsx`, the old code back where step 1 cut
   it): the tab on every task, the host's tools beside the tabs, terminals mounted from their first visit and kept while
   the tab changes, a terminal tab in the side panel expanding it into the dialog, a tool taken out of the host's settings
-  ended. `task/Terminal.tsx` is the old pane: the socket is `/api/terminal/<ticket>` on the page's own server, with a
-  ticket from `terminal.open` asked for each connection (a ticket that can't be had is retried as a dropped socket is).
+  ended. `task/Terminal.tsx` is the old pane: the socket is `/api/terminal/<ticket>` on the task's host, with a ticket
+  from `terminal.open` asked for each connection (a ticket that can't be had is retried as a dropped socket is). The
+  client's `hostSocketUrl` puts it on the page's own server for its own tasks, and through the hub's relay (a relay
+  ticket for that path) for a task on another host; the relay passes no query on, so a relayed terminal takes its size
+  from the first `resize` (HE-74: the pane first opened every task's terminal on the page's own server).
   A terminal is still made once its font has loaded and a frame later, and reset before re-attaching; Restart and
   Reconnect remount the pane (`key`), which the lint's effect rules asked for in place of an `attempt` dependency, and
   the connection's mutable state is one object in the effect. xterm's styles are imported by `index.css`.

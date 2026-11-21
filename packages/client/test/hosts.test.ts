@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Context, Deferred, Effect, Exit, Layer, Ref, SubscriptionRef } from "effect"
+import { AtomRegistry } from "effect/reactivity"
 import { Socket } from "effect/socket"
-import { ProjectId, PROTOCOL, TaskId } from "@huntaway/contracts"
-import { boardAtom, HostClient, hostSessionAtom, relaySocket, relayUrl, socketSession } from "../src/index.ts"
+import { HostId, ProjectId, PROTOCOL, TaskId } from "@huntaway/contracts"
+import { boardAtom, HostClient, hostSessionAtom, hostSocketUrl, localHostIdAtom, relaySocket, relayUrl, serverUrlAtom, socketSession } from "../src/index.ts"
 import type { HostSession } from "../src/index.ts"
 import { fakeHost } from "./fakeHost.ts"
 import { hostEntry, project, snapshot, task } from "./fixtures.ts"
@@ -103,6 +104,25 @@ describe("linked hosts", () => {
 })
 
 describe("the relay's socket", () => {
+  // HE-74: a terminal on a linked host was opened on the hub, which knows nothing of the host's ticket.
+  it.effect("a socket to the page's own host is on its server; one to a linked host goes through the relay", () =>
+    Effect.gen(function* () {
+      const { hub, b, local } = yield* setup
+      yield* SubscriptionRef.set(hub.hosts, [local, hostEntry("b")])
+      hub.on("hub.hosts.openRelay", () => Effect.succeed({ ticket: "relay-1" }))
+      const registry = yield* registryFor(hub, b)
+      registry.set(serverUrlAtom, "wss://board.example/api/rpc")
+      registry.mount(localHostIdAtom)
+      yield* until(registry, localHostIdAtom, (id) => id !== null)
+      const url = (host: string) =>
+        hostSocketUrl(HostId.make(host), "/api/terminal/t1", "?cols=80&rows=24").pipe(Effect.provideService(AtomRegistry.AtomRegistry, registry))
+      expect(yield* url("hub")).toBe("wss://board.example/api/terminal/t1?cols=80&rows=24")
+      expect(hub.calls.some(([m]) => m === "hub.hosts.openRelay")).toBe(false)
+      expect(yield* url("b")).toBe("wss://board.example/api/relay/relay-1")
+      expect(hub.calls.find(([m]) => m === "hub.hosts.openRelay")?.[1]).toEqual({ host_id: "b", path: "/api/terminal/t1" })
+    }).pipe(Effect.scoped),
+  )
+
   it("is on the page's own server, under /api/relay/<ticket>", () => {
     expect(relayUrl("ws://hub:7878/api/rpc", "abc")).toBe("ws://hub:7878/api/relay/abc")
     expect(relayUrl("wss://board.example/api/rpc", "a/b")).toBe("wss://board.example/api/relay/a%2Fb")

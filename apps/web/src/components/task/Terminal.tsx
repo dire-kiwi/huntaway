@@ -3,9 +3,9 @@ import { WebLinksAddon } from "@xterm/addon-web-links"
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm"
 import { Loader2, RotateCcw, Square, SquareTerminal, TerminalSquare, X } from "lucide-react"
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react"
-import { Exit } from "effect"
+import { Effect, Exit } from "effect"
 import { useEffect, useRef, useState } from "react"
-import { mutate, query, type HostTask as Task } from "@huntaway/client"
+import { hostSocketUrl, mutate, query, type HostTask as Task } from "@huntaway/client"
 import type { TerminalStatus, TerminalTool } from "@huntaway/contracts"
 import { exitError, useAction } from "../../state/mutation"
 import { after } from "../../state/timers"
@@ -21,14 +21,14 @@ import { Button, copyText, parseJson, resultError, resultValue, toJson } from ".
  * `ready` and `ping` (server), `resize`, `ack` and `pong` (client). We acknowledge output once xterm has
  * processed it, and the server pauses while too much is unacknowledged.
  *
- * Step 1 (docs/plan/09-frontend.md): the socket is `/api/terminal/<ticket>` on the page's own server, with a ticket from
- * `terminal.open` asked for each connection (docs/plan/05-protocol.md). A task on another host reaches its terminal
- * through the hub's relay, which comes with the hosts (M7).
+ * The socket is `/api/terminal/<ticket>` on the task's host, with a ticket from `terminal.open` asked for each connection
+ * (docs/plan/05-protocol.md): on the page's own server for its own tasks (vite proxies `/api` in development), and
+ * through the hub's relay, with a relay ticket for that path, for a task on another host (HE-74).
  */
 
-/** The terminal's socket on the page's own server (vite proxies `/api` in development). */
-const terminalUrl = (ticket: string, cols: number, rows: number) =>
-  `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/terminal/${encodeURIComponent(ticket)}?cols=${cols}&rows=${rows}`
+/** The terminal's socket for `ticket` on `host`. */
+const terminalUrl = (host: Task["host_id"], ticket: string, cols: number, rows: number) =>
+  hostSocketUrl(host, `/api/terminal/${encodeURIComponent(ticket)}`, `?cols=${cols}&rows=${rows}`)
 
 const THEME: ITheme = {
   background: "#0b0b0e",
@@ -208,8 +208,8 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
           })
           return undefined
         }
-        const attach = (ticket: string) => {
-          const sock = new WebSocket(terminalUrl(ticket, term.cols, term.rows))
+        const attach = (url: string) => {
+          const sock = new WebSocket(url)
           sock.binaryType = "arraybuffer"
           at.ws = sock
           let unstable: (() => void) | undefined
@@ -246,9 +246,12 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
         const connect = () => {
           refit()
           setConn({ state: "connecting" })
-          void run(mutate("terminal.open", task.host_id, { task_id: task.id, tool: toolId ?? null })).then((exit) => {
+          const url = mutate("terminal.open", task.host_id, { task_id: task.id, tool: toolId ?? null }).pipe(
+            Effect.flatMap(({ ticket }) => terminalUrl(task.host_id, ticket, term.cols, term.rows)),
+          )
+          void run(url).then((exit) => {
             if (at.disposed) return
-            if (Exit.isSuccess(exit)) attach(exit.value.ticket)
+            if (Exit.isSuccess(exit)) attach(exit.value)
             else retry(exitError(exit) ?? "Can't reach the terminal")
           })
         }
