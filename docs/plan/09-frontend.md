@@ -867,10 +867,13 @@ and 100 ms (on localhost, under 0.1 s either way). Three changes:
   it is. Nothing is compressed per request. `scripts/package-server.sh` copies `dist` whole, so a release's `ui/` and
   the desktop app carry the variants. The build takes about 5 s longer for it.
 - **Split.** Every page but the boards is a chunk loaded the first time it is opened (`App.tsx`: Settings, a project's
-  settings, Analytics, the Guide, a host's page, onboarding, the assistant, a plugin's page), as are the task's views
-  (`TaskView`, `TaskPanel`, `TaskModal`). A page shows `PageLoading` (a word after a moment, as `BoardLoading`) while
-  its chunk comes; the panel and the dialog show nothing. The Markdown renderer (react-markdown, GFM) is a chunk of its
-  own behind `thread/Markdown.tsx` (`MarkdownView.tsx`), which shows the text plain in the same box meanwhile; the
+  settings, Analytics, the Guide, a host's page, onboarding, the assistant, a plugin's page), with `React.lazy`; a page
+  shows `PageLoading` (a word after a moment, as `BoardLoading`) while its chunk comes. The task's views (`TaskView`,
+  `TaskPanel`, `TaskModal`) and the Markdown renderer (react-markdown, GFM: `thread/MarkdownView.tsx` behind
+  `thread/Markdown.tsx`) are chunks too, but fetched as the app starts, beside the board's snapshot, through atoms
+  (`taskViewsAtom` in `App.tsx`, `markdownViewAtom`) rather than `React.lazy`: once loaded they draw in the same render,
+  where a lazy component suspends on its first render and shows its fallback for a moment (which made opening a task
+  flash, and broke the checks that open one). Until then a task shows nothing and a text takes its room unseen. The
   Guide's links other pages use are in `settings/GuideLink.tsx`, so the Guide (with its own Markdown) leaves the entry.
   The entry went from 1,443 KB to 742 KB (the first load from 1,892 KiB in 8 files to 1,270 KiB in 24, 455 to 330 KiB
   as brotli). What is left in it: the board, the layout, the New task dialog, `mdast-util-from-markdown` (the

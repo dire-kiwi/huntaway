@@ -1,4 +1,7 @@
+import { useAtomMount, useAtomValue } from "@effect/atom-react"
 import { isAssistant, isGroupTask, isRoutine } from "@huntaway/client"
+import { Effect } from "effect"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { clsx } from "clsx"
 import { lazy, Suspense, useEffect } from "react"
 import { Loader2 } from "lucide-react"
@@ -11,6 +14,7 @@ import { UnhandledErrors } from "./components/layout/UnhandledErrors"
 import { TokenScreen } from "./components/settings/TokenScreen"
 // 6.1
 import { startToolKeepalive } from "./components/task/terminalTools"
+import { markdownViewAtom } from "./components/task/thread/Markdown"
 import { useDrawer, useNarrow } from "./narrow"
 import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl } from "./router"
 import { useBoard } from "./state/board"
@@ -28,9 +32,10 @@ const HostPage = lazy(() => import("./components/settings/HostPage").then((m) =>
 const Onboarding = lazy(() => import("./components/settings/Onboarding").then((m) => ({ default: m.Onboarding })))
 const AssistantPage = lazy(() => import("./components/task/AssistantPage").then((m) => ({ default: m.AssistantPage })))
 const PluginPage = lazy(() => import("./components/plugins/PluginPage").then((m) => ({ default: m.PluginPage })))
-const TaskView = lazy(() => import("./components/task/TaskView").then((m) => ({ default: m.TaskView })))
-const TaskPanel = lazy(() => import("./components/task/TaskView").then((m) => ({ default: m.TaskPanel })))
-const TaskModal = lazy(() => import("./components/task/TaskView").then((m) => ({ default: m.TaskModal })))
+// What opening a task needs (its views, the Markdown renderer) is fetched as the app starts, beside the board's
+// snapshot, so a task opens at once and its text is drawn as Markdown straight away: only the pages wait to be opened.
+// Atoms rather than `React.lazy`, so once loaded they are drawn in the same render, without a fallback in between.
+const taskViewsAtom = Atom.make(Effect.promise(() => import("./components/task/TaskView"))).pipe(Atom.keepAlive)
 
 export function App() {
   const authed = useBoard((s) => s.authed)
@@ -39,6 +44,8 @@ export function App() {
   const route = useRoute()
   const panel = usePanel()
   const modal = useTaskModal()
+  const views = AsyncResult.getOrElse(useAtomValue(taskViewsAtom), () => undefined)
+  useAtomMount(markdownViewAtom)
   const routeTask = useBoard((s) => (route.name === "task" ? s.tasks[route.taskId] : undefined))
   const narrow = useNarrow()
   const drawerOpen = useDrawer((d) => d.open)
@@ -124,7 +131,7 @@ export function App() {
               {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
               {route.name === "board" && <Board projectId={route.projectId} />}
               {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
-              {route.name === "task" && <TaskView taskId={route.taskId} />}
+              {route.name === "task" && (views ? <views.TaskView taskId={route.taskId} /> : <PageLoading />)}
               {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
               {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
               {route.name === "settings" && <Settings tab={route.tab} />}
@@ -134,22 +141,14 @@ export function App() {
               {route.name === "plugin" && <PluginPage key={route.plugin} route={route} />}
             </Suspense>
           </div>
-          {panel && hasPanel(route) && (
-            <Suspense fallback={null}>
-              <TaskPanel panel={panel} />
-            </Suspense>
-          )}
+          {panel && hasPanel(route) && views && <views.TaskPanel panel={panel} />}
         </div>
         {panel?.compare === true && hasPanel(route) && (
           <Suspense fallback={null}>
             <CompareView taskId={panel.taskId} />
           </Suspense>
         )}
-        {modal !== null && (
-          <Suspense fallback={null}>
-            <TaskModal key={modal} taskId={modal} />
-          </Suspense>
-        )}
+        {modal !== null && views && <views.TaskModal key={modal} taskId={modal} />}
         <UnhandledErrors />
       </div>
     </div>
