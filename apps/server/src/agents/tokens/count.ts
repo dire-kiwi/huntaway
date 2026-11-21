@@ -297,8 +297,12 @@ export const countCodex = (lines: Iterable<string>, runModel: string, earlier: E
   return out
 }
 
-/** What an ACP agent's run used: its Codex-shaped lines (`thread/tokenUsage/updated` of its session), counted as Codex's. */
-export const countAcp = (lines: Iterable<string>, runModel: string, earlier: Earlier): Counted => ({ ...countCodex(lines, runModel, earlier), runtime: "acp" })
+/**
+ * What an ACP agent's run used: its Codex-shaped lines (`thread/tokenUsage/updated` of its session), counted as Codex's,
+ * but each run on its own. The adapter's totals start at zero every run (a resumed session included), so an earlier
+ * run's totals on the same session are nothing to take away, unlike Codex's, which carry on across runs.
+ */
+export const countAcp = (lines: Iterable<string>, runModel: string): Counted => ({ ...countCodex(lines, runModel, () => null), runtime: "acp" })
 
 /** The thread a Codex run's output says it started (`thread/started`), if it does. */
 export const startedThread = (lines: Iterable<string>): string | null => {

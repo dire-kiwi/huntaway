@@ -210,6 +210,12 @@ interface Mcp {
   readonly server: string
   readonly tool: string
   readonly args: Readonly<Record<string, unknown>>
+  /**
+   * The agent named its server (`rawInput`, `_meta` or the title). A call of one of the board's tools on a server it
+   * doesn't name is shown as the board's, but isn't allowed as the board's own without asking: a project's MCP server
+   * can have a tool of the same name.
+   */
+  readonly named: boolean
 }
 
 /**
@@ -225,8 +231,9 @@ const mcpOf = (f: ToolCallFields): Mcp | null => {
     .replace(/^(?:Running|Run|Calling|Call)\s+/u, "")
     .replace(/\?$/u, "")
     .trim()
-  const prefixed = /^mcp__(.+?)__(.+)$/u.exec(title)
-  if (prefixed !== null) return { server: prefixed[1] ?? "", tool: prefixed[2] ?? "", args: raw ?? {} }
+  // Only a bare `mcp__<server>__<tool>` names an MCP call: a title can be a command's text.
+  const prefixed = /^mcp__([\w-]+?)__([\w-]+)$/u.exec(title)
+  if (prefixed !== null) return { server: prefixed[1] ?? "", tool: prefixed[2] ?? "", args: raw ?? {}, named: true }
   const m = meta(f)
   if (!isRecord(m) || m["is_mcp_tool_call"] !== true) return null
   const rawServer = firstStr(raw, ["server", "server_name", "serverName"])
@@ -238,14 +245,17 @@ const mcpOf = (f: ToolCallFields): Mcp | null => {
   const split = /^([\w-]+)\s*[./:]\s*([\w-]+)$/u.exec(title)
   const bare = /^([A-Za-z0-9_]+)(?::\s*\{.*)?$/su.exec(title)?.[1]
   const tool = rawTool ?? firstStr(m, ["tool_name", "toolName", "tool"]) ?? split?.[2] ?? bare ?? (title === "" ? "tool" : title)
-  const server = rawServer ?? firstStr(m, ["server_name", "serverName", "mcp_server", "server"]) ?? split?.[1] ?? (BOARD_TOOLS.includes(tool) ? BOARD : "mcp")
-  return { server: server.trim(), tool: tool.trim(), args }
+  const named = rawServer ?? firstStr(m, ["server_name", "serverName", "mcp_server", "server"]) ?? split?.[1] ?? null
+  const server = named ?? (BOARD_TOOLS.includes(tool) ? BOARD : "mcp")
+  return { server: server.trim(), tool: tool.trim(), args, named: named !== null }
 }
 
+/** What a call is. A command or an edit by its kind (or content) first, whatever its title says. */
 const typeOf = (f: ToolCallFields): ItemType => {
-  if (mcpOf(f) !== null) return "mcpToolCall"
-  if (f.kind === "execute" || ((f.kind === undefined || f.kind === null) && commandOf(f, false) !== null)) return "commandExecution"
+  if (f.kind === "execute") return "commandExecution"
   if ((f.content ?? []).some((c) => isRecord(c) && c["type"] === "diff") || ["edit", "delete", "move"].includes(f.kind ?? "")) return "fileChange"
+  if (mcpOf(f) !== null) return "mcpToolCall"
+  if ((f.kind === undefined || f.kind === null) && commandOf(f, false) !== null) return "commandExecution"
   return "dynamicToolCall"
 }
 
@@ -308,7 +318,7 @@ const codexItem = (tool: Tool): Readonly<Record<string, unknown>> => {
   }
   if (type === "fileChange") return { type, ...base, changes: changesOf(f) }
   if (type === "mcpToolCall") {
-    const mcp = mcpOf(f) ?? { server: "mcp", tool: "tool", args: {} }
+    const mcp = mcpOf(f) ?? { server: "mcp", tool: "tool", args: {}, named: false }
     const text = outputOf(f)
     return {
       type,
@@ -561,6 +571,8 @@ export const askPermission = (state: AcpState, acpId: unknown, req: PermissionRe
           tool: use?.[0] ?? "tool",
           title: title === "" ? (use?.[0] ?? "tool") : title,
           input: use?.[1] ?? {},
+          // Whether the agent itself named the MCP server it calls (the board allows its own server's tools at once).
+          server_named: tool.type === "mcpToolCall" && mcpOf(tool.fields)?.named === true,
         }),
         item,
       }

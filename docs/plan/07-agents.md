@@ -1105,7 +1105,8 @@ was the reference for the protocol and Antigravity's dialect.
   with the run's bearer secret in its environment.
 - **Permissions**: the board's permission mode picks one of the agent's session modes when it has a match
   (`bypassPermissions` → `yolo`, `acceptEdits` → `auto_edit`, `plan` → `plan`, else `default`); every
-  `session/request_permission` is asked in the thread as a Codex approval is.
+  `session/request_permission` is asked in the thread as a Codex approval is. `dontAsk` is the agent's `default` mode,
+  so the board denies what isn't allowed already: ACP has no sandbox like the one that makes Codex's `dontAsk` safe.
 - **Sign-in** is the agent's own: the adapter never calls `authenticate` interactively. A `session/new` refused with
   `-32000` (Antigravity signed out) fails the run with "sign in by running `agy` once".
 - **Tests**: `packages/testing/bin/fake-acp` (an ACP agent with fake-codex's markers), the adapter's tests against it,
@@ -1138,8 +1139,9 @@ was the reference for the protocol and Antigravity's dialect.
   load 120 s, then a fresh session). Antigravity's MCP calls (`Run wait?`, `_meta.is_mcp_tool_call`, the server and
   tool in `rawInput`) are named by `rawInput`, and a bare tool name of the board's (`BOARD_TOOLS`, now in
   `packages/shared`) is the board's server's. Text after a turn's end is still written; a cancel the agent answers
-  with an error ends the turn interrupted; an agent dying mid-turn ends it failed. MCP header values and bearer tokens
-  are redacted from everything the adapter writes. A config's command takes simple quotes (`commandWords`, no shell).
+  with an error ends the turn interrupted; an agent dying mid-turn ends it failed. The http MCP servers'
+  `Authorization` headers (the run's bearer secret) are redacted from the strings of everything the adapter writes;
+  other headers and a stdio server's environment are paths and ports a thread shows, and are left. A config's command takes simple quotes (`commandWords`, no shell).
 - **`acp-run --list-models <spec.json>`** prints one line, `{models: [{id, name, description}], current, efforts,
   default_effort}` (the `model` config option, else the legacy `models`; efforts from a `thought_level` option); exit 3
   is a sign-in refusal. `AcpQueries` (`agents/AcpQueries.ts`, live in `agents/acp/AcpQueriesLive.ts`) runs it in a temp
@@ -1148,8 +1150,13 @@ was the reference for the protocol and Antigravity's dialect.
   the headers in `HUNTAWAY_MCP_HEADERS` and the server's `Mcp-Session-Id`; every JSON-RPC message of a JSON or SSE answer
   goes to stdout; an HTTP failure is a JSON-RPC error; a broken stream reconnects with `Last-Event-ID`.
 - **Requests**: `acp/requestPermission {threadId, turnId, itemId, tool, title, input}` is asked as Read, Edit, Grep,
-  WebFetch, Bash or Think by the ACP kind, else as the tool's name; a board tool (`mcp__huntaway__*`) is allowed at once.
-- **Elsewhere**: an ACP run's tokens are `countAcp` (Codex's counting, runtime `acp`, no rollout file); it never reviews
+  WebFetch, Bash or Think by the ACP kind, else as `mcp__acp__<kind or title>` (a title never passes for another
+  server's tool); a board tool (`mcp__huntaway__*`) is allowed at once only when the agent named the board's server
+  (`server_named`), not when the board's server was guessed from a bare tool name a project's server may have too. A
+  call's kind (`execute`, an edit, a diff) decides what it is before its title, and only a bare `mcp__<server>__<tool>`
+  title names an MCP call.
+- **Elsewhere**: an ACP run's tokens are `countAcp` (Codex's counting, runtime `acp`, no rollout file, each run on its
+  own: the adapter's totals start at zero every run, a resumed session's too); it never reviews
   its own waits; its titles are written by Claude Code as when there's no config; no usage limits or window restarts;
   no Claude skills (`AgentTools.taskSkills` gives none); its prompts are the non-Claude texts (`codex: true` and `acp`:
   no Codex `wait` or apps notes); `host.info`'s `agent_clis` has `acp` when `agy` is on the PATH.

@@ -105,11 +105,14 @@ describe("Codex's requests", () => {
     assert.deepStrictEqual(["mcp__acp__read", "mcp__acp__fetch", "mcp__acp__Open the docs", "mcp__gh__pr_view"].map(tool), [
       "Read",
       "WebFetch",
-      "Open the docs",
+      "mcp__acp__Open the docs",
       "mcp__gh__pr_view",
     ])
     // The board's own server's tools are allowed at once.
-    assert.deepStrictEqual(acp({ itemId: "b", tool: "mcp__huntaway__list_projects", title: "t", input: {} }), {
+    // Only when the agent named the board's server: a guessed one may be a project server's tool of the same name.
+    assert.strictEqual(acp({ itemId: "b", tool: "mcp__huntaway__delete_task", title: "t", input: {}, server_named: false })._tag, "Prompt")
+    assert.strictEqual(acp({ itemId: "b", tool: "mcp__huntaway__delete_task", title: "t", input: {} })._tag, "Prompt")
+    assert.deepStrictEqual(acp({ itemId: "b", tool: "mcp__huntaway__list_projects", title: "t", input: {}, server_named: true }), {
       _tag: "Answer",
       answer: { result: { decision: "accept" } },
     })

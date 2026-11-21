@@ -64,8 +64,9 @@ export const effortChoice = (session: SessionResponse, wanted: string | null): C
 /** The agent's mode ids for each of the board's permission modes, in order of preference. */
 export const modeCandidates = (mode: string): ReadonlyArray<string> => {
   switch (mode) {
+    // "Don't ask" denies what isn't allowed already: the agent asks (its default mode) and the board denies. ACP has no
+    // sandbox to make a mode that asks nothing safe, as Codex's workspace-write sandbox does.
     case "bypassPermissions":
-    case "dontAsk":
       return ["yolo", "bypassPermissions", "full-access", "full_access"]
     case "acceptEdits":
       return ["auto_edit", "acceptEdits", "accept-edits"]
@@ -77,7 +78,7 @@ export const modeCandidates = (mode: string): ReadonlyArray<string> => {
 }
 
 /** Whether the board's mode is one in which the agent asks nothing (its requests are allowed without the board). */
-export const fullAccess = (mode: string): boolean => mode === "bypassPermissions" || mode === "dontAsk"
+export const fullAccess = (mode: string): boolean => mode === "bypassPermissions"
 
 /** The agent's mode for the board's `mode`: the first of its candidates the agent offers, if it offers one. */
 export const modeChoice = (session: SessionResponse, mode: string): Choice => {

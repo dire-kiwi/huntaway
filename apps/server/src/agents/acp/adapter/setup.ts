@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Predicate, Schema } from "effect"
 import { jsonText } from "../../claude/tools.ts"
 import { warning } from "../map.ts"
 import type { Line } from "../map.ts"
@@ -116,26 +116,33 @@ export const agentServers = (
 }
 
 /**
- * What takes the MCP servers' header values (the run's bearer secret) out of a text the adapter writes (the agent's
- * errors and stderr say what they were given): each value, and the token after an `Authorization` scheme, as they are
- * and as JSON writes them, is `[redacted]`. Values shorter than 8 characters are left: they're no secret.
+ * What takes the run's secrets out of a text the adapter writes (the agent's errors and stderr can say what they were
+ * given): the http MCP servers' `Authorization` headers (the board's bearer secret, and a project server's own), as they
+ * are and the token after their scheme, is `[redacted]`. Other headers and a stdio server's environment are not
+ * secrets of the run's and are left alone (they are paths, ports and the like, which a thread shows). Values shorter
+ * than 8 characters are left: they're no secret.
  */
 export const redactor = (servers: ReadonlyArray<AcpMcpServer>): ((text: string) => string) => {
   const secrets = new Set<string>()
   for (const s of servers) {
-    const values = "type" in s ? s.headers.map((h) => h.value) : s.env.map((e) => e.value)
-    for (const v of values) {
-      const token = /^\S+\s+(\S+)$/u.exec(v.trim())?.[1]
-      for (const x of [v, ...(token === undefined ? [] : [token])]) {
-        if (x.length < 8) continue
-        secrets.add(x)
-        secrets.add(jsonText(x).slice(1, -1))
-      }
+    if (!("type" in s)) continue
+    for (const h of s.headers) {
+      if (h.name.toLowerCase() !== "authorization") continue
+      const token = /^\S+\s+(\S+)$/u.exec(h.value.trim())?.[1]
+      for (const x of [h.value, ...(token === undefined ? [] : [token])]) if (x.length >= 8) secrets.add(x)
     }
   }
   // The longest first, so a value's token isn't taken out of it before the value.
   const all = [...secrets].toSorted((a, b) => b.length - a.length)
-  return (text) => all.reduce((t, x) => t.split(x).join("[redacted]"), text)
+  return all.length === 0 ? (text) => text : (text) => all.reduce((t, x) => t.split(x).join("[redacted]"), text)
+}
+
+/** `value` with `redact` applied to each string in it (keys included), so what it encodes to is still JSON. */
+export const redactStrings = (redact: (text: string) => string, value: unknown): unknown => {
+  if (typeof value === "string") return redact(value)
+  if (Array.isArray(value)) return value.map((v) => redactStrings(redact, v))
+  if (Predicate.isObject(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [redact(k), redactStrings(redact, v)]))
+  return value
 }
 
 /** The session the run goes on in: its id, what the agent said of it, and whether it's new. */

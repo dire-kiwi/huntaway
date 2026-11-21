@@ -175,7 +175,7 @@ export class Tokens extends Context.Service<Tokens, TokensShape>()("huntaway-ser
         } else if (yield* exists(`${dir}/codex.json`)) {
           result = countCodex(yield* linesOf(outFile, codexLineCounts), yield* codexModel(run, dir), earlier)
         } else if (yield* exists(`${dir}/acp.json`)) {
-          result = countAcp(yield* linesOf(outFile, codexLineCounts), yield* acpModel(run, dir), earlier)
+          result = countAcp(yield* linesOf(outFile, codexLineCounts), yield* acpModel(run, dir))
         } else {
           result = countClaude(yield* linesOf(outFile, claudeLineCounts), earlier)
           // More than the board charged the run: it was counted from nothing, its session's earlier runs' totals being gone.

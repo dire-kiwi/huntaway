@@ -26,7 +26,7 @@ import type { AgentMessage } from "../rpc.ts"
 import { currentModel, fullAccess } from "../session.ts"
 import { specFromJson } from "../spec.ts"
 import type { AdapterError } from "./setup.ts"
-import { agentServers, redactor, applySettings, errorText, exitedReason, fail, initialize, openSession, refuse } from "./setup.ts"
+import { agentServers, redactor, redactStrings, applySettings, errorText, exitedReason, fail, initialize, openSession, refuse } from "./setup.ts"
 
 // The adapter, `huntaway acp-run <run dir>/acp.json` (docs/plan/07-agents.md, ACP agents): it runs an ACP agent's turns
 // for a run, under ia-shim, between the run's files and the agent (`agy acp` by default), and is a Codex run to the rest
@@ -111,12 +111,12 @@ export const runAdapter = (
   specPath: string,
   io: AdapterIo,
 ): Effect.Effect<void, AdapterError, FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | Scope.Scope> => {
-  // The run's secrets (its MCP servers' header values) taken out of what it writes, once the spec says them.
+  // The run's secrets (its MCP servers' `Authorization` headers) taken out of what it writes, once the spec says them.
   let redact = asIs
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     const emit = (lines: ReadonlyArray<unknown>) =>
-      Effect.forEach(lines, (l) => Effect.flatMap(toJson(l), (t) => io.writeLine(redact(t))), { concurrency: 1, discard: true })
+      Effect.forEach(lines, (l) => Effect.flatMap(toJson(redactStrings(redact, l)), io.writeLine), { concurrency: 1, discard: true })
     const raw = yield* fs.readFileString(specPath).pipe(Effect.mapError((e) => fail(`reading acp.json: ${e.message}`)))
     const spec = specFromJson(Option.getOrUndefined(parseJson(raw)))
     if (spec === null) return yield* fail("acp.json isn't a run's spec")

@@ -141,7 +141,8 @@ export const acpTool = (tool: string): string => {
     case "think":
       return "Think"
     default:
-      return kind === "" ? "tool" : kind
+      // Another kind, or a title, keeps the ACP namespace: a title isn't to pass for another server's tool.
+      return kind === "" ? "tool" : tool
   }
 }
 
@@ -205,7 +206,10 @@ export const classify = (r: CodexRequest): Classified => {
     // HE-69: an ACP agent's tool call: what it is called with, and its title as what it's for. A command is shown as one.
     case "acp/requestPermission": {
       const tool = acpTool(strField(p, "tool") ?? "")
-      if (BOARD_SERVER_NAMES.some((n) => tool.startsWith(`mcp__${n}__`))) return { _tag: "Answer", answer: { result: { decision: "accept" } } }
+      // The board's own tools run without asking only when the agent named the board's server: a guessed server (a bare
+      // tool name the board has too) may be a project's MCP server's tool of the same name.
+      const board = BOARD_SERVER_NAMES.some((n) => tool.startsWith(`mcp__${n}__`))
+      if (board && field(p, "server_named") === true) return { _tag: "Answer", answer: { result: { decision: "accept" } } }
       const title = strField(p, "title")
       const given = field(p, "input")
       const input: Record<string, unknown> = isRecord(given) ? { ...given } : given === undefined || given === null ? {} : { input: given }
