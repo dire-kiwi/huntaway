@@ -162,7 +162,8 @@ export class UsageWindow extends Context.Service<UsageWindow, UsageWindowShape>(
       const tick = Effect.gen(function* () {
         const configs: Array<AgentConfigRow> = []
         for (const c of yield* repo.list) {
-          if (c.restart_window && (yield* usage.proxy(c.id)) === null) configs.push(c)
+          // An ACP agent has no 5-hour window the board knows of (HE-69).
+          if (c.restart_window && c.agent !== "acp" && (yield* usage.proxy(c.id)) === null) configs.push(c)
         }
         // A setting turned off forgets what it knew, so turning it on again starts afresh.
         yield* Ref.update(watches, (m) => new Map([...m].filter(([id]) => configs.some((c) => c.id === id))))

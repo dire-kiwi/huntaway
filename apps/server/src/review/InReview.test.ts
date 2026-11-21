@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Exit } from "effect"
 import { TestClock } from "effect/testing"
@@ -223,42 +223,46 @@ describe("the in-review watcher", () => {
     ),
   )
 
-  it.effect("comments alone wake it ten times in a row, until the user writes", () =>
-    onBoard([pull7()], (fake) =>
-      Effect.gen(function* () {
-        const { t } = yield* inReview("all")
-        yield* sweepAt(0)
-        yield* sweepAt(1)
-        const list: Array<FakeComment> = []
-        const another = Effect.suspend(() => {
-          const n = list.length + 1
-          list.push(comment(`${String(n).padStart(2, "0")}:00`, "alice", `Comment ${n}`))
-          return setPull(fake, pull7({ comments: [...list] }))
-        })
-        for (let i = 0; i < COMMENT_WAKES; i++) {
+  it.effect(
+    "comments alone wake it ten times in a row, until the user writes",
+    () =>
+      onBoard([pull7()], (fake) =>
+        Effect.gen(function* () {
+          const { t } = yield* inReview("all")
+          yield* sweepAt(0)
+          yield* sweepAt(1)
+          const list: Array<FakeComment> = []
+          const another = Effect.suspend(() => {
+            const n = list.length + 1
+            list.push(comment(`${String(n).padStart(2, "0")}:00`, "alice", `Comment ${n}`))
+            return setPull(fake, pull7({ comments: [...list] }))
+          })
+          for (let i = 0; i < COMMENT_WAKES; i++) {
+            yield* another
+            yield* sweepAt(2 + 2 * i)
+            yield* settle(t.id)
+          }
+          assert.strictEqual((yield* wakes(t.id)).length, COMMENT_WAKES)
+          // The next one waits, saying why once.
           yield* another
-          yield* sweepAt(2 + 2 * i)
+          yield* sweepAt(30)
+          yield* sweepAt(31)
+          assert.strictEqual((yield* wakes(t.id)).length, COMMENT_WAKES)
+          const stored = yield* (yield* Threads).stored(t.id).pipe(Effect.orDie)
+          assert.strictEqual(stored.entries.filter((e) => e.item.type === "notice" && e.item.text.includes("times in a row")).length, 1)
+          // Once the user writes to the agent, it goes with the next.
+          yield* TestClock.setTime(31 * POLL + 1000)
+          yield* (yield* Threads).userMessage(t.id, "Thanks, carry on", {}).pipe(Effect.orDie)
+          yield* another
+          yield* sweepAt(32)
+          const sent = yield* wakes(t.id)
+          assert.strictEqual(sent.length, COMMENT_WAKES + 1)
+          assert.include(sent.at(-1) ?? "", "2 new comments or reviews from alice")
           yield* settle(t.id)
-        }
-        assert.strictEqual((yield* wakes(t.id)).length, COMMENT_WAKES)
-        // The next one waits, saying why once.
-        yield* another
-        yield* sweepAt(30)
-        yield* sweepAt(31)
-        assert.strictEqual((yield* wakes(t.id)).length, COMMENT_WAKES)
-        const stored = yield* (yield* Threads).stored(t.id).pipe(Effect.orDie)
-        assert.strictEqual(stored.entries.filter((e) => e.item.type === "notice" && e.item.text.includes("times in a row")).length, 1)
-        // Once the user writes to the agent, it goes with the next.
-        yield* TestClock.setTime(31 * POLL + 1000)
-        yield* (yield* Threads).userMessage(t.id, "Thanks, carry on", {}).pipe(Effect.orDie)
-        yield* another
-        yield* sweepAt(32)
-        const sent = yield* wakes(t.id)
-        assert.strictEqual(sent.length, COMMENT_WAKES + 1)
-        assert.include(sent.at(-1) ?? "", "2 new comments or reviews from alice")
-        yield* settle(t.id)
-      }),
-    ),
+        }),
+      ),
+    // A dozen sweeps of a whole board: about a second alone, past the default 5 s on a loaded CI runner.
+    20_000,
   )
 
   it.effect("a merged pull request isn't read again", () =>

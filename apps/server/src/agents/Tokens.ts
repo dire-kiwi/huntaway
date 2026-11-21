@@ -8,7 +8,7 @@ import { elapsedMs, Telemetry } from "../platform/Telemetry.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { savedFor, TokenRepo } from "./TokenRepo.ts"
 import type { PendingRun, Saved } from "./TokenRepo.ts"
-import { claudeLineCounts, codexLineCounts, countClaude, countCodex, counted, rolloutModel, startedThread } from "./tokens/count.ts"
+import { claudeLineCounts, codexLineCounts, countAcp, countClaude, countCodex, counted, rolloutModel, startedThread } from "./tokens/count.ts"
 import type { Before, Counted, Earlier } from "./tokens/count.ts"
 import { counts, countsFromJson, scale } from "./tokens/counts.ts"
 import type { ByModel } from "./tokens/counts.ts"
@@ -51,6 +51,8 @@ export const beforeOf = (saved: Saved): Before | null => {
 const pad = (n: number) => String(n).padStart(2, "0")
 
 const CodexSpec = Schema.fromJsonString(Schema.Struct({ model: Schema.optional(Schema.Unknown), thread_id: Schema.optional(Schema.Unknown) }))
+/** HE-69: an ACP agent's run's `acp.json`, for its model. */
+const AcpSpecFile = Schema.fromJsonString(Schema.Struct({ model: Schema.optional(Schema.Unknown) }))
 /** 6.9: a run's `exit` file, leniently. */
 const ExitFile = Schema.fromJsonString(
   Schema.Struct({ code: Schema.optional(Schema.Unknown), signal: Schema.optional(Schema.Unknown), error: Schema.optional(Schema.Unknown) }),
@@ -129,6 +131,16 @@ export class Tokens extends Context.Service<Tokens, TokensShape>()("huntaway-ser
         return (yield* tasks.get(run.task_id))?.model ?? "codex"
       })
 
+      /**
+       * The model an ACP agent's run asked for, before its output says (`huntaway/model`): its `acp.json`'s, else its
+       * task's. It has no rollout file.
+       */
+      const acpModel = Effect.fnUntraced(function* (run: PendingRun, dir: string) {
+        const specModel = Option.getOrUndefined(yield* readJson(`${dir}/acp.json`, AcpSpecFile))?.model
+        if (typeof specModel === "string" && specModel !== "") return specModel
+        return (yield* tasks.get(run.task_id))?.model ?? "acp"
+      })
+
       /** A run whose output is gone: what it cost, on the model its turns or its task say. */
       const estimate = Effect.fnUntraced(function* (run: PendingRun) {
         const out = counted("claude")
@@ -140,7 +152,8 @@ export class Tokens extends Context.Service<Tokens, TokensShape>()("huntaway-ser
           const project = task.project_id === null ? null : yield* tasks.project(task.project_id)
           configId = (yield* tasks.configs(task.profile_id, project))[0] ?? null
         }
-        if (configId !== null && (yield* repo.configAgent(configId)) === "codex") out.runtime = "codex"
+        const agent = configId === null ? null : yield* repo.configAgent(configId)
+        if (agent === "codex" || agent === "acp") out.runtime = agent
         if (run.cost_usd <= 0) return out
         const model = (yield* repo.runModel(run.id)) ?? task?.model ?? "unknown"
         out.models[model] = counts({ cost: run.cost_usd })
@@ -161,6 +174,8 @@ export class Tokens extends Context.Service<Tokens, TokensShape>()("huntaway-ser
           result = yield* estimate(run)
         } else if (yield* exists(`${dir}/codex.json`)) {
           result = countCodex(yield* linesOf(outFile, codexLineCounts), yield* codexModel(run, dir), earlier)
+        } else if (yield* exists(`${dir}/acp.json`)) {
+          result = countAcp(yield* linesOf(outFile, codexLineCounts), yield* acpModel(run, dir))
         } else {
           result = countClaude(yield* linesOf(outFile, claudeLineCounts), earlier)
           // More than the board charged the run: it was counted from nothing, its session's earlier runs' totals being gone.

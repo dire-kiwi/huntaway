@@ -50,6 +50,9 @@ export class About extends Context.Service<About, AboutShape>()("huntaway-server
     }
     // Codex runs where its CLI is installed (5.2): looked for once, as the server starts.
     const codex = yield* onPath(config.codexBin)
+    // HE-69: and an ACP agent where Antigravity's is (a config's own command line isn't looked for).
+    const acp = yield* onPath("agy") // agents/acp/spec.ts' DEFAULT_ACP_PROGRAM (agents/ is below this area)
+    const clis = ["claude", ...(codex ? ["codex"] : []), ...(acp ? ["acp"] : [])]
     const infoWith = (role: "projects" | "access"): HostInfo => ({
       host_id: identity.hostId,
       host_name: identity.hostName,
@@ -65,7 +68,7 @@ export class About extends Context.Service<About, AboutShape>()("huntaway-server
       // It runs agents unless started with --no-agents (the old `can_run_agents`): Claude Code, and Codex where its CLI
       // is installed. The web app offers Start, and starts a fresh task moved into In progress, only where this is true.
       agents: rehearsal === null && !config.noAgents,
-      agent_clis: rehearsal !== null || config.noAgents ? [] : codex ? ["claude", "codex"] : ["claude"],
+      agent_clis: rehearsal !== null || config.noAgents ? [] : clis,
       data_dir: dataDir.root,
       hostname: identity.hostName,
       home: config.home,

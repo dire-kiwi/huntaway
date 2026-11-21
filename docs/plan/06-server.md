@@ -754,7 +754,9 @@ them. `MergedWatcher.loop`: first 30 s after start, then 180 s after each check 
   `TaskChanged` of a task that became merged, `Restack.reconcileDependants` **before** the merge queue is looked at (so a
   level waiting in Ready for merge waits for its restack, as the old `update_task_inner` marked it before
   `start_next_merge`), then `MergeTargets.taskChanged`, then 4.7's `Merges.taskChanged`; a `pr_url` set links GitHub
-  stacks. **Recovery**: `Restack.resume`, `GhStacks.linkAll` (after the reviews'). **Launch**: `LaunchFacts.prepareWork`
+  stacks. **Recovery**: `Restack.resume`, then `GhStacks.linkAll` once the server listens (`Listening.up`, HE-71), in
+  the background: it reads the projects with an open, unlinked pull request (`TaskRepo.unstackedPrProjects`) and each
+  of their tasks once. **Launch**: `LaunchFacts.prepareWork`
   waits for `Restack.settled` of the task (or a review thread's task) first. **Prompts**: `Prompts.system` tells the
   agent the task as the old `as_told` did (merged below: not stacked any more, its base where that went).
 - **The fake GitHub** (`packages/testing`): `POST repos/O/R/stacks` and `…/stacks/N/add` with `pull_requests[]` (each on
@@ -1025,7 +1027,8 @@ push and answering from a lock screen wait for the phone app.
   `Redacted`. The VAPID key is `vapid_key`, a JWK `{d, x, y}`: WebCrypto can't import the old bare scalar
   (`vapid_private_key`) without its public point, so the importer converts it (11-migration.md).
 - **The watcher** (`Push.watcher`, in `areasLayer`, so tests have it) subscribes to `Events`, takes every task and pending
-  prompt as a baseline (nothing about them notifies), and handles each event in order; after `resync`, again from a
+  prompt as a baseline (nothing about them notifies; of a task only what `taskEvent` reads, `TaskRepo.states`, and the
+  whole task is read when a notification needs it), and handles each event in order; after `resync`, again from a
   fresh baseline. Task events notify by `taskEvent` (attention, review after 5 s still so, merge, done). **Prompts** are
   found on the task's own event (a prompt's raise writes the task's attention in its transaction): each pending prompt of
   a task in Needs attention not seen before is pushed once (body from `promptText`, never the tool's input, tag
@@ -1484,7 +1487,8 @@ take the same code, with no Playwright in the server.
   only. The tab keeps only a web page's address (`keptAddress`): Chrome's error page records the address that failed
   (`unreachableUrl`), and an address a pane reports that isn't a web page's (`file:`) is dropped, since a page opened
   again loads the tab's address. Role `desktop`: the socket carries CDP itself, the
-  server's commands to the app's pane and its answers and events back (`attachDesktop`, a `makeCdp` over the socket).
+  server's commands to the app's pane and its answers and events back (`attachDesktop`, a `makeCdp` over the socket);
+  the pane sends a message over 1 MiB in parts, under the listener's 16 MiB a message (`paneParts`, `paneText`, HE-71).
   On attach the pane loads the address the headless page was on, the headless page closes, and its viewers are told
   `desktop` and let go. When the pane's socket closes, the tab falls back to headless at the pane's last address.
 - **The `browser` MCP server** (`BuiltInServer`, served while `HUNTAWAY_CHROME` is set or Chrome for Testing has a build
@@ -1534,7 +1538,8 @@ now refuses a call whose input is not JSON (exit 2); the old one let it through.
 `NODE_COMPILE_CACHE` (in the temp folder) for the hooks: from a checkout, Node otherwise loads its TypeScript stripper
 on every call. Measured on the reference machine through `bin/huntaway`: about 57–60 ms with an empty cache (the first
 call), 25–33 ms after; `tests/e2e/hooks.test.ts` holds the median under 60 ms. A release runs the precompiled `.js`
-and strips nothing.
+and strips nothing. `serve` and the other subcommands use the same cache, turned on in the process (`src/entry.ts`,
+[The CLI](#the-cli)), not in the environment.
 
 ## Startup
 
@@ -1559,7 +1564,10 @@ the one-off moves removed:
 5. `Recovery`: resume kills left half done · for each run that had not exited: re-ask its open prompts and tool
    calls, then follow it from its saved offset, re-arm its timers · tasks marked running with no run · expire
    prompts with no live run · `Merges.reconcileAll` · `Dependencies.reconcileAll` · `Reviews.reconcileAll` ·
-   `WorkflowEngine.resume` · `Restack.resume`.
+   `WorkflowEngine.resume` · `Restack.resume`. Each reconciler reads only the rows it acts on (`TaskRepo`'s
+   `worktreesInFlux`, `restacksDue`, `unstackedPrProjects`; Push's baseline `states`), never every task decoded to be
+   filtered (HE-71: on a copy of a board of 2,900 tasks, a restart's ready line came after 1.15 s rather than 2.4 s).
+   `GhStacks.linkAll` waits for the listener (`Listening.up`, step 6) and runs in the background.
 6. Open the gate: links dial, discovery answers, the RPC and HTTP routes serve. Then `Releases.settle` (a release that
    got this far is current; one that failed before stays `trying` and is marked bad at the next start). Print `HUNTAWAY_READY
    {"port":…,"token":…}` on stdout (the desktop shell and test scripts read it), and tell the launcher it started.
@@ -1592,9 +1600,11 @@ module under `lifecycle/` or a loop's layer.
 
 #### As built in 9.1 (HE-8)
 
-- **`ImportGuard`** (`platform/ImportGuard.ts`) is built by `bin.ts`'s `serve` over `ServerConfig` alone, before
+- **`ImportGuard`** (`platform/ImportGuard.ts`) is built by `serve` (`serve.ts`) over `ServerConfig` alone, before
   anything else: no `import.json`, the board as usual; `rehearsal: true`, `ReadOnlyMain`; otherwise it fails with a
-  `StartupError` naming the process ids that have `<from>/<database>` open (`ImportRecord.processesWithOpen`) and saying
+  `StartupError` naming the process ids that have `<from>/<database>` open (`ImportRecord.processesWithOpen`: on
+  Linux one synchronous pass over `/proc/*/fd` in `platform/procFds.ts`, the one server file allowed `node:fs`, since
+  Effect's asynchronous `FileSystem` took twice the time over some 30,000 links, HE-71) and saying
   to stop the old server for good, or to stop this one and start only the old one. An `import.json` that does not read
   is a `StartupError` too: a damaged rehearsal record must not start a board that acts.
 - **Listening address.** `--host`/`HUNTAWAY_HOST` has no default in the flags any more (`serveArgs`): the board takes
@@ -1646,3 +1656,27 @@ module under `lifecycle/` or a loop's layer.
 | `codex-run <spec>`                        | The Codex adapter, started under the shim (not through `effect/cli`: it is a run's process)  |
 | `approval-hook`, `gh-hook`, `gh-run`      | The hooks, dispatched by the launcher before any of this loads                               |
 | `--version`                               | `huntaway <version>`: the release smoke test depends on the exact form                       |
+
+As built in HE-71 (startup time; on a fresh board most of the time to `HUNTAWAY_READY` was Node loading code):
+
+- **The entry file.** The launcher runs `src/entry.ts` (`entry.js` in a release, which is also how it tells a
+  release's layout) for `serve` and every subcommand but the hooks and `codex-run`. It calls
+  `module.enableCompileCache()` on `$TMPDIR/node-compile-cache` (the hooks' folder) and only then imports `bin.ts`:
+  Node keeps what it compiled (TypeScript with its types stripped, and V8's code) and the next start reads it back.
+  It is turned on in the process rather than with `NODE_COMPILE_CACHE`, which agents and their children would
+  inherit. `serve` writes the cache (`module.flushCompileCache()`) once it has printed `HUNTAWAY_READY`, as a server
+  seldom exits the way that has Node write it; a short command writes it as it exits.
+- **Each command loads what it runs.** `bin.ts` has every command's flags and help, and imports what runs one with
+  `import()` when it runs: `serve` is `serve.ts` (`ImportGuard`, then `Main.ts` or `ReadOnlyMain.ts`, whichever the
+  folder is served by), `token` the identity, and the others their `cli/` file, which exports the command's function
+  (`rpc`, `sshHostMain`, `importLegacyMain`, `install`, `init`/`test`/`backfill`, `googleAuth`). `--version`, `--help`
+  and `rpc --list` no longer load the server.
+- **`@effect/platform-node` by module.** Its index re-exports `NodeRedis` and `NodeCluster*`, and so loads the redis
+  client (about 650 modules) wherever it is imported: its modules are imported one by one
+  (`import * as NodeServices from "@effect/platform-node/NodeServices"`), and `no-restricted-imports` refuses the index
+  under `apps/server/src` and `packages/testing`. `undici` (with `NodeHttpClient`) is loaded by `socksClient` when a
+  host with a SOCKS proxy first needs it.
+- Measured from a checkout on the reference machine (a fresh board, `scripts/test-server.sh --no-agents`, medians):
+  `HUNTAWAY_READY` 863 ms before, 815 ms with an empty cache, 473 ms with a warm one (a restart); 2,109 modules loaded,
+  now about 1,120. `huntaway --version` about 800 ms before, 170 ms after (240 ms with an empty cache), `rpc --list`
+  800 ms before, 210 ms after.

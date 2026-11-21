@@ -1,14 +1,15 @@
+import type { Agent } from "@huntaway/contracts"
 import { nowMillis } from "../../state/clock"
 
 // The agents a new task's prompt can go to (IA-227): each `!` token in the new task dialog names a harness, an agent
-// config (Claude Code or Codex) and one of its models, and the dialog makes a task for each, as t3code starts a
+// config (Claude Code, Codex or an ACP agent) and one of its models, and the dialog makes a task for each, as t3code starts a
 // thread for each model picked. `!opus !gpt-5.5` makes two tasks from one prompt.
 
 /** An agent config the task can run with, and the models it offers. */
 export interface HarnessConfig {
   id: string
   name: string
-  agent: "claude" | "codex"
+  agent: Agent
   models: { id: string; label: string }[]
 }
 

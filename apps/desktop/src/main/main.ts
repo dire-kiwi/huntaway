@@ -56,6 +56,9 @@ const shell = Effect.gen(function* () {
     if (app.isReady()) yield* Console.error("desktop.json was read after Electron was ready: notifications from an http: serverUrl may not work")
     app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", new URL(remote).origin)
   }
+  // Finding or starting the server needs nothing of Electron's: it starts now, while Electron gets ready, and the first
+  // window takes its result (HE-71). Only once this is the one app running (early, above).
+  yield* (yield* Servers).prestart
   yield* Effect.promise(() => app.whenReady())
   return yield* runWindows
 }).pipe(Effect.scoped)

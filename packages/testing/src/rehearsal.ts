@@ -1,6 +1,7 @@
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Effect, FileSystem, Layer, Option } from "effect"
 import { ProfileId, ProjectId, TaskId } from "@huntaway/contracts"
+import { AcpQueries } from "huntaway-server/src/agents/AcpQueries.ts"
 import { CodexQueries } from "huntaway-server/src/agents/CodexQueries.ts"
 import { TitleModel } from "huntaway-server/src/agents/TitleModel.ts"
 import { WindowPrompt } from "huntaway-server/src/agents/WindowPrompt.ts"
@@ -22,7 +23,7 @@ import { tempDir } from "./TestBoard.ts"
 
 /** The whole server's services on a file database in `dataDir` (`board.db`), as a server started there would have them. */
 export const FileBoard = (dataDir: string, overrides: Partial<ServerConfigShape> = {}) =>
-  areasLayer({ titles: TitleModel.layerScripted, window: WindowPrompt.layerNone, codex: CodexQueries.layerTest }).pipe(
+  areasLayer({ titles: TitleModel.layerScripted, window: WindowPrompt.layerNone, codex: CodexQueries.layerTest, acp: AcpQueries.layerTest }).pipe(
     Layer.provideMerge(platformLayer(Db.layer)),
     Layer.provideMerge(ServerConfig.layerTest({ dataDir, ...overrides })),
     Layer.provideMerge(NodeServices.layer),

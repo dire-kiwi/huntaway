@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
+import { askerName } from "@huntaway/client"
 import {
   applyEvent,
   initialState,
@@ -45,6 +46,17 @@ const whole = (items: ReadonlyArray<Item>, requests: ReadonlyArray<ThreadRequest
   requests,
 })
 
+/** A command's prompt as the board stores a Codex-shaped request (an ACP agent's has `agent: "acp"` too). */
+const codexPrompt = (id: string, metadata: Record<string, unknown>): ThreadRequest => ({
+  id,
+  type: "permission",
+  name: "Bash",
+  kind: "shell",
+  input: { command: "ls" },
+  created_at: at(1),
+  metadata: { request_id: id, status: "pending", tool_name: "Bash", codex: { id: 1, method: "item/commandExecution/requestApproval" }, ...metadata },
+})
+
 describe("buildItemModel", () => {
   it("keys and tool names come back as the messages had them", () => {
     expect([keyOf("legacy:12"), keyOf("legacy:12:3"), keyOf("legacy:12:result"), keyOf("toolu_1")]).toEqual(["12", "12.3", "12.result", "toolu_1"])
@@ -70,6 +82,12 @@ describe("buildItemModel", () => {
       tool_name: "Bash",
       input: { command: "ls" },
     })
+  })
+
+  it("an ACP agent's prompt, which the board asks as Codex's, is the agent's, not Codex's (HE-69)", () => {
+    const m = buildItemModel({ items: [], requests: [codexPrompt("acp", { agent: "acp" }), codexPrompt("codex", {})] }, true)
+    const askers = m.items.map((i) => (i.type === "permission" ? askerName(i.data.agent) : null))
+    expect(askers).toEqual(["The agent", "Codex"])
   })
 
   it("a model fallback's notice is the board's warning with Claude Code's text, not the agent's words (HE-59)", () => {

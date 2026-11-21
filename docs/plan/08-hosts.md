@@ -399,6 +399,8 @@ Two things in this design were read in Effect's source but not run, and M7 start
    .toIncomingMessage(request).socket`), a dialled one's comes with `ws`'s `upgrade` event. With that, 96 MiB to a
    reader that does not read leaves the sender holding more than half, the hub pauses the sender's connection, no write
    leaves more than 1 MiB in the hub's buffer, and everything arrives in order once the reader reads, both ways.
+   The piped sockets stay uncompressed (HE-71): with permessage-deflate a frame waits in `ws`'s queue for zlib, not in
+   the connection's buffer, and a sender faster than zlib was read in whole (96 MiB, the sender never paused).
 
 As built (7.0): the seal is MAC'd with the board token of the host that serves the socket, always. A hub that dials a
 host holds that token (the link's); a host that dialled in is told the client's session on its control stream and

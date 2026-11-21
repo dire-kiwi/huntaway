@@ -4,16 +4,21 @@ import { Agent } from "./task.ts"
 import { Timestamp } from "./time.ts"
 
 // An agent config (huntaway's apps/server/src/wire/claude_configs.ts, `ClaudeConfig`): an agent's config folder (its
-// login, settings and history) on a host, Claude Code's or Codex's. Profiles and projects pick which ones their threads
+// login, settings and history) on a host, Claude Code's, Codex's or an ACP agent's (HE-69). Profiles and projects pick which ones their threads
 // can use, so a thread's config also decides which agent runs it. Its proxy keys are secrets: written through
 // `NewAgentConfig` and `AgentConfigPatch`, never sent.
 
 export const AgentConfig = Schema.Struct({
   id: AgentConfigId,
   name: Schema.String,
-  /** May start with `~`. Empty is the agent's default (`~/.claude`, `~/.codex`). */
+  /** May start with `~`. Empty is the agent's default (`~/.claude`, `~/.codex`; an ACP agent's own, `~/.gemini` for Antigravity). */
   config_dir: Schema.String,
   agent: Agent,
+  /**
+   * An ACP config's command line (program and arguments, split on whitespace); null for the default, `agy acp`, and for
+   * Claude and Codex configs. Absent from older servers.
+   */
+  command: Schema.optional(Schema.NullOr(Schema.String)),
   /** The host fetches and shows its plan's usage limits. */
   show_usage: Schema.Boolean,
   /** The host starts its plan's next 5-hour window as soon as one ends. */
@@ -30,7 +35,7 @@ export const AgentConfig = Schema.Struct({
 })
 export interface AgentConfig extends Schema.Schema.Type<typeof AgentConfig> {}
 
-/** A model a Codex config offers. */
+/** A model a Codex or ACP config offers. */
 export const AgentModel = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
@@ -56,6 +61,8 @@ export const NewAgentConfig = Schema.Struct({
   config_dir: Schema.optional(Schema.String),
   /** Default `claude`. */
   agent: Schema.optional(Agent),
+  /** An ACP config's command line; null or blank for the default (`agy acp`). Refused for Claude and Codex configs. */
+  command: Schema.optional(Schema.NullOr(Schema.String)),
   ...proxyFields,
 })
 export interface NewAgentConfig extends Schema.Schema.Type<typeof NewAgentConfig> {}
@@ -66,6 +73,8 @@ export const AgentConfigPatch = Schema.Struct({
   config_dir: Schema.optional(Schema.String),
   /** Refused once a thread has a session on it. */
   agent: Schema.optional(Agent),
+  /** An ACP config's command line; null or blank for the default. */
+  command: Schema.optional(Schema.NullOr(Schema.String)),
   show_usage: Schema.optional(Schema.Boolean),
   restart_window: Schema.optional(Schema.Boolean),
   ...proxyFields,

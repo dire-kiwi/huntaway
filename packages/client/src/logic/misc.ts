@@ -89,14 +89,48 @@ export const documentsOnly = (t: Pick<Task, "kind" | "task_type" | "work_dir">):
 
 // ---- agent configs ----------------------------------------------------------------------------------------------
 
-export const AGENTS = [
-  { id: "claude", label: "Claude Code", dir: "~/.claude", env: "CLAUDE_CONFIG_DIR" },
-  { id: "codex", label: "Codex", dir: "~/.codex", env: "CODEX_HOME" },
-] as const satisfies ReadonlyArray<{ readonly id: Agent; readonly label: string; readonly dir: string; readonly env: string }>
+/**
+ * What a config's agent is called and where its folder is. An ACP agent is any that speaks the Agent Client Protocol,
+ * Google's Antigravity CLI (`agy acp`) by default (HE-69).
+ */
+export interface AgentInfo {
+  readonly id: Agent
+  /** In pickers. */
+  readonly label: string
+  /** In a badge, after a config's name, and as who asks in a thread. */
+  readonly short: string
+  /** Its default folder, for a config whose `config_dir` is blank. */
+  readonly dir: string
+  /** The variable a set folder is passed in. */
+  readonly env: string
+}
+
+const INFO: Readonly<Record<Agent, AgentInfo>> = {
+  claude: { id: "claude", label: "Claude Code", short: "Claude", dir: "~/.claude", env: "CLAUDE_CONFIG_DIR" },
+  codex: { id: "codex", label: "Codex", short: "Codex", dir: "~/.codex", env: "CODEX_HOME" },
+  acp: { id: "acp", label: "ACP agent (Antigravity)", short: "ACP", dir: "~/.gemini", env: "GEMINI_HOME" },
+}
+
+export const AGENTS: ReadonlyArray<AgentInfo> = [INFO.claude, INFO.codex, INFO.acp]
 
 export const agentOf = (c: Pick<AgentConfig, "agent"> | undefined): Agent => c?.agent ?? "claude"
 
-export const agentInfo = (a: Agent): (typeof AGENTS)[number] => (a === "codex" ? AGENTS[1] : AGENTS[0])
+export const agentInfo = (a: Agent): AgentInfo => INFO[a]
+
+/** What follows a config's name where its agent isn't Claude Code, e.g. " (Codex)". */
+export const agentSuffix = (c: Pick<AgentConfig, "agent"> | undefined): string => {
+  const a = agentOf(c)
+  return a === "claude" ? "" : ` (${INFO[a].short})`
+}
+
+/** Who asks in a thread (a permission, a question), by the agent its prompt names: Claude unless Codex or an ACP agent. */
+export const askerName = (agent: string | undefined): string => (agent === "codex" ? "Codex" : agent === "acp" ? "The agent" : "Claude")
+
+/** Whether a config's agent lists its models (`configs.models`): Codex and ACP agents do; Claude Code has its aliases. */
+export const listsModels = (a: Agent): boolean => a !== "claude"
+
+/** What an ACP config runs when its `command` is blank: Google's Antigravity CLI. */
+export const ACP_DEFAULT_COMMAND = "agy acp"
 
 /** The efforts a host, profile or reviewer can default to. */
 export const EFFORTS: ReadonlyArray<HostEffort> = ["low", "medium", "high", "xhigh", "max"]

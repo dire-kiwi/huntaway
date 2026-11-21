@@ -71,8 +71,20 @@ const unavailable = (error: { readonly message: string; readonly backup?: Backup
 export class Servers extends Context.Service<
   Servers,
   {
-    /** The server to use, found or started (one at a time: windows that load together share one). */
+    /**
+     * The server to use, found or started (one at a time: windows that load together share one). The first takes the
+     * result of `prestart`'s, if there was one.
+     */
     readonly resolve: Effect.Effect<Target, ServerUnavailable>
+    /**
+     * Starts finding or starting the server now, before Electron is ready and before any window (HE-71): the first
+     * `resolve` takes its result. A window counts as open until the first one is (setWindows).
+     */
+    readonly prestart: Effect.Effect<void>
+    /** Whether this app is starting a server now (not attaching to one): a window shows the progress page at once. */
+    readonly starting: SubscriptionRef.SubscriptionRef<boolean>
+    /** How this release build was installed (install.ts), worked out once from the layer's start; null from a checkout. */
+    readonly installKind: Effect.Effect<string | null>
     /** The last server resolved. */
     readonly target: Effect.Effect<Option.Option<Target>>
     /** What the windows hear about the server. */
@@ -116,6 +128,9 @@ export class Servers extends Context.Service<
       const windows = yield* Ref.make(0)
       const target = yield* Ref.make<Option.Option<Target>>(Option.none())
       const resolving = yield* SynchronizedRef.make<Option.Option<Deferred.Deferred<Target, ServerUnavailable>>>(Option.none())
+      /** The resolution `prestart` began, until the first `resolve` takes it. */
+      const early = yield* Ref.make<Option.Option<Deferred.Deferred<Target, ServerUnavailable>>>(Option.none())
+      const starting = yield* SubscriptionRef.make(false)
 
       const exe = serverExe(desktop.platform)
       const appDir = path.join(desktop.dataDir, "app")
@@ -136,31 +151,55 @@ export class Servers extends Context.Service<
         Effect.orElseSucceed(() => ""),
       )
 
+      /**
+       * How a release build was installed (`pacman -Qqo` for one in /opt), worked out once and begun now: the windows
+       * (their package update) and a server started here (releaseVars) both want it, and neither is to wait for it
+       * sooner than it has to.
+       */
+      const installKind = yield* Effect.cached(desktop.resourcesDir === null ? Effect.succeed(null) : installKindOf(desktop))
+      if (desktop.resourcesDir !== null) yield* installKind.pipe(Effect.forkIn(layerScope))
+
       /** What a release build tells the server it starts, worked out once. */
       const releaseVars = yield* Effect.cached(
         Effect.gen(function* () {
           if (desktop.resourcesDir === null) return {}
-          const shell = yield* frameStamp(path.join(desktop.appPath, "dist"), desktop.electronVersion).pipe(
-            Effect.tapError((error) => Console.error(`couldn't stamp the app's frame: ${error.message}`)),
-            Effect.orElseSucceed(() => ""),
+          const [shell, install] = yield* Effect.all(
+            [
+              frameStamp(path.join(desktop.appPath, "dist"), desktop.electronVersion).pipe(
+                Effect.tapError((error) => Console.error(`couldn't stamp the app's frame: ${error.message}`)),
+                Effect.orElseSucceed(() => ""),
+              ),
+              installKind,
+            ],
+            { concurrency: "unbounded" },
           )
           return releaseEnv({
             releaseUpdates: desktop.releaseUpdates,
             version: desktop.appVersion,
             shell,
-            install: yield* installKindOf(desktop),
+            install: install ?? "other",
             bundled: path.join(desktop.resourcesDir, exe),
           })
         }),
       )
       const loginPath = yield* Effect.cached(serverPath(desktop))
+      /**
+       * Begins working out a started server's environment without waiting for it (the login shell's PATH can take a
+       * second with a heavy shell setup), once no server answers on the port: it then runs beside finding the server to
+       * start rather than just before spawning it. A server already up doesn't need it.
+       */
+      const prepareEnv = Effect.gen(function* () {
+        yield* Effect.forkIn(loginPath, layerScope)
+        yield* Effect.forkIn(releaseVars, layerScope)
+      })
 
       /** The environment for a server started here: a release build's turns on release updates, whichever binary it runs. */
       const serverEnv = Effect.gen(function* () {
         const once = yield* Ref.getAndSet(skipBackup, false)
+        const [PATH, release] = yield* Effect.all([loginPath, releaseVars], { concurrency: "unbounded" })
         return {
-          PATH: yield* loginPath,
-          ...(yield* releaseVars),
+          PATH,
+          ...release,
           ...(desktop.file.skipDbBackup ? { HUNTAWAY_SKIP_DB_BACKUP: "1" } : {}),
           ...(once ? { HUNTAWAY_SKIP_DB_BACKUP_ONCE: "1" } : {}),
         }
@@ -323,6 +362,8 @@ export class Servers extends Context.Service<
        * comes up.
        */
       const startServer = Effect.gen(function* () {
+        yield* SubscriptionRef.set(starting, true)
+        yield* prepareEnv
         yield* SubscriptionRef.update(startup, (s) => ({ ...s, log: [] }))
         if (desktop.resourcesDir !== null) {
           const trying = (yield* readAppState(appDir))["trying"]
@@ -341,7 +382,7 @@ export class Servers extends Context.Service<
           stopping: Ref.get(stopping),
         })
         return started.token ?? (yield* readToken)
-      })
+      }).pipe(Effect.ensuring(SubscriptionRef.set(starting, false)))
 
       /** An installed version exited before it was ready, but after startServer stopped waiting: start the next one. */
       const lateExit = (version: string | null) =>
@@ -411,21 +452,31 @@ export class Servers extends Context.Service<
         )
       }).pipe(Effect.mapError((error) => unavailable({ message: error.message, backup: error._tag === "StartFailed" ? error.backup : null })))
 
+      /** The resolution under way, or a new one. */
+      const begin = SynchronizedRef.modifyEffect(resolving, (current) =>
+        Option.isSome(current)
+          ? Effect.succeed([current.value, current] as const)
+          : Effect.gen(function* () {
+              const deferred = yield* Deferred.make<Target, ServerUnavailable>()
+              yield* resolveTarget.pipe(
+                Effect.exit,
+                Effect.flatMap((exit) => Deferred.done(deferred, exit)),
+                Effect.ensuring(SynchronizedRef.set(resolving, Option.none())),
+                Effect.forkIn(layerScope),
+              )
+              return [deferred, Option.some(deferred)] as const
+            }),
+      )
+
+      const prestart = Effect.gen(function* () {
+        // The first window is on its way: a server lost meanwhile (or one that exits after its wait) is still wanted.
+        yield* Ref.set(windows, 1)
+        yield* Ref.set(early, Option.some(yield* begin))
+      })
+
       const resolve = Effect.gen(function* () {
-        const pending = yield* SynchronizedRef.modifyEffect(resolving, (current) =>
-          Option.isSome(current)
-            ? Effect.succeed([current.value, current] as const)
-            : Effect.gen(function* () {
-                const deferred = yield* Deferred.make<Target, ServerUnavailable>()
-                yield* resolveTarget.pipe(
-                  Effect.exit,
-                  Effect.flatMap((exit) => Deferred.done(deferred, exit)),
-                  Effect.ensuring(SynchronizedRef.set(resolving, Option.none())),
-                  Effect.forkIn(layerScope),
-                )
-                return [deferred, Option.some(deferred)] as const
-              }),
-        )
+        const kept = yield* Ref.getAndSet(early, Option.none())
+        const pending = Option.isSome(kept) ? kept.value : yield* begin
         const found = yield* Deferred.await(pending)
         yield* Ref.set(target, Option.some(found))
         return found
@@ -454,6 +505,9 @@ export class Servers extends Context.Service<
 
       return Servers.of({
         resolve: resolve.pipe(Effect.provideContext(context)),
+        prestart: prestart.pipe(Effect.provideContext(context)),
+        starting,
+        installKind: installKind.pipe(Effect.provideContext(context)),
         target: Ref.get(target),
         news,
         setWindows: (count) => Ref.set(windows, count),

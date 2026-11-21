@@ -5,7 +5,7 @@
 #
 #   scripts/package-server.sh <out dir> [<node binary>]
 #
-#   <out dir>/huntaway          apps/server/bin/huntaway, which runs server/src/bin.js with the Node in node/
+#   <out dir>/huntaway          apps/server/bin/huntaway, which runs server/src/entry.js (and so bin.js) with the Node in node/
 #   <out dir>/build.json        {"version": …, "commit": …}: what the server reports itself as
 #   <out dir>/ia-shim           target/release/ia-shim (cargo build --release --locked -p ia-shim, which this runs)
 #   <out dir>/ui/               apps/web/dist (pnpm build, which this runs)
@@ -83,8 +83,8 @@ cat > "$scratch/tsconfig.json" <<EOF
 EOF
 "$tsc" -p "$scratch/tsconfig.json"
 mv "$scratch/js/apps/server/src" "$scratch/js/apps/server/migrations" "$out/server/"
-[[ -f $out/server/src/bin.js && -f $out/server/src/hooks/approval-hook.js && -f $out/server/src/hooks/gh-hook.js ]] ||
-  { echo "tsc didn't write the entry files (server/src/bin.js, hooks/approval-hook.js, hooks/gh-hook.js)" >&2; exit 1; }
+[[ -f $out/server/src/entry.js && -f $out/server/src/bin.js && -f $out/server/src/hooks/approval-hook.js && -f $out/server/src/hooks/gh-hook.js ]] ||
+  { echo "tsc didn't write the entry files (server/src/entry.js, bin.js, hooks/approval-hook.js, hooks/gh-hook.js)" >&2; exit 1; }
 node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   p.version = process.argv[2]; delete p.devDependencies; delete p.scripts;
   fs.writeFileSync(process.argv[3], JSON.stringify(p, null, 2) + "\n")' "$server/package.json" "$version" "$out/server/package.json"

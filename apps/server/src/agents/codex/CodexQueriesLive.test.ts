@@ -17,6 +17,7 @@ const codex: AgentConfigRow = {
   name: "Codex",
   config_dir: "~/.codex-test",
   agent: "codex",
+  command: null,
   show_usage: true,
   restart_window: false,
   api_url: null,

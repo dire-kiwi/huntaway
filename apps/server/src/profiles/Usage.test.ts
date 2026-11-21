@@ -102,6 +102,7 @@ const config = (columns: {
   readonly name?: string
   readonly config_dir?: string
   readonly show_usage?: boolean
+  readonly agent?: "claude" | "acp"
   readonly api_url?: string | null
   readonly api_key?: string | null
   readonly management_key?: string | null
@@ -114,7 +115,7 @@ const config = (columns: {
       name: columns.name ?? id,
       config_dir: columns.config_dir ?? "",
       created_at: "2026-01-01T00:00:00.000Z",
-      agent: "claude",
+      agent: columns.agent ?? "claude",
       show_usage: columns.show_usage === true ? 1 : 0,
       api_url: columns.api_url ?? null,
       api_key: columns.api_key ?? null,
@@ -209,6 +210,8 @@ describe("Usage", () => {
         const dir = `${yield* tempDir}/claude`
         const off = yield* config({ config_dir: dir })
         const on = yield* config({ config_dir: dir, show_usage: true })
+        // HE-69: an ACP agent's limits aren't known: it isn't listed, nor fetched.
+        const acp = yield* config({ config_dir: dir, show_usage: true, agent: "acp" })
         const events = yield* Events
         const seq = yield* events.seq
         const listed = yield* usage.list(false)
@@ -216,6 +219,8 @@ describe("Usage", () => {
         assert.strictEqual(listed[0]?.config_id, on)
         assert.isTrue(listed[0]?.error?.startsWith("No Claude login"), listed[0]?.error ?? "")
         assert.isNull(yield* usage.get(off))
+        assert.isNull(yield* usage.get(acp))
+        assert.isFalse(yield* usage.refresh(acp))
         assert.deepStrictEqual(yield* Ref.get(seen), [])
         // The board is told of the error once, not again for the same one.
         const told = yield* events.seq

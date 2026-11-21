@@ -3,6 +3,7 @@ import { Effect, FileSystem } from "effect"
 import type { Scope } from "effect"
 import { TestRuns } from "@huntaway/testing"
 import { RunId } from "@huntaway/contracts"
+import type { AcpSpec } from "../agents/acp/spec.ts"
 import { formatSupport, headerFormat, RUN_FORMAT, RunDir, sortKeys } from "./RunDir.ts"
 
 // The run folder's files (inventory 01, section 3), read and written as the shim and older servers do.
@@ -220,6 +221,49 @@ describe("RunDir", () => {
         assert.deepStrictEqual(yield* dir.list, ["r1"])
         yield* dir.remove(id)
         assert.isFalse(yield* dir.exists(id))
+      }),
+    ),
+  )
+
+  // HE-69
+  it.effect("writes an ACP agent's acp.json, which marks the run as an ACP agent's and reads back", () =>
+    run(
+      Effect.gen(function* () {
+        const dir = yield* RunDir
+        const id = RunId.make("r2")
+        const acp: AcpSpec = {
+          cwd: "/w",
+          program: "agy",
+          args: ["acp"],
+          session_id: null,
+          model: null,
+          effort: null,
+          mode: "default",
+          system_prompt: "be good",
+          input: true,
+          requests_on_output: true,
+          mcp_servers: [{ type: "http", name: "huntaway", url: "http://x/huntaway", headers: [{ name: "Authorization", value: "Bearer s" }] }],
+        }
+        yield* dir.prepare(id, {
+          program: "/bin/huntaway",
+          args: ["acp-run", `${dir.path(id)}/acp.json`],
+          env: [],
+          cwd: "/w",
+          configDir: null,
+          prompt: "{}\n",
+          input: true,
+          promptId: null,
+          systemPrompt: null,
+          mcpServers: null,
+          mcpRun: null,
+          acp,
+        })
+        assert.deepStrictEqual([yield* dir.isAcp(id), yield* dir.isCodex(id)], [true, false])
+        assert.deepStrictEqual(yield* dir.acpSpec(id), acp)
+        assert.deepStrictEqual((yield* dir.spec(id))?.args, ["acp-run", `${dir.path(id)}/acp.json`])
+        const other = yield* folder("r3", { "acp.json": '{"cwd":"/w"}' })
+        assert.deepStrictEqual([yield* dir.isAcp(other), yield* dir.acpSpec(other)], [true, null])
+        assert.deepStrictEqual([yield* dir.isAcp(yield* folder("r4")), yield* dir.acpSpec(RunId.make("r4"))], [false, null])
       }),
     ),
   )

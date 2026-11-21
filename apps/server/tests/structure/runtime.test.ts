@@ -8,6 +8,8 @@ import { imports, isTest, member, parse, parseFailure, sourceFiles, walk } from 
 const isEntryPoint = (path: string) =>
   path === "apps/server/src/bin.ts" ||
   path === "apps/server/src/codex-run.ts" ||
+  path === "apps/server/src/acp-run.ts" ||
+  path === "apps/server/src/mcp-stdio.ts" ||
   path === "apps/web/src/main.tsx" ||
   path.startsWith("apps/desktop/src/main/") ||
   path.startsWith("packages/testing/") ||

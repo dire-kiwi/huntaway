@@ -1,4 +1,5 @@
-import { NodeHttpServer, NodeServices } from "@effect/platform-node"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Layer } from "effect"
 import { Aead, Digest, Kdf, KeyAgreement, Mac, SecureRandom, Signature } from "effect/crypto"
 import { HttpRouter } from "effect/http"
@@ -44,6 +45,7 @@ import { AgentTools } from "./agents/AgentTools.ts"
 import { AgentToolsRepo } from "./agents/AgentToolsRepo.ts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
+import { AcpQueries } from "./agents/AcpQueries.ts"
 import { CodexQueries } from "./agents/CodexQueries.ts"
 import { ContextMeter } from "./agents/ContextMeter.ts"
 import { ContextStatsRepo } from "./agents/ContextStatsRepo.ts"
@@ -95,6 +97,7 @@ import { PrWatch } from "./github/PrWatch.ts"
 import { PrWatchRepo } from "./github/PrWatchRepo.ts"
 import { PullRequests } from "./github/PullRequests.ts"
 import { LinkRepo } from "./hosts/LinkRepo.ts"
+import { websocketOptions } from "./http/websocket.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { MergeGate } from "./merge/MergeGate.ts"
 import { Merges } from "./merge/Merges.ts"
@@ -274,7 +277,7 @@ const AgentsArea = Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.lay
   ),
   Layer.provideMerge(WorkflowFacts.layer),
   // No Codex is started: its models, skills and rate limits are unavailable.
-  Layer.provideMerge(CodexQueries.readOnly),
+  Layer.provideMerge(Layer.merge(CodexQueries.readOnly, AcpQueries.readOnly)),
   Layer.provideMerge(Layer.mergeAll(GithubRemote.layer, PrWatch.layer, PullRequests.layer, GithubRepos.layer).pipe(Layer.provideMerge(PrWatchRepo.layer))),
   Layer.provideMerge(GitArea),
 )
@@ -413,7 +416,7 @@ export const ReadOnlyRoutes = Layer.mergeAll(ReadOnlyRpc, HealthRoute, ApiNotFou
  */
 export const readOnlyServerLayer = (config: ServerConfig["Service"]) =>
   HttpRouter.serve(ReadOnlyRoutes, { disableListenLog: true, disableLogger: true }).pipe(
-    Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),
+    Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host, websocket: websocketOptions })),
     Layer.provideMerge(ReadOnlyAreas),
     Layer.provideMerge(NodeServices.layer),
   )

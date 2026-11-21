@@ -1,5 +1,4 @@
 import { Config, Console, Effect, FileSystem, Layer, Option, Path, Runtime, Schema, SchemaAST, Stream } from "effect"
-import { Argument, Command, Flag } from "effect/cli"
 import { FetchHttpClient, Headers } from "effect/http"
 import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
 import { Auth, Forbidden, HostRpcs, HubRpcs, PublicRpcs, Unauthorized } from "@huntaway/contracts"
@@ -132,25 +131,20 @@ const call = Effect.fn("rpc.call")(
   Effect.catchDefect((defect) => fail(1, `the call failed: ${String(defect)}`)),
 )
 
-export const rpcCommand = Command.make(
-  "rpc",
-  {
-    method: Argument.String("method").pipe(Argument.withDescription("The method, as `huntaway rpc --list` names it (host.info)"), Argument.optional),
-    json: Argument.String("json").pipe(Argument.withDescription("Its payload as JSON (default none, or {})"), Argument.optional),
-    env: Flag.String("env").pipe(
-      Flag.withDescription("scripts/test-server.sh's env file or data dir (default $HUNTAWAY_TEST_ENV, then .huntaway-test-env)"),
-      Flag.optional,
-    ),
-    list: Flag.Boolean("list").pipe(Flag.withDescription("Print the method names"), Flag.withDefault(false)),
-  },
-  ({ method, json, env, list }) =>
-    list
-      ? Console.log([...CliRpcs.requests.keys()].toSorted().join("\n"))
-      : Option.isNone(method)
-        ? fail(2, "usage: huntaway rpc <method> [json], or huntaway rpc --list")
-        : call(method.value, json, env),
-).pipe(
-  Command.withDescription(
-    "Call a test server's RPC over HTTP and print the result as JSON (exit 1 with the tagged error on stderr; 2 for a bad method or payload)",
-  ),
-)
+/** `huntaway rpc` (its arguments and flags are bin.ts's, which loads this file to run it). */
+export const rpc = ({
+  method,
+  json,
+  env,
+  list,
+}: {
+  readonly method: Option.Option<string>
+  readonly json: Option.Option<string>
+  readonly env: Option.Option<string>
+  readonly list: boolean
+}) =>
+  list
+    ? Console.log([...CliRpcs.requests.keys()].toSorted().join("\n"))
+    : Option.isNone(method)
+      ? fail(2, "usage: huntaway rpc <method> [json], or huntaway rpc --list")
+      : call(method.value, json, env)

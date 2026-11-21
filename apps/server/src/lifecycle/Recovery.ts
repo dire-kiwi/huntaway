@@ -7,6 +7,7 @@ import { Permissions } from "../permissions/Permissions.ts"
 import { Merges } from "../merge/Merges.ts"
 import { Restack } from "../git/Restack.ts"
 import { GhStacks } from "../github/GhStacks.ts"
+import { Listening } from "../platform/Listening.ts"
 import { Reviews } from "../review/Reviews.ts"
 import { Runs } from "../runs/Runs.ts"
 import { WorkflowEngine } from "../workflows/WorkflowEngine.ts"
@@ -44,9 +45,11 @@ export const RecoveryLive = Layer.effectDiscard(
     yield* reviews.reconcileAll
     // 6.6: workflow runs a restart interrupted go on (their steps that were running on the board itself failed).
     yield* (yield* WorkflowEngine).resume
-    // 4.8: the restacks that were due when the server stopped, and the stack levels to link on GitHub (both in the background).
+    // 4.8: the restacks that were due when the server stopped, and the stack levels to link on GitHub (both in the
+    // background; the levels are looked for once the server listens, so that doesn't hold up the start).
     yield* (yield* Restack).resume
-    yield* (yield* GhStacks).linkAll
+    const ghStacks = yield* GhStacks
+    yield* (yield* Listening).up.pipe(Effect.andThen(ghStacks.linkAll), Effect.forkScoped)
     yield* toolCalls.resume
     yield* tokens.countPending(null)
     // A release is settled by `serve` once the server listens, not here (Releases.settle).

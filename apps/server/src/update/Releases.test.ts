@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Context, Deferred, Effect, FileSystem, Layer, Queue, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"

@@ -1,13 +1,19 @@
 import { execFileSync } from "node:child_process"
 import { createServer } from "node:http"
-import { NodeServices } from "@effect/platform-node"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import * as NodeWS from "@effect/platform-node/NodeWS"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Fiber, FileSystem, Layer, Option, PubSub, Queue, Schema } from "effect"
+import { Deferred, Effect, Fiber, FileSystem, Layer, Option, PubSub, Queue, Schema } from "effect"
+import { HttpRouter, HttpServer } from "effect/http"
 import { SecureRandom } from "effect/crypto"
 import { Socket } from "effect/socket"
 import { CallId } from "@huntaway/contracts"
 import { fakeAgent, fakeSocket, fakeSocks, hostEcho, systemChrome, TestBoard } from "@huntaway/testing"
 import type { FakeAgent, FakeSocket } from "@huntaway/testing"
+import { paneParts } from "@huntaway/shared"
+import { BrowserRoute } from "../http/browser.ts"
+import { MAX_MESSAGE, websocketOptions } from "../http/websocket.ts"
 import { callResult } from "../mcp/jsonrpc.ts"
 import { BROWSER_INSTRUCTIONS, McpServers } from "../mcp/McpServers.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
@@ -513,6 +519,60 @@ describe.skipIf(systemChrome === null)("a task's browser through the host's SOCK
           yield* settings.update({ socks_proxy: second.url }).pipe(Effect.orDie)
           assert.include((yield* call(agent, "snapshot", {})).text, "pr-3.preview.test")
           assert.include(second.asked, "pr-3.preview.test:80")
+        }),
+      ),
+    TIMEOUT,
+  )
+})
+
+describe("the desktop app's pane over the server's own listener (HE-71)", () => {
+  it.live(
+    "an answer bigger than a websocket message may be comes in parts, and the agent's snapshot gets all of it",
+    () =>
+      withBrowser(() =>
+        Effect.gen(function* () {
+          const browsers = yield* Browsers
+          const agent = yield* fakeAgent()
+          const task = agent.run.task_id
+          yield* Effect.gen(function* () {
+            const server = yield* HttpServer.HttpServer
+            const port = server.address._tag === "UnixPathAddress" ? 0 : server.address.port
+            const ticket = yield* browsers.ticket(task, "desktop")
+            // A long page's tree, as a pane relays it: 20 MiB of JSON, over the listener's 16 MiB a message.
+            const rows = Array.from({ length: 100_000 }, (_, i) => ({
+              nodeId: `r${i}`,
+              ignored: true,
+              role: { value: "row" },
+              name: { value: "x".repeat(150) },
+            }))
+            const tree = { nodes: [{ nodeId: "1", role: { value: "heading" }, name: { value: "The last row" } }, ...rows] }
+            const ws = yield* Effect.acquireRelease(
+              Effect.sync(() => new NodeWS.WebSocket(`ws://127.0.0.1:${port}/api/browser/${ticket}`)),
+              (made) => Effect.sync(() => made.terminate()),
+            )
+            const tracking = yield* Deferred.make<void>()
+            const sizes: Array<number> = []
+            ws.on("message", (data: Uint8Array, binary: boolean) => {
+              if (binary) return
+              const m = Option.getOrThrow(decodeCommand(data.toString()))
+              if (m.method === "Page.getFrameTree") Deferred.doneUnsafe(tracking, Effect.void)
+              const text = jsonText({ id: m.id, result: m.method === "Accessibility.getFullAXTree" ? tree : {} })
+              if (m.method === "Accessibility.getFullAXTree") sizes.push(text.length)
+              for (const part of paneParts(text) ?? []) ws.send(part)
+            })
+            // The pane is the task's page once the server watches its frames.
+            yield* Deferred.await(tracking)
+            const got = yield* call(agent, "snapshot", {})
+            assert.isAbove(sizes[0] ?? 0, MAX_MESSAGE)
+            assert.include(got.text, 'heading "The last row"')
+            assert.strictEqual(ws.readyState, NodeWS.WebSocket.OPEN)
+          }).pipe(
+            Effect.provide(
+              HttpRouter.serve(BrowserRoute, { disableListenLog: true, disableLogger: true }).pipe(
+                Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0, host: "127.0.0.1", websocket: websocketOptions })),
+              ),
+            ),
+          )
         }),
       ),
     TIMEOUT,

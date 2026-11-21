@@ -1,4 +1,5 @@
-import { NodeServices, NodeWS } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import * as NodeWS from "@effect/platform-node/NodeWS"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Exit, FileSystem, Layer, Option, Stream } from "effect"
 import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"

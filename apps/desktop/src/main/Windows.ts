@@ -8,7 +8,6 @@ import { assetPlatform, RELEASE_REPO, shellChange, updateKind } from "../shared/
 import type { UpdateKind } from "../shared/versions.ts"
 import { Desktop, releaseUpdatesOff } from "./Desktop.ts"
 import { errorPage } from "./errorPage.ts"
-import { installKindOf } from "./install.ts"
 import { registerPaneDebugger } from "./paneDebugger.ts"
 import { progressPage, progressScript } from "./progressPage.ts"
 import type { ProgressState } from "./progressPage.ts"
@@ -55,7 +54,10 @@ const bootView = (): { readonly running: string | null; readonly chosen: string 
   return { running: versionOf(Predicate.hasProperty(boot, "running") ? boot.running : null), chosen: versionOf(chosen) }
 }
 
-/** A window waiting this long for its server shows the progress page: one there already loads the board without it. */
+/**
+ * A window waiting this long for its server shows the progress page: one there already loads the board without it. One
+ * this app is starting shows it at once (HE-71).
+ */
 const PROGRESS_AFTER = "300 millis"
 
 /** What a window shows: the board, or one of the app's own pages. */
@@ -90,10 +92,18 @@ export const runWindows = Effect.gen(function* () {
   /** The package update under way, so that a second click doesn't start another. */
   const updatingShell = yield* Ref.make(false)
   const windowsFile = path.join(app.getPath("userData"), "relaunch-windows.json")
-  const startStamp = yield* shellStamp(desktop.shellDir, desktop.electronVersion).pipe(Effect.orElseSucceed(() => ""))
-  const install = desktop.resourcesDir === null ? null : yield* installKindOf(desktop)
-  /** What the app can install of its own package: none for a mac app, a checkout, or a remote server (whose release status is that machine's). */
-  const shellUpdateKind: UpdateKind | null = releaseUpdatesOff(desktop) ? null : updateKind(install)
+  // The shell's stamp as it starts, for checkShell once a board has loaded: hashed beside the first window's start
+  // rather than before it (HE-71).
+  const startStamp = yield* shellStamp(desktop.shellDir, desktop.electronVersion).pipe(
+    Effect.orElseSucceed(() => ""),
+    Effect.forkScoped,
+  )
+  /**
+   * What the app can install of its own package: none for a mac app, a checkout, or a remote server (whose release
+   * status is that machine's). How it was installed is worked out from the start (Servers.installKind), not waited for
+   * before the first window.
+   */
+  const shellUpdateKind: Effect.Effect<UpdateKind | null> = releaseUpdatesOff(desktop) ? Effect.succeed(null) : Effect.map(servers.installKind, updateKind)
 
   const openBoards = () => [...boards].filter((win) => !win.isDestroyed())
   const onAppPage = (win: BrowserWindow) => showing.get(win) === "error" || showing.get(win) === "progress"
@@ -140,8 +150,15 @@ export const runWindows = Effect.gen(function* () {
   /** Loads the board in `win`, from the server there is (found or started), or the error page. */
   const load = (win: BrowserWindow) =>
     Effect.gen(function* () {
-      // A server that takes a moment (one starting, or a start that waits on another) shows the progress page meanwhile.
-      const progress = yield* Effect.sleep(PROGRESS_AFTER).pipe(Effect.andThen(showProgress(win)), Effect.forkChild)
+      // A server that takes a moment (one starting, or a start that waits on another) shows the progress page meanwhile:
+      // at once when this app is starting it, rather than a blank window first.
+      const progress = yield* SubscriptionRef.changes(servers.starting).pipe(
+        Stream.filter(Boolean),
+        Stream.runHead,
+        Effect.timeoutOrElse({ duration: PROGRESS_AFTER, orElse: () => Effect.succeedNone }),
+        Effect.andThen(showProgress(win)),
+        Effect.forkChild,
+      )
       const found = yield* Effect.result(servers.resolve)
       yield* Fiber.interrupt(progress)
       if (found._tag === "Failure") {
@@ -199,7 +216,7 @@ export const runWindows = Effect.gen(function* () {
   const checkShell = Effect.gen(function* () {
     const boot = bootView()
     const stampNow = boot?.running == null ? Option.getOrNull(yield* Effect.option(shellStamp(desktop.shellDir, desktop.electronVersion))) : null
-    const why = shellChange({ boot, stampNow, startStamp })
+    const why = shellChange({ boot, stampNow, startStamp: yield* Fiber.join(startStamp) })
     if (why === null || (yield* Ref.get(relaunching))) return
     yield* Console.log(`${why}; relaunching`)
     yield* relaunch
@@ -315,7 +332,8 @@ export const runWindows = Effect.gen(function* () {
   const updateOwnPackage = (event: IpcMainInvokeEvent) =>
     Effect.gen(function* () {
       const target = yield* servers.target
-      if (shellUpdateKind === null || Option.isNone(target)) return { error: "This app can't install its own package." }
+      const kind = yield* shellUpdateKind
+      if (kind === null || Option.isNone(target)) return { error: "This app can't install its own package." }
       if (senderOrigin(event) !== origin()) return { error: "Only the board can update the app." }
       if (yield* Ref.getAndSet(updatingShell, true)) return { error: "The app is already being updated." }
       const sender = event.sender
@@ -329,7 +347,7 @@ export const runWindows = Effect.gen(function* () {
           if (!sender.isDestroyed()) sender.send("huntaway:update-shell-progress", p)
         })
       const result = yield* updateShell({
-        kind: shellUpdateKind,
+        kind,
         appimage: desktop.appimage,
         base: target.value.base,
         token: target.value.token,
@@ -352,7 +370,7 @@ export const runWindows = Effect.gen(function* () {
       yield* saveWindows(`Starting Huntaway ${version}`)
       yield* showQuitting(`Installing Huntaway ${version}`)
       // The AppImage's new file is at the same path, and so is the package's app in /opt.
-      if (shellUpdateKind === "appimage" && desktop.appimage !== null) app.relaunch({ execPath: desktop.appimage, args: process.argv.slice(1) })
+      if (kind === "appimage" && desktop.appimage !== null) app.relaunch({ execPath: desktop.appimage, args: process.argv.slice(1) })
       else app.relaunch()
       app.quit()
       return { version }
@@ -390,8 +408,14 @@ export const runWindows = Effect.gen(function* () {
         () => false,
       )
   })
+  // The preload asks synchronously, when the board loads: by then the answer is long known, and should it not be, the
+  // reply waits for it (a sync message's reply may be set later; the page waits until it is).
   ipcMain.on("huntaway:shell-update-kind", (event) => {
-    event.returnValue = shellUpdateKind
+    run(
+      Effect.map(shellUpdateKind, (kind) => {
+        event.returnValue = kind
+      }),
+    )
   })
   ipcMain.handle("huntaway:update-shell", (event) => runPromise(updateOwnPackage(event)))
   // HE-62: the browser pane's <webview>, given to the server to drive for the task's agent.

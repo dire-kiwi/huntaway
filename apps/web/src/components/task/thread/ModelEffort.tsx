@@ -3,7 +3,7 @@ import type { HostTask as Task } from "@huntaway/client"
 import { Effort } from "@huntaway/contracts"
 import { Schema } from "effect"
 import { useState } from "react"
-import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../../../agents"
+import { effortOptions, inheritedModel, modelOptions, modelPlaceholder, useAgentModels } from "../../../agents"
 import { useBoard } from "../../../state/board"
 import { useMutation } from "../../../state/mutation"
 import { useProject } from "../../boardHelpers"
@@ -23,7 +23,7 @@ export function ModelEffort({ task }: { task: Task }) {
   const profileModel = useBoard((s) => s.profiles.find((p) => p.host_id === task.host_id && p.id === task.profile_id)?.default_model)
   const hostModel = useBoard((s) => s.hostSettings[task.host_id]?.default_model)
   const threadConfig = useThreadConfig(task).current
-  // A Codex config's models (`configs.models`), or Claude's aliases.
+  // A Codex or ACP config's models (`configs.models`), or Claude's aliases.
   const models = useAgentModels(task.host_id, threadConfig)
   const [changing, setChanging] = useState("")
   const [{ error }, update] = useMutation("tasks.update")
@@ -37,6 +37,7 @@ export function ModelEffort({ task }: { task: Task }) {
       <ModelPicker
         value={task.model ?? ""}
         options={modelOptions(threadConfig, models)}
+        placeholder={modelPlaceholder(threadConfig)}
         commitOnBlur
         className={pickerClass}
         // What the default resolves to; with none set (cleared in the host settings), the one its own latest reply came from.

@@ -227,7 +227,7 @@ Rpc.make("threads.watch", {
 | `POST /api/hooks/<id>/<token>`             | An automation's webhook. Same path as now, so registered URLs keep working                | the token in the path        |
 | `POST /api/mcp/<run id>/<server>`, `GET` with `Last-Event-ID` | MCP for a run                                                          | the run's secret             |
 | `POST /api/otlp/<run id>/v1/logs` (and `metrics`, `traces`) | Telemetry from an agent CLI                                              | the run's secret             |
-| `GET /*`                                   | The built UI, with the single-page fallback and the cache headers it has now              | none                         |
+| `GET /*`                                   | The built UI, with the single-page fallback and the cache headers it has now; the build's `.br`/`.gz` beside a file to a browser that accepts them (HE-71, 09-frontend.md, The bundle) | none |
 
 A request body over 16 MiB is answered 413 without being kept in memory (an attachment is at most 10 MiB, sent as
 base64 in one RPC). "Auth before the body" applies to the plain HTTP routes; an RPC's token is in the request it

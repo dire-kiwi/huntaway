@@ -47,4 +47,6 @@ export interface LaunchSpec extends ProcessSpec {
   readonly mcpRun: McpRunSettings | null
   /** A Codex run's `codex.json` (`agents/codex/spec.ts`' `CodexSpec`), which also marks the run as Codex's; none for Claude's. */
   readonly codex?: unknown
+  /** An ACP agent's run's `acp.json` (`agents/acp/spec.ts`' `AcpSpec`, HE-69), which also marks the run as an ACP agent's. */
+  readonly acp?: unknown
 }

@@ -62,7 +62,7 @@ export function CopyLoginModal({
   onClose: () => void
 }) {
   const codex = agentOf(from) === "codex"
-  const baseDir = agentInfo(codex ? "codex" : "claude").dir
+  const baseDir = agentInfo(agentOf(from)).dir
   const fromDir = from.config_dir || baseDir
   const configs = useBoard((s) => s.claudeConfigs)
   const [to, setTo] = useState(hosts[0]?.id ?? "")

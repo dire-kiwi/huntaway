@@ -231,7 +231,13 @@ export const toTask = (row: TaskRow): Task => {
   }
 }
 
-const SELECT_TASK = `SELECT t.*, p.key AS project_key,
+/** The columns of `tasks` a `TaskRow` reads (not, say, `context_detail` or `lost_background`, which are read on their own). */
+const TASK_COLUMNS = Object.keys(TaskRow.fields)
+  .filter((k) => k !== "project_key" && k !== "queue_rows" && k !== "steer_rows")
+  .map((k) => `t.${k}`)
+  .join(", ")
+
+const SELECT_TASK = `SELECT ${TASK_COLUMNS}, p.key AS project_key,
   (SELECT json_group_array(json_object('text', q.text, 'source', q.source, 'automation_run_id', q.automation_run_id))
      FROM (SELECT * FROM task_queue WHERE task_id = t.id ORDER BY seq) q) AS queue_rows,
   (SELECT json_group_array(json_object('id', s.id, 'run_id', s.run_id, 'text', s.text, 'source', s.source,
@@ -298,6 +304,28 @@ export type ProfileRef = typeof ProfileRow.Type
 
 const Count = Schema.Struct({ n: Schema.Finite })
 const Id = Schema.Struct({ id: Schema.String })
+const TaskIdRow = Schema.Struct({ id: TaskId })
+const ProjectIdRow = Schema.Struct({ id: ProjectId })
+
+/** A task whose worktree a stopped server left half set up or half removed (`worktreesInFlux`). */
+const WorktreeInFlux = Schema.Struct({ id: TaskId, worktree_state: Schema.Literals(["setting_up", "tearing_down"]), worktree_path: Text })
+export type WorktreeInFlux = typeof WorktreeInFlux.Type
+
+/** What tells whether a change of a task notifies (Push's `taskEvent`), as its row has it (`states`). */
+const TaskState = Schema.Struct({
+  id: TaskId,
+  kind: TaskKind,
+  status: Status,
+  running: Bit,
+  review: JsonColumn(Schema.NullOr(Review), null),
+  attention_reason: Text,
+})
+export type TaskState = typeof TaskState.Type
+
+/** The tasks `all` reads: every one but the routine threads. */
+const IN_ALL = "(t.project_id IS NOT NULL OR t.task_type IS NOT 'routine')"
+/** `all`'s order. */
+const ALL_ORDER = "ORDER BY t.project_id, t.position, t.created_at"
 
 /** The task types numbered together in a profile: `S-` for scratch tasks and the pens threads, `A-` for the assistant and its routines. */
 const familyTypes: { readonly [F in Exclude<NumberFamily, "project" | "group">]: ReadonlyArray<string> } = {
@@ -317,6 +345,15 @@ export interface TaskRepoShape {
    * the board, and unarchiving a project then shows them with no load beside the stream.
    */
   readonly all: Effect.Effect<ReadonlyArray<Task>>
+  // What a startup reconciler acts on, of the tasks `all` reads, without reading and decoding every task.
+  /** The projects with a task not done whose pull request isn't in a GitHub stack (`GhStacks.linkAll`). */
+  readonly unstackedPrProjects: Effect.Effect<ReadonlyArray<ProjectId>>
+  /** The tasks whose worktree is being set up or removed (`Worktrees.recover`), in `all`'s order. */
+  readonly worktreesInFlux: Effect.Effect<ReadonlyArray<WorktreeInFlux>>
+  /** The tasks not done with a restack due (`Restack.resume`), in `all`'s order. */
+  readonly restacksDue: Effect.Effect<ReadonlyArray<TaskId>>
+  /** Every task's state as far as a notification depends on it (Push's baseline). */
+  readonly states: Effect.Effect<ReadonlyArray<TaskState>>
   /** The old list queries: review threads only when a project's are asked for; never the routine threads. */
   readonly list: (filter: TaskFilter) => Effect.Effect<ReadonlyArray<Task>>
   /** A project's tasks (not its review threads), in board order. */
@@ -386,6 +423,10 @@ const LostRows = JsonColumn(Schema.Array(Schema.Struct({ kind: Schema.String, la
 const projectRows = rowsOf(ProjectRow)
 const profileRows = rowsOf(ProfileRow)
 const idRows = rowsOf(Id)
+const taskIdRows = rowsOf(TaskIdRow)
+const projectIdRows = rowsOf(ProjectIdRow)
+const inFluxRows = rowsOf(WorktreeInFlux)
+const stateRows = rowsOf(TaskState)
 const queueRows = rowsOf(QueueRows)
 const steerRows = rowsOf(SteerRows)
 const lostRows = rowsOf(Schema.Struct({ lost: LostRows }))
@@ -402,12 +443,7 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
       const select = sql.literal(SELECT_TASK)
 
       const byId = taskRows(Schema.String, (id) => sql`${select} WHERE t.id = ${id}`)
-      const everything = taskRows(
-        Schema.Void,
-        () =>
-          sql`${select} WHERE t.project_id IS NOT NULL OR t.task_type IS NOT 'routine'
-            ORDER BY t.project_id, t.position, t.created_at`,
-      )
+      const everything = taskRows(Schema.Void, () => sql`${select} WHERE ${sql.literal(IN_ALL)} ${sql.literal(ALL_ORDER)}`)
       const byIds = taskRows(Schema.Array(Schema.String), (ids) => sql`${select} WHERE ${sql.in("t.id", ids)}`)
       const ofProject = taskRows(
         Schema.Struct({ project: Schema.String, kind: Schema.String }),
@@ -577,6 +613,24 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
         exists: (id) => Effect.map(count(sql`SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ${id}) AS n`), (n) => n === 1),
         getMany: (ids) => (ids.length === 0 ? Effect.succeed([]) : byIds(ids)),
         all: everything(undefined),
+        unstackedPrProjects: Effect.map(
+          projectIdRows(sql`SELECT DISTINCT t.project_id AS id FROM tasks t WHERE t.project_id IS NOT NULL AND t.kind = 'task'
+            AND t.status != 'done' AND t.github_stack IS NULL AND t.pr_url IS NOT NULL ORDER BY t.project_id`),
+          (rows) => rows.map((r) => r.id),
+        ),
+        worktreesInFlux: inFluxRows(
+          sql`SELECT t.id, t.worktree_state, t.worktree_path FROM tasks t
+            WHERE t.worktree_state IN ('setting_up', 'tearing_down') AND ${sql.literal(IN_ALL)} ${sql.literal(ALL_ORDER)}`,
+        ),
+        restacksDue: Effect.map(
+          taskIdRows(
+            sql`SELECT t.id FROM tasks t WHERE t.kind = 'task' AND t.restack = 'due' AND t.status != 'done' AND ${sql.literal(IN_ALL)} ${sql.literal(ALL_ORDER)}`,
+          ),
+          (rows) => rows.map((r) => r.id),
+        ),
+        states: stateRows(
+          sql`SELECT t.id, t.kind, t.status, t.running, t.review, t.attention_reason FROM tasks t WHERE ${sql.literal(IN_ALL)} ${sql.literal(ALL_ORDER)}`,
+        ),
         list,
         projectTasks: (id) => ofProject({ project: id, kind: "task" }),
         reviewThreads: (id) => reviews(id),

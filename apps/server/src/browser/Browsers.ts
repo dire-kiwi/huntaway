@@ -30,13 +30,13 @@ import { Tasks } from "../tasks/Tasks.ts"
 import type { TaskNotFound } from "../tasks/Tasks.ts"
 import { isRecord, makeCdp, pageOf, str } from "./cdp.ts"
 import type { Cdp, CdpError, CdpPage, CdpResult } from "./cdp.ts"
-import { startChrome } from "./chrome.ts"
+import { lastSaid, startChrome } from "./chrome.ts"
 import type { ChromeProcess } from "./chrome.ts"
 import { ChromeInstall, ChromeUnavailable } from "./ChromeInstall.ts"
 import type { ChromeInstalling } from "./ChromeInstall.ts"
 import { history, navigate, pageInfo, preparePage } from "./page.ts"
 import type { PageRefused } from "./page.ts"
-import { relayViewer, socketText } from "./viewer.ts"
+import { paneText, relayViewer } from "./viewer.ts"
 
 // Each task's web browser (HE-62; docs/plan/06-server.md, Browser): one page per task, which its agent drives (the
 // `browser` MCP server, `BrowserTools`) and the board shows beside the thread. The page is in one of two places:
@@ -234,7 +234,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           const alive = yield* started.cdp.send("Browser.getVersion", {}, undefined, "20 seconds").pipe(Effect.result)
           if (alive._tag === "Failure") {
             yield* Scope.close(scope, Exit.void)
-            const said = (yield* started.stderr).trim().split("\n").slice(-3).join(" / ")
+            const said = lastSaid(yield* started.stderr)
             const sandbox = /sandbox/iu.test(said) ? " Chrome's sandbox can't start here: set HUNTAWAY_CHROME_SANDBOX=0 in the server's environment." : ""
             return yield* new ChromeUnavailable({
               reason: `The headless browser didn't start: ${alive.failure.reason}${said === "" ? "" : ` (${said})`}.${sandbox}`,
@@ -552,11 +552,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
       /** The desktop app's pane for `task`, driven through the app's relay of its debugger, until the socket closes. */
       const attachDesktop = (task: TaskId, reader: Socket.Reader, writer: Socket.Writer) =>
         Effect.gen(function* () {
-          const cdp: Cdp = yield* makeCdp(
-            (m) => writer.write(m).pipe(Effect.ignore),
-            socketText(reader),
-            Effect.succeed("the desktop app's browser pane closed"),
-          )
+          const cdp: Cdp = yield* makeCdp((m) => writer.write(m).pipe(Effect.ignore), paneText(reader), Effect.succeed("the desktop app's browser pane closed"))
           const pane: Pane = { id: yield* Ref.updateAndGet(paneIds, (n) => n + 1), page: pageOf(cdp, undefined) }
           const ready = yield* preparePage(pane.page).pipe(Effect.result)
           if (ready._tag === "Failure") return

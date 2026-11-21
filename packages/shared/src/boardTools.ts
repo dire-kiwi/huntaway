@@ -1,0 +1,42 @@
+// The board's own MCP server's tools (apps/server/src/mcp/tools/board.ts registers them, in this order): shared so that
+// what can't import the server's MCP area (the ACP adapter, which tells the board's tools by name when an agent doesn't
+// say which server a call is on) knows them too. An area that adds a tool adds its name here.
+
+/** Every tool of the board's server, in `tools/list`'s order. */
+export const BOARD_TOOLS: ReadonlyArray<string> = [
+  "request_user_input",
+  "finish_work",
+  "request_connection",
+  "track_work",
+  "untrack_work",
+  "list_tracked_work",
+  "wait",
+  "background_wait",
+  "list_projects",
+  "list_tasks",
+  "get_task",
+  "get_task_field",
+  "create_task",
+  "update_task",
+  "delete_task",
+  "list_pens",
+  "create_pen",
+  "update_pen",
+  "delete_pen",
+  "send_to_task",
+  "suggest_task_actions",
+  "get_project",
+  "update_project",
+  "create_project",
+  "list_automations",
+  "create_automation",
+  "update_automation",
+  "delete_automation",
+  "run_automation",
+  "list_workflows",
+  "create_workflow",
+  "update_workflow",
+  "delete_workflow",
+  "run_workflow",
+  "submit_review",
+]

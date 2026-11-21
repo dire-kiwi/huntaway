@@ -1,4 +1,4 @@
-import { PERMISSION_MODES, takesTypedAnswer } from "@huntaway/client"
+import { askerName, PERMISSION_MODES, takesTypedAnswer } from "@huntaway/client"
 import { ProjectChange, ProjectCreation, TaskDeletion, TaskId, WorkflowChange, type PermissionMode } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Option, Predicate, Schema } from "effect"
@@ -285,7 +285,8 @@ export const AskCard = memo(function AskCard({
   movedOn: boolean
 }) {
   const questions = questionsOf(data)
-  const codex = data.agent === "codex" || data.tool_name === "request_user_input"
+  // Codex's questions (and an ACP agent's, which come the same way) say whether they take a typed answer.
+  const codex = data.agent === "codex" || data.agent === "acp" || data.tool_name === "request_user_input"
   // A run that ended first: answerable by message, while the conversation hasn't moved on.
   const late = data.status === "expired" && !movedOn
   const open = data.status === "pending" || late
@@ -322,7 +323,7 @@ export const AskCard = memo(function AskCard({
     if (o) pick(current, o.label)
   })
   const shown = data.answers
-  const asker = codex ? "Codex" : "Claude"
+  const asker = data.agent === "acp" ? askerName(data.agent) : codex ? "Codex" : "Claude"
   const header = open
     ? `${asker} ${questions.length === 1 ? "asks" : `asks ${questions.length} questions`}`
     : `${asker} asked ${questions.length === 1 ? "a question" : `${questions.length} questions`}`

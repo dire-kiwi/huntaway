@@ -1,4 +1,5 @@
 import { Option, Predicate, Schema } from "effect"
+import type { Agent } from "@huntaway/contracts"
 import type { ByModel } from "./counts.ts"
 import { countsFromClaude, countsFromCodex, field, sorted } from "./counts.ts"
 
@@ -7,7 +8,7 @@ import { countsFromClaude, countsFromCodex, field, sorted } from "./counts.ts"
 
 /** What a call used, by model. */
 export interface Spent {
-  readonly runtime: "claude" | "codex"
+  readonly runtime: Agent
   readonly models: ByModel
 }
 

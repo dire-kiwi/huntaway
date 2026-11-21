@@ -9,6 +9,7 @@ import { nowTimestamp } from "../platform/columns.ts"
 import { PermissionRepo } from "../permissions/PermissionRepo.ts"
 import type { PromptRow } from "../permissions/PermissionRepo.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
+import type { TaskState } from "../tasks/TaskRepo.ts"
 import { PushRepo, shown } from "./PushRepo.ts"
 import type { Subscription } from "./PushRepo.ts"
 import {
@@ -91,8 +92,17 @@ export class Push extends Context.Service<Push, PushShape>()("huntaway-server/pu
       const random = yield* SecureRandom.SecureRandom
       const host = identity.hostId
 
-      /** Every task as last seen, to tell what changed: a task first seen notifies of nothing. */
-      const known = yield* Ref.make<ReadonlyMap<TaskId, Task>>(new Map())
+      /**
+       * Every task as last seen, to tell what changed: a task first seen notifies of nothing. The baseline keeps only what
+       * that depends on (`TaskState`); a task seen since, the whole of it.
+       */
+      const known = yield* Ref.make<ReadonlyMap<TaskId, Task | TaskState>>(new Map())
+      /** Task `id` as last seen, whole: read when only its state is known (or nothing). */
+      const whole = (id: TaskId) =>
+        Effect.flatMap(Ref.get(known), (all): Effect.Effect<Task | null> => {
+          const t = all.get(id)
+          return t !== undefined && "key" in t ? Effect.succeed(t) : taskRepo.get(id)
+        })
       /** Prompts pushed (or pending when watching began), never pushed again. */
       const seen = yield* Ref.make<ReadonlySet<RequestId>>(new Set())
       /** The prompts pushed while watching that are still pending, by task: their devices aren't told the task needs attention too. */
@@ -210,7 +220,9 @@ export class Push extends Context.Service<Push, PushShape>()("huntaway-server/pu
           Effect.gen(function* () {
             yield* Effect.sleep(REVIEW_GRACE)
             const now = (yield* Ref.get(known)).get(t.id)
-            if (now !== undefined && readyToCheck(now)) yield* notify(now, "review")
+            if (now === undefined || !readyToCheck(now)) return
+            const task = yield* whole(t.id)
+            if (task !== null) yield* notify(task, "review")
           }),
           { onlyIfMissing: true },
         )
@@ -220,7 +232,7 @@ export class Push extends Context.Service<Push, PushShape>()("huntaway-server/pu
       const replied = Effect.fnUntraced(function* (id: TaskId) {
         const subs = yield* subscribers((s) => wants(s.events, "reply"))
         if (subs.length === 0) return
-        const t = (yield* Ref.get(known)).get(id) ?? (yield* taskRepo.get(id))
+        const t = yield* whole(id)
         if (t === null || t.task_type !== "assistant") return
         const { title, body } = notificationText("reply", t)
         // Its own tag, so a reply doesn't take the place of an attention notification.
@@ -255,7 +267,7 @@ export class Push extends Context.Service<Push, PushShape>()("huntaway-server/pu
       const watch = Effect.scoped(
         Effect.gen(function* () {
           const w = yield* events.watch(undefined)
-          const tasks = yield* taskRepo.all
+          const tasks = yield* taskRepo.states
           const pending = yield* prompts.pending({})
           yield* Ref.set(known, new Map(tasks.map((t) => [t.id, t])))
           yield* Ref.update(seen, (s) => new Set([...s, ...pending.map((p) => p.id)]))

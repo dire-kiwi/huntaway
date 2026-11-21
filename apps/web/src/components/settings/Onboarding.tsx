@@ -26,7 +26,7 @@ export function Onboarding() {
         <h1 className="mb-1 text-[16px] font-semibold">Welcome to Huntaway</h1>
         <p className="mb-5 text-[13px] text-muted">
           Create a profile to get started. Its agents use a Claude config directory, e.g. <code>~/.claude-work</code> or <code>~/.claude-personal</code>; more
-          (including Codex ones) can be added under Settings → Agent configs.
+          (including Codex and ACP agent ones, such as Google's Antigravity) can be added under Settings → Agent configs.
         </p>
         <ProfileForm hostId={host} onDone={() => {}} />
       </div>

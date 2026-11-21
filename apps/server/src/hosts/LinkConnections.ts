@@ -1,4 +1,4 @@
-import { NodeWS } from "@effect/platform-node"
+import * as NodeWS from "@effect/platform-node/NodeWS"
 import {
   Clock,
   Context,

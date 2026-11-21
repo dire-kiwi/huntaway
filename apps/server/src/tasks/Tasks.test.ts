@@ -276,6 +276,65 @@ describe("Tasks", () => {
   )
 })
 
+/** A task's worktree, as a line. */
+const line = (t: Pick<Task, "id" | "worktree_state" | "worktree_path">) => `${t.id} ${t.worktree_state} ${t.worktree_path}`
+
+describe("TaskRepo's startup reads", () => {
+  it.effect("pick out of the tasks `all` reads what the reconcilers' filters over it did", () =>
+    run(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const repo = yield* TaskRepo
+        const web = yield* seed("me", "WEB")
+        const api = yield* seed("me", "API")
+        const task = (project: ProjectId, title: string) => Effect.map(create({ project_id: project, title }), (t) => t.id)
+        const open = yield* task(web.project, "Open")
+        const done = yield* task(web.project, "Done")
+        const linked = yield* task(web.project, "Linked")
+        const plain = yield* task(web.project, "Plain")
+        const other = yield* task(api.project, "Other")
+        const settingUp = yield* task(api.project, "Setting up")
+        const routine = yield* create({ profile_id: web.profile, title: "A routine's run" })
+        const set = (id: TaskId, columns: string) => sql.unsafe(`UPDATE tasks SET ${columns} WHERE id = ?`, [id]).pipe(Effect.orDie)
+        yield* set(open, "pr_url = 'https://github.com/o/r/pull/1', restack = 'due', worktree_state = 'tearing_down', worktree_path = '/tmp/wt'")
+        yield* set(done, "pr_url = 'https://github.com/o/r/pull/2', restack = 'due', status = 'done', worktree_state = 'setting_up'")
+        yield* set(linked, "pr_url = 'https://github.com/o/r/pull/3', github_stack = 7, restack = 'conflict'")
+        yield* set(plain, "context_detail = 'not a task column', review = 'not json'")
+        yield* set(other, "pr_url = 'https://github.com/o/r/pull/4', running = 1, status = 'needs_attention', attention_reason = 'Asked'")
+        yield* set(settingUp, "worktree_state = 'setting_up'")
+        yield* set(routine.id, "task_type = 'routine', restack = 'due', worktree_state = 'setting_up'")
+
+        // What the filters over `all` (GhStacks.linkAll, Worktrees.recover, Restack.resume, Push's baseline) picked.
+        const all = yield* repo.all
+        const unstacked = all.flatMap((t) =>
+          t.kind === "task" && t.status !== "done" && t.github_stack === null && t.pr_url !== null && t.project_id !== null ? [t.project_id] : [],
+        )
+        assert.deepStrictEqual(yield* repo.unstackedPrProjects, [...new Set(unstacked)])
+        assert.deepStrictEqual(
+          (yield* repo.worktreesInFlux).map(line),
+          all.filter((t) => t.worktree_state === "setting_up" || t.worktree_state === "tearing_down").map(line),
+        )
+        assert.deepStrictEqual(
+          yield* repo.restacksDue,
+          all.filter((t) => t.kind === "task" && t.restack === "due" && t.status !== "done").map((t) => t.id),
+        )
+        assert.deepStrictEqual(
+          yield* repo.states,
+          all.map((t) => ({ id: t.id, kind: t.kind, status: t.status, running: t.running, review: t.review, attention_reason: t.attention_reason })),
+        )
+        // And they are what the rows say (the routine's run is none of them).
+        assert.deepStrictEqual(yield* repo.unstackedPrProjects, [api.project, web.project])
+        assert.deepStrictEqual(
+          (yield* repo.worktreesInFlux).map((t) => t.id),
+          [settingUp, open, done],
+        )
+        assert.deepStrictEqual(yield* repo.restacksDue, [open])
+        assert.isFalse((yield* repo.states).some((t) => t.id === routine.id))
+      }),
+    ),
+  )
+})
+
 describe("TaskRefs", () => {
   it.effect("finds a task by id, key in any case, a former key, or <profile>:<key>", () =>
     run(

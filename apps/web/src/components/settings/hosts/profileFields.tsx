@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react"
-import { agentOf, canRunAgents, holdsProjects, type HostAgentConfig as ClaudeConfig, query } from "@huntaway/client"
+import { agentSuffix, canRunAgents, holdsProjects, type HostAgentConfig as ClaudeConfig, query } from "@huntaway/client"
 import { clsx } from "clsx"
 import { profileNames, useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
@@ -7,7 +7,7 @@ import { resultError, resultValue, Select } from "../../ui"
 
 // The fields of a profile's form (docs/plan/09-frontend.md). gh's accounts are 6.11's `profiles.githubAccounts`.
 
-const label = (c: ClaudeConfig | undefined): string => (c ? `${c.name}${agentOf(c) === "codex" ? " (Codex)" : ""}` : "")
+const label = (c: ClaudeConfig | undefined): string => (c ? `${c.name}${agentSuffix(c)}` : "")
 
 /** One of a profile's configs for its assistant or its threads, or "" for its default (the first). */
 export function ThreadConfigSelect({ configs, value, onChange }: { configs: ReadonlyArray<ClaudeConfig>; value: string; onChange: (id: string) => void }) {

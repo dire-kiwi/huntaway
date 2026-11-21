@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, FileSystem } from "effect"
 import { tempDir, TestBoard } from "@huntaway/testing"
@@ -55,6 +55,17 @@ describe("ConfigArchives", () => {
       yield* fsDo((fs) => fs.writeFileString(`${dir}/codex/settings.json`, "{}"))
       const codex = yield* configs.create({ name: "x", config_dir: `${dir}/codex`, agent: "codex" })
       assert.deepStrictEqual((yield* archives.exportArchive(codex.id)).files, ["auth.json"])
+      // An ACP agent's (Antigravity's home), its sign-in in a folder of its own.
+      yield* fsDo((fs) => fs.makeDirectory(`${dir}/gemini/antigravity-acp/tmp`, { recursive: true }))
+      for (const f of ["antigravity-acp/acp_token.json", "antigravity-acp/tmp/x", "settings.json", "history.jsonl"])
+        yield* fsDo((fs) => fs.writeFileString(`${dir}/gemini/${f}`, "{}"))
+      const acp = yield* configs.create({ name: "g", config_dir: `${dir}/gemini`, agent: "acp" })
+      const acpOut = yield* archives.exportArchive(acp.id)
+      assert.deepStrictEqual(acpOut.files, ["antigravity-acp/acp_token.json", "settings.json"])
+      const acpTo = yield* configs.create({ name: "g2", config_dir: `${dir}/gemini2`, agent: "acp" })
+      yield* archives.importArchive(acpTo.id, acpOut.archive, false)
+      assert.isTrue(yield* fsDo((fs) => fs.exists(`${dir}/gemini2/antigravity-acp/acp_token.json`)))
+      assert.strictEqual((yield* Effect.flip(archives.importArchive(acpTo.id, acpOut.archive, false)))._tag, "Conflict")
     }).pipe(Effect.provide(TestBoard()), Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 

@@ -10,9 +10,11 @@ apps/
   server/                 the server (package huntaway-server)
     bin/huntaway          the launcher: sh, carried over; keeps the PID, restarts on a crash, execs on exit 75
     src/
-      bin.ts              entry point: the CLI
+      entry.ts            what the launcher runs: turns on Node's compile cache, then loads bin.ts (HE-71)
+      bin.ts              entry point: the CLI, its commands' flags; loads what runs a command when it runs
+      serve.ts            `serve`: ImportGuard, then Main.ts or ReadOnlyMain.ts
       Main.ts             composition root: every layer, in startup order
-      cli/                one file per subcommand (serve, token, rpc, import-legacy, install-service, ssh-host, …)
+      cli/                one file per subcommand (rpc, import-legacy, install-service, ssh-host, telemetry, …)
       hooks/              approval-hook, gh-hook, gh-run: plain TypeScript, no effect import
       codex-run.ts        the adapter between a run's files and `codex app-server` (its own process, uses Effect)
       platform/           Db, Migrations, Events, KeyedLock, Proc, DataDir, ServerConfig, Secrets, Telemetry, Backup
@@ -168,6 +170,12 @@ configuration, which was run in [the spike](spike/lint/README.md). Markdown unde
 that skips the rest when exactly these files have already passed, then `check`, `server`, `packages`, `web`,
 `ui (1/3 to 3/3)`, `e2e` and `rust` in parallel, then `green` to record the pass. Self-hosted runners for
 the owner's branches. `.github/workflows/release.yml` builds a release ([Releases](#releases)).
+
+The server's browser tests (`apps/server/src/browser`) use the runner image's Chromium (`CHROMIUM=/usr/bin/chromium`
+in the `test` job, which fails if it's missing rather than skipping them). The job starts it once before `pnpm test`:
+a runner's disk is read in from its image on first use, and the first start of Chromium in the middle of the tests,
+with every CPU busy, took longer than the 20 s the server gives Chrome to answer (HE-73). On an idle runner the first
+start took 3 s on one and 49 s on another, and 0.5 s once it had been read.
 
 ## Releases<a id="releases"></a>
 

@@ -442,33 +442,37 @@ describe("where held tasks go now", () => {
     ),
   )
 
-  it.effect("a level on a closed level can take its place; or they all close too", () =>
-    board(
-      Effect.gen(function* () {
-        const { p, repo } = yield* project()
-        const low = yield* level(p, "Low", "low.txt", null)
-        const a = yield* level(p, "A", "a.txt", low)
-        const b = yield* level(p, "B", "b.txt", low)
-        yield* update(low.id, { status: "done", resolution: "not_done" })
-        yield* restacked(a.id, b.id)
-        // Not one of them: refused.
-        const wrong = yield* Effect.exit((yield* MergeTargets).setTarget(b.id, low.id))
-        assert.include(failure(wrong), "must be one of the open tasks that are stacked on X-1")
-        yield* (yield* MergeTargets).setTarget(b.id, a.id).pipe(Effect.orDie)
-        yield* restacked(a.id, b.id)
-        const ta = yield* reload(a.id)
-        const tb = yield* reload(b.id)
-        assert.deepStrictEqual([ta.restack, ta.base_branch, tb.restack, tb.base_branch], [null, "master", null, a.branch])
-        assert.deepStrictEqual(tb.start_from, { type: "task", task_id: a.id })
-        assert.deepStrictEqual(yield* own(repo, "master", a.branch ?? ""), ["A"])
-        assert.deepStrictEqual(yield* own(repo, "master", b.branch ?? ""), ["A", "B"])
-        assert.strictEqual(stackState(yield* projectRows(p), tb), "open")
-        assert.include(yield* notices(a.id), "Takes X-1's place: goes to master now")
-        // Nothing held any more: nothing to choose.
-        const nothing = yield* Effect.exit((yield* MergeTargets).setTarget(b.id, "onward"))
-        assert.include(failure(nothing), "there's nothing to choose")
-      }),
-    ),
+  it.effect(
+    "a level on a closed level can take its place; or they all close too",
+    () =>
+      board(
+        Effect.gen(function* () {
+          const { p, repo } = yield* project()
+          const low = yield* level(p, "Low", "low.txt", null)
+          const a = yield* level(p, "A", "a.txt", low)
+          const b = yield* level(p, "B", "b.txt", low)
+          yield* update(low.id, { status: "done", resolution: "not_done" })
+          yield* restacked(a.id, b.id)
+          // Not one of them: refused.
+          const wrong = yield* Effect.exit((yield* MergeTargets).setTarget(b.id, low.id))
+          assert.include(failure(wrong), "must be one of the open tasks that are stacked on X-1")
+          yield* (yield* MergeTargets).setTarget(b.id, a.id).pipe(Effect.orDie)
+          yield* restacked(a.id, b.id)
+          const ta = yield* reload(a.id)
+          const tb = yield* reload(b.id)
+          assert.deepStrictEqual([ta.restack, ta.base_branch, tb.restack, tb.base_branch], [null, "master", null, a.branch])
+          assert.deepStrictEqual(tb.start_from, { type: "task", task_id: a.id })
+          assert.deepStrictEqual(yield* own(repo, "master", a.branch ?? ""), ["A"])
+          assert.deepStrictEqual(yield* own(repo, "master", b.branch ?? ""), ["A", "B"])
+          assert.strictEqual(stackState(yield* projectRows(p), tb), "open")
+          assert.include(yield* notices(a.id), "Takes X-1's place: goes to master now")
+          // Nothing held any more: nothing to choose.
+          const nothing = yield* Effect.exit((yield* MergeTargets).setTarget(b.id, "onward"))
+          assert.include(failure(nothing), "there's nothing to choose")
+        }),
+      ),
+    // Three levels restacked in a git repository: about a second alone, past the default 5 s on a loaded CI runner.
+    20_000,
   )
 
   it.effect("a closed level below can close the levels on it too", () =>

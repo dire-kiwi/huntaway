@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Option, Path, Schema } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { Timestamp } from "@huntaway/contracts"
+import { procHolders } from "./procFds.ts"
 
 // What `huntaway import-legacy` leaves in the folder it filled (docs/plan/11-migration.md, The importer; The guard), and
 // the one fact both the importer and the guard ask of the machine: which processes have a database file open.
@@ -56,21 +57,6 @@ export const processesWithOpen = Effect.fnUntraced(function* (file: string) {
       .filter((l) => isPid(l) && Number(l) !== process.pid)
       .map(Number)
   }
-  const pids = (yield* fs.readDirectory("/proc").pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter(
-    (p) => isPid(p) && Number(p) !== process.pid,
-  )
-  const found = yield* Effect.forEach(
-    pids,
-    (pid) =>
-      Effect.gen(function* () {
-        const fds = yield* fs.readDirectory(`/proc/${pid}/fd`)
-        for (const fd of fds) {
-          const target = yield* fs.readLink(`/proc/${pid}/fd/${fd}`).pipe(Effect.orElseSucceed(() => ""))
-          if (target === real) return Number(pid)
-        }
-        return null
-      }).pipe(Effect.orElseSucceed(() => null)),
-    { concurrency: 16 },
-  )
-  return found.filter((pid): pid is number => pid !== null)
+  // In one synchronous pass (`procFds.ts`): what can't be read (a process gone, another user's) is passed over.
+  return yield* Effect.sync(() => procHolders(real, process.pid))
 })

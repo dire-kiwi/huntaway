@@ -159,6 +159,32 @@ describe("GitHub stacks", () => {
     ),
   )
 
+  it.effect("at a start, the open levels whose pull requests aren't in a GitHub stack are linked, in the background", () =>
+    onBoard({ accounts: [ME] }, (fake) =>
+      Effect.gen(function* () {
+        const { p } = yield* project
+        const one = yield* level(p, "One", "one.txt", null)
+        const two = yield* level(p, "Two", "two.txt", one)
+        const done = yield* level(p, "Done", "done.txt", one)
+        yield* setPulls(fake, [pullOf(2, one, "master"), pullOf(3, two, one.branch ?? ""), pullOf(4, done, one.branch ?? "")])
+        // Set while the server was down: nothing linked them.
+        yield* change(one.id, { pr_url: url(2) })
+        yield* change(two.id, { pr_url: url(3) })
+        yield* change(done.id, { pr_url: url(4), status: "done" })
+        const stacks = yield* GhStacks
+        yield* stacks.linkAll
+        yield* stacks.settled
+        assert.strictEqual((yield* reload(two.id)).github_stack, 1)
+        // A level that's done isn't linked.
+        assert.isNull((yield* reload(done.id)).github_stack)
+        assert.deepStrictEqual(
+          (yield* asked(fake)).filter((c) => c.includes("POST")),
+          ["api -X POST repos/o/r/stacks -F pull_requests[]=2 -F pull_requests[]=3"],
+        )
+      }),
+    ),
+  )
+
   it.effect("a level isn't stacked on GitHub on one whose base will change, nor on one merging into another task", () =>
     onBoard({ accounts: [ME] }, (fake) =>
       Effect.gen(function* () {

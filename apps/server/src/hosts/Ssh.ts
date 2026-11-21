@@ -1,4 +1,4 @@
-import { NodeSocketServer } from "@effect/platform-node"
+import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer"
 import { Context, Effect, FileSystem, Layer, Option, Path, Schedule, Schema, Stream } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
