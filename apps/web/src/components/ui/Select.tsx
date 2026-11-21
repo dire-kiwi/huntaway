@@ -199,38 +199,10 @@ export function Select({
   }
 
   return (
-    // `contents`, so the button and the list are laid out as the select was, and a margin its parent gives its
-    // children (`space-y`) lands on nothing.
-    <span className="contents">
-      <button
-        ref={button}
-        type="button"
-        role="combobox"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? `${id}-list` : undefined}
-        aria-activedescendant={open && pos ? optionId(active) : undefined}
-        aria-label={ariaLabel}
-        title={title}
-        disabled={disabled}
-        data-value={shown?.value ?? ""}
-        onClick={() => (open ? setOpen(false) : show())}
-        onKeyDown={onKeyDown}
-        // Space would press the button again as it's let go.
-        onKeyUp={(e) => e.key === " " && e.preventDefault()}
-        onBlur={() => setOpen(false)}
-        className={clsx("inline-flex cursor-default items-center gap-1 text-left outline-none focus-visible:border-accent/60 disabled:opacity-60", className)}
-      >
-        {/* Every option's text in one cell, unseen, so the button is as wide as the widest (unless its class sets a
-            width); in `::before`, so it isn't text on the page. */}
-        <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)]">
-          {options.map((o) => (
-            <span key={o.value} aria-hidden data-text={o.text} className="invisible col-start-1 row-start-1 h-0 truncate before:content-[attr(data-text)]" />
-          ))}
-          <span className="col-start-1 row-start-1 truncate">{shown?.label}</span>
-        </span>
-        <ChevronDown size={13} className="shrink-0 opacity-60" />
-      </button>
+    // The button is its parent's child as the select was, so the parent's layout (a `space-y` margin under each
+    // child but the last) reaches it. The list goes before it, so the button stays the last child when it was; it's
+    // `fixed`, so the margin it may get then moves nothing.
+    <>
       {open && (
         <span
           ref={list}
@@ -277,6 +249,36 @@ export function Select({
           ))}
         </span>
       )}
-    </span>
+      <button
+        ref={button}
+        type="button"
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? `${id}-list` : undefined}
+        aria-activedescendant={open && pos ? optionId(active) : undefined}
+        aria-label={ariaLabel}
+        title={title}
+        disabled={disabled}
+        data-value={shown?.value ?? ""}
+        onClick={() => (open ? setOpen(false) : show())}
+        onKeyDown={onKeyDown}
+        // Space would press the button again as it's let go.
+        onKeyUp={(e) => e.key === " " && e.preventDefault()}
+        onBlur={() => setOpen(false)}
+        className={clsx("inline-flex cursor-default items-center gap-1 text-left outline-none focus-visible:border-accent/60 disabled:opacity-60", className)}
+      >
+        {/* The picked option's text first, so the button's baseline is that text's, as a native select's is. Under it,
+            every option's text in the same cell, unseen, so the button is as wide as the widest (unless its class
+            sets a width); in `::before`, so it isn't text on the page. */}
+        <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)]">
+          <span className="col-start-1 row-start-1 truncate">{shown?.label}</span>
+          {options.map((o) => (
+            <span key={o.value} aria-hidden data-text={o.text} className="invisible col-start-1 row-start-1 h-0 truncate before:content-[attr(data-text)]" />
+          ))}
+        </span>
+        <ChevronDown size={13} className="shrink-0 opacity-60" />
+      </button>
+    </>
   )
 }

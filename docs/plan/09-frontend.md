@@ -851,8 +851,9 @@ list drawn by the page, in the menus' style (`ContextMenu`), with a tick by the 
   letters picks it, with the list closed or open.
 - **Placed in the window** (`position: fixed`, as `Help` is) under the button, or above it when there's more room
   there, as wide as the button at least and at most 360 px tall, and moved with it when anything scrolls; inline,
-  not in a portal, so a dialog's focus trap and a popover's press-outside see it as theirs. It's in a `contents`
-  span, so the button is laid out as the select was and a parent's `space-y` margin lands on nothing.
+  not in a portal, so a dialog's focus trap and a popover's press-outside see it as theirs. The button is
+  its parent's child as the select was (the list comes before it, so a parent's `space-y` margin still reaches the
+  button), and its baseline is the picked option's text, as a native select's is.
   Its button's base class is `inline-flex`, which a `hidden` in the caller's class doesn't reliably beat: a select
   shown only in one layout is wrapped in an element that hides it (the Guide's page picker).
 - **The highlighted option is scrolled into view** as the list opens and as the highlight moves, not on every redraw:
