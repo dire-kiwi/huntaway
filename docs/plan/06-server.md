@@ -754,7 +754,9 @@ them. `MergedWatcher.loop`: first 30 s after start, then 180 s after each check 
   `TaskChanged` of a task that became merged, `Restack.reconcileDependants` **before** the merge queue is looked at (so a
   level waiting in Ready for merge waits for its restack, as the old `update_task_inner` marked it before
   `start_next_merge`), then `MergeTargets.taskChanged`, then 4.7's `Merges.taskChanged`; a `pr_url` set links GitHub
-  stacks. **Recovery**: `Restack.resume`, `GhStacks.linkAll` (after the reviews'). **Launch**: `LaunchFacts.prepareWork`
+  stacks. **Recovery**: `Restack.resume`, then `GhStacks.linkAll` once the server listens (`Listening.up`, HE-71), in
+  the background: it reads the projects with an open, unlinked pull request (`TaskRepo.unstackedPrProjects`) and each
+  of their tasks once. **Launch**: `LaunchFacts.prepareWork`
   waits for `Restack.settled` of the task (or a review thread's task) first. **Prompts**: `Prompts.system` tells the
   agent the task as the old `as_told` did (merged below: not stacked any more, its base where that went).
 - **The fake GitHub** (`packages/testing`): `POST repos/O/R/stacks` and `…/stacks/N/add` with `pull_requests[]` (each on
@@ -1025,7 +1027,8 @@ push and answering from a lock screen wait for the phone app.
   `Redacted`. The VAPID key is `vapid_key`, a JWK `{d, x, y}`: WebCrypto can't import the old bare scalar
   (`vapid_private_key`) without its public point, so the importer converts it (11-migration.md).
 - **The watcher** (`Push.watcher`, in `areasLayer`, so tests have it) subscribes to `Events`, takes every task and pending
-  prompt as a baseline (nothing about them notifies), and handles each event in order; after `resync`, again from a
+  prompt as a baseline (nothing about them notifies; of a task only what `taskEvent` reads, `TaskRepo.states`, and the
+  whole task is read when a notification needs it), and handles each event in order; after `resync`, again from a
   fresh baseline. Task events notify by `taskEvent` (attention, review after 5 s still so, merge, done). **Prompts** are
   found on the task's own event (a prompt's raise writes the task's attention in its transaction): each pending prompt of
   a task in Needs attention not seen before is pushed once (body from `promptText`, never the tool's input, tag
@@ -1560,7 +1563,10 @@ the one-off moves removed:
 5. `Recovery`: resume kills left half done · for each run that had not exited: re-ask its open prompts and tool
    calls, then follow it from its saved offset, re-arm its timers · tasks marked running with no run · expire
    prompts with no live run · `Merges.reconcileAll` · `Dependencies.reconcileAll` · `Reviews.reconcileAll` ·
-   `WorkflowEngine.resume` · `Restack.resume`.
+   `WorkflowEngine.resume` · `Restack.resume`. Each reconciler reads only the rows it acts on (`TaskRepo`'s
+   `worktreesInFlux`, `restacksDue`, `unstackedPrProjects`; Push's baseline `states`), never every task decoded to be
+   filtered (HE-71: on a copy of a board of 2,900 tasks, a restart's ready line came after 1.15 s rather than 2.4 s).
+   `GhStacks.linkAll` waits for the listener (`Listening.up`, step 6) and runs in the background.
 6. Open the gate: links dial, discovery answers, the RPC and HTTP routes serve. Then `Releases.settle` (a release that
    got this far is current; one that failed before stays `trying` and is marked bad at the next start). Print `HUNTAWAY_READY
    {"port":…,"token":…}` on stdout (the desktop shell and test scripts read it), and tell the launcher it started.
@@ -1595,7 +1601,9 @@ module under `lifecycle/` or a loop's layer.
 
 - **`ImportGuard`** (`platform/ImportGuard.ts`) is built by `serve` (`serve.ts`) over `ServerConfig` alone, before
   anything else: no `import.json`, the board as usual; `rehearsal: true`, `ReadOnlyMain`; otherwise it fails with a
-  `StartupError` naming the process ids that have `<from>/<database>` open (`ImportRecord.processesWithOpen`) and saying
+  `StartupError` naming the process ids that have `<from>/<database>` open (`ImportRecord.processesWithOpen`: on
+  Linux one synchronous pass over `/proc/*/fd` in `platform/procFds.ts`, the one server file allowed `node:fs`, since
+  Effect's asynchronous `FileSystem` took twice the time over some 30,000 links, HE-71) and saying
   to stop the old server for good, or to stop this one and start only the old one. An `import.json` that does not read
   is a `StartupError` too: a damaged rehearsal record must not start a board that acts.
 - **Listening address.** `--host`/`HUNTAWAY_HOST` has no default in the flags any more (`serveArgs`): the board takes

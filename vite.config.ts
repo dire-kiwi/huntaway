@@ -189,6 +189,9 @@ export default defineConfig({
         // Node's HTTP server has no Effect counterpart to create it with: the composition root names it.
         rules: { "effecttsgo/strict-effect-provide": "off", "effecttsgo/process-env": "off", "effecttsgo/node-builtin-import": "off" },
       },
+      // The /proc scan every start of an imported board makes (HE-71): ~30,000 fd links, which Effect's FileSystem (only
+      // asynchronous calls) reads in twice the time of Node's synchronous ones. That file holds the scan and nothing else.
+      { files: ["apps/server/src/platform/procFds.ts"], rules: { "effecttsgo/node-builtin-import": "off" } },
       // Tests may use the test fixtures.
       { files: ["**/*.test.ts", "**/*.test.tsx", "**/tests/**"], rules: { "no-restricted-imports": "off" } },
       // The tools agents and tests drive the board with (ui-check.mjs and the like): plain Node scripts with a promise

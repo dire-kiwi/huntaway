@@ -178,7 +178,9 @@ TypeScript rules above, `import/no-cycle`, and the package boundaries as `no-res
 `denyWarnings` makes any warning fail. The overrides: the Effect-native rules are off for plain TypeScript
 (`packages/shared`, `apps/server/src/hooks`, and the desktop shell's frame, preload and shared decisions in
 `apps/desktop/src/{boot,preload,shared}`) and for config files; `strict-effect-provide` and `process-env` are off for
-entry points, tests and `packages/testing`; the components get the React hook rules and are otherwise as strict as the
+entry points, tests and `packages/testing`; `node-builtin-import` is off for `apps/server/src/platform/procFds.ts`, which
+holds only the synchronous `/proc` scan of an imported board's start (HE-71: Effect's `FileSystem` has only asynchronous
+calls, and took twice as long over some 30,000 fd links); the components get the React hook rules and are otherwise as strict as the
 rest (step 2 of docs/plan/09-frontend.md): their times are `DateTime` (`components/ui/dates.ts`, `state/clock.ts`), their
 DOM timers `state/timers.ts`, their handlers start mutations rather than being `async`, with no exception (the Docs page's frame script, which had
 one, went with it to the docs plugin in HE-42).
