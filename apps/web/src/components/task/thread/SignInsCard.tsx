@@ -1,3 +1,4 @@
+import { askerName } from "@huntaway/client"
 import { clsx } from "clsx"
 import { Check, KeyRound, ShieldAlert } from "lucide-react"
 import { memo, useState, type ReactNode } from "react"
@@ -25,7 +26,7 @@ export const SignInsCard = memo(function SignInsCard({ ask, data, hostId, from }
       <div className="mb-2 flex items-center gap-2 text-[13px]">
         <KeyRound size={15} className={pending ? "text-st-attention" : "text-faint"} />
         <span className={pending ? "text-fg" : "text-muted"}>
-          {pending ? `${data.agent === "codex" ? "Codex" : "Claude"} asks to bring your sign-ins into ` : "Sign-ins for "}
+          {pending ? `${askerName(data.agent)} asks to bring your sign-ins into ` : "Sign-ins for "}
           <span className="font-medium">{ask.space}</span>
         </span>
         {from}

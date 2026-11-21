@@ -2,6 +2,8 @@ import { Context, Effect, FileSystem, Layer, Option, Schema } from "effect"
 import type { PlatformError } from "effect"
 import type { RunId } from "@huntaway/contracts"
 import type { LaunchSpec, McpRunSettings } from "../agents/AgentDriver.ts"
+import { specFromJson as acpSpecFromJson } from "../agents/acp/spec.ts"
+import type { AcpSpec } from "../agents/acp/spec.ts"
 import { specFromJson } from "../agents/codex/spec.ts"
 import type { CodexSpec } from "../agents/codex/spec.ts"
 import { DataDir } from "../platform/DataDir.ts"
@@ -231,6 +233,10 @@ export interface RunDirShape {
   readonly codexSpec: (run: RunId) => Effect.Effect<CodexSpec | null>
   /** Whether the run is Codex's (its adapter's `codex.json`). */
   readonly isCodex: (run: RunId) => Effect.Effect<boolean>
+  /** An ACP agent's run's `acp.json` as it was launched (HE-69); null for another's, or one that doesn't read. */
+  readonly acpSpec: (run: RunId) => Effect.Effect<AcpSpec | null>
+  /** Whether the run is an ACP agent's (its adapter's `acp.json`): a Codex run to the line handler. */
+  readonly isAcp: (run: RunId) => Effect.Effect<boolean>
   // `background-waited` (plan task 3.5, the `background_wait` tool; the rest of the `background*` files are 2.8's).
   /** The ids of the background shells the agent said it waits on (`background_wait`); none if the file is missing or odd. */
   readonly backgroundWaited: (run: RunId) => Effect.Effect<ReadonlyArray<string>>
@@ -403,6 +409,8 @@ export class RunDir extends Context.Service<RunDir, RunDirShape>()("huntaway-ser
           if (spec.systemPrompt !== null) yield* write(run, "system-prompt.md", spec.systemPrompt)
           // A Codex run's spec, which its adapter reads (and which marks the run as Codex's).
           if (spec.codex !== undefined && spec.codex !== null) yield* writeJson(run, "codex.json", Schema.Unknown, spec.codex, true)
+          // An ACP agent's run's (HE-69), likewise.
+          if (spec.acp !== undefined && spec.acp !== null) yield* writeJson(run, "acp.json", Schema.Unknown, spec.acp, true)
           yield* writeJson(run, "spec.json", RunSpec, { args: [...spec.args], config_dir: spec.configDir, cwd: spec.cwd }, true)
         })
 
@@ -467,6 +475,8 @@ export class RunDir extends Context.Service<RunDir, RunDirShape>()("huntaway-ser
               ),
         codexSpec: (run) => readJson(run, "codex.json", Schema.Unknown).pipe(Effect.map((v) => (v === null ? null : specFromJson(v)))),
         isCodex: (run) => has(run, "codex.json"),
+        acpSpec: (run) => readJson(run, "acp.json", Schema.Unknown).pipe(Effect.map((v) => (v === null ? null : acpSpecFromJson(v)))),
+        isAcp: (run) => has(run, "acp.json"),
         backgroundWaited: (run) =>
           readJson(run, "background-waited", Schema.Array(Schema.Unknown)).pipe(
             Effect.map((ids) => (ids ?? []).filter((id): id is string => typeof id === "string")),

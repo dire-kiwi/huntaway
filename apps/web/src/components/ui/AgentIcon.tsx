@@ -1,4 +1,5 @@
-// Which agent a task runs with, as its maker's mark: Claude's for Claude Code, Codex's for Codex (HA-78).
+// Which agent a task runs with, as its maker's mark: Claude's for Claude Code, Codex's for Codex (HA-78), and a sparkle of
+// the board's own for an ACP agent (HE-69), which may be any agent that speaks the protocol.
 import { clsx } from "clsx"
 import { agentInfo, agentOf, type HostTask as Task } from "@huntaway/client"
 import type { Agent } from "@huntaway/contracts"
@@ -29,9 +30,21 @@ function CodexMark({ size, className }: { size: number; className?: string | und
   )
 }
 
+/** An ACP agent's mark: two four-pointed sparkles, drawn for the board (no maker's mark: the agent may be anyone's), in the text's colour. */
+function AcpMark({ size, className }: { size: number; className?: string | undefined }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={clsx("shrink-0", className)} aria-hidden>
+      <path d="M10 1.5 11.9 8.1 18.5 10 11.9 11.9 10 18.5 8.1 11.9 1.5 10 8.1 8.1Z" />
+      <path d="M18.5 14 19.4 17.6 23 18.5 19.4 19.4 18.5 23 17.6 19.4 14 18.5 17.6 17.6Z" />
+    </svg>
+  )
+}
+
 /** An agent's mark. */
 export function AgentMark({ agent, size = 12, className }: { agent: Agent; size?: number | undefined; className?: string | undefined }) {
-  return agent === "codex" ? <CodexMark size={size} className={className} /> : <ClaudeMark size={size} className={className} />
+  if (agent === "codex") return <CodexMark size={size} className={className} />
+  if (agent === "acp") return <AcpMark size={size} className={className} />
+  return <ClaudeMark size={size} className={className} />
 }
 
 /**

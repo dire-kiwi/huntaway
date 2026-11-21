@@ -32,7 +32,8 @@ export function harnessLabels(tasks: Task[], configs: (ClaudeConfig | undefined)
   const mixed = new Set(configs.map((c) => c?.id ?? "")).size > 1
   return tasks.map((t, i) => {
     const c = configs[i]
-    const model = t.model || (c && agentOf(c) === "codex" ? "Codex's default" : "default model")
+    const agent = c && agentOf(c)
+    const model = t.model || (agent === "codex" ? "Codex's default" : agent === "acp" ? "the agent's default" : "default model")
     return mixed && c ? `${model} · ${c.name}` : model
   })
 }

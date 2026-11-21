@@ -2,7 +2,7 @@ import { clsx } from "clsx"
 import { Bot, Brain, Check, ChevronRight, CircleAlert, Clock, Layers, ShieldQuestion } from "lucide-react"
 import { memo, useState, type ReactNode } from "react"
 import { useAtomValue } from "@effect/atom-react"
-import { experimentsAtom, QUESTION_TOOLS } from "@huntaway/client"
+import { askerName, experimentsAtom, QUESTION_TOOLS } from "@huntaway/client"
 import { useAction } from "../../../state/mutation"
 import { Button, duration, localeTimeString } from "../../ui"
 import { useSubagentView, subagentTitle } from "./subagentView"
@@ -129,7 +129,7 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: Pr
       <div className="mb-2 flex items-center gap-2 text-[13px]">
         <ShieldQuestion size={15} className={pending ? "text-st-attention" : "text-faint"} />
         <span className={pending ? "text-fg" : "text-muted"}>
-          {pending ? `${data.agent === "codex" ? "Codex" : "Claude"} wants to use ` : "Permission for "}
+          {pending ? `${askerName(data.agent)} wants to use ` : "Permission for "}
           <span className="font-mono">{data.tool_name}</span>
         </span>
         <PromptFrom data={data} />

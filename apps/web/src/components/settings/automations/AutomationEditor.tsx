@@ -3,7 +3,7 @@ import { Exit } from "effect"
 import { useState } from "react"
 import { agentOf, mutate } from "@huntaway/client"
 import { ProfileId, type Automation, type DocumentLabel } from "@huntaway/contracts"
-import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../../../agents"
+import { effortOptions, inheritedModel, modelOptions, modelPlaceholder, useAgentModels } from "../../../agents"
 import { useBoard } from "../../../state/board"
 import { nowMillis } from "../../../state/clock"
 import { useAction } from "../../../state/mutation"
@@ -324,7 +324,7 @@ export function AutomationEditor({
                     value={d.model}
                     onChange={(m) => set("model", m)}
                     options={modelOptions(configObj, models)}
-                    placeholder={agentOf(configObj) === "codex" ? "model id, e.g. gpt-6.1-sol" : undefined}
+                    placeholder={modelPlaceholder(configObj)}
                     inherited={inheritedModel(configObj, models, project?.model, profileModel, hostSettings?.default_model)}
                   />
                 </Field>

@@ -339,8 +339,9 @@ export const makeCodexOutput = Effect.gen(function* () {
 })
 
 /**
- * The follower's line handler for both agents: a Codex run's lines (its folder has `codex.json`) go to the Codex
- * handler, the others to the `RunOutput` this is built over (the Claude handler, `runs/claude/output.ts`).
+ * The follower's line handler for every agent: a Codex run's lines (its folder has `codex.json`) and an ACP agent's
+ * (`acp.json`, whose adapter writes Codex's lines: HE-69) go to the Codex handler, the others to the `RunOutput` this is
+ * built over (the Claude handler, `runs/claude/output.ts`).
  */
 export const CodexOutput = Layer.effect(
   RunOutput,
@@ -348,12 +349,12 @@ export const CodexOutput = Layer.effect(
     const claude = yield* RunOutput
     const codex = yield* makeCodexOutput
     const dir = yield* RunDir
-    // Whether each run being followed is Codex's, read from its folder once.
+    // Whether each run being followed writes Codex's lines, read from its folder once.
     const codexRuns = MutableHashMap.empty<RunId, boolean>()
     const isCodex = Effect.fnUntraced(function* (run: Run) {
       const known = Option.getOrUndefined(MutableHashMap.get(codexRuns, run.id))
       if (known !== undefined) return known
-      const found = yield* dir.isCodex(run.id)
+      const found = (yield* dir.isCodex(run.id)) || (yield* dir.isAcp(run.id))
       MutableHashMap.set(codexRuns, run.id, found)
       return found
     })

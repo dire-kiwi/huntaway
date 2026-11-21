@@ -55,7 +55,7 @@ export function ReadsAs({ opened, origin, where, agent, tok }: { opened: Opened;
   const { scratch } = opened
   const { group } = origin
   const { typeTabs, noProject, asGroup, project } = where
-  const { model, setModel, codex, inherited, efforts, setEffort, hostSettings, modelList } = agent
+  const { model, setModel, ownModels, configObj, inherited, efforts, setEffort, hostSettings, modelList } = agent
   const {
     tokens,
     taskType,
@@ -127,7 +127,11 @@ export function ReadsAs({ opened, origin, where, agent, tok }: { opened: Opened;
         <ReadsChip
           icon={<Cpu size={12} />}
           label={modelLabel(runs[0]?.model || model)}
-          title={codex && !runs[0]?.model ? "A Claude model, which Codex doesn't run: it uses the default" : undefined}
+          title={
+            ownModels && !runs[0]?.model
+              ? `A Claude model, which ${configObj?.agent === "codex" ? "Codex" : "an ACP agent"} doesn't run: it uses the default`
+              : undefined
+          }
           onRemove={() => setModel("")}
           removeTitle="Use the default model"
         />

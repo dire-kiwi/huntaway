@@ -53,6 +53,8 @@ interface RunOptions {
   readonly cost?: number
   /** A Codex run (`codex.json`). */
   readonly codex?: boolean
+  /** HE-69: an ACP agent's run (`acp.json`). */
+  readonly acp?: boolean
 }
 
 /** A run of `task`, in the order they start. */
@@ -69,6 +71,7 @@ const newRun = (task: TaskId, o: RunOptions = {}) =>
       yield* fs.makeDirectory(dir.runDir(id), { recursive: true })
       yield* fs.writeFileString(`${dir.runDir(id)}/out.jsonl`, o.lines.join("\n"))
       if (o.codex === true) yield* fs.writeFileString(`${dir.runDir(id)}/codex.json`, json({ model: "gpt-6.1-sol" }))
+      if (o.acp === true) yield* fs.writeFileString(`${dir.runDir(id)}/acp.json`, json({ model: null }))
     }
     return id
   }).pipe(Effect.orDie)
@@ -202,6 +205,11 @@ describe("Tokens", () => {
         const split = yield* newRun(task, { lines: [result("s1", { "claude-opus-5-5": opusSplit(10, 300, 20) })] })
         const unknown = yield* newRun(task, { lines: [result("s2", { "claude-opus-5-5": opus(1, 10, 100, 0.1) })] })
         const codex = yield* newRun(task, { lines: [usage("main", [100, 40, 10], [100, 40, 10])], codex: true })
+        // HE-69: an ACP agent's run, on the model it says it runs, with no rollout file.
+        const acp = yield* newRun(task, {
+          lines: [json({ method: "huntaway/model", params: { model: "gemini-3-pro" } }), usage("sess", [100, 40, 10], [100, 40, 10])],
+          acp: true,
+        })
         yield* (yield* Tokens).countPending(null)
         const cols = (id: RunId) =>
           sql<{ readonly h: number | null; readonly m: number | null; readonly runtime: string }>`SELECT cache_write_1h_tokens AS h,
@@ -209,6 +217,8 @@ describe("Tokens", () => {
         assert.deepStrictEqual(yield* cols(split), [[300, 20, "claude"]])
         assert.deepStrictEqual(yield* cols(unknown), [[null, null, "claude"]])
         assert.deepStrictEqual(yield* cols(codex), [[null, null, "codex"]])
+        assert.deepStrictEqual(yield* cols(acp), [[null, null, "acp"]])
+        assert.deepStrictEqual(yield* rows(acp), [["gemini-3-pro", 10, null, false]])
       }),
     ),
   )

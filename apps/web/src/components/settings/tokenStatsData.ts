@@ -61,7 +61,7 @@ export interface URow {
   threadId: string | null
   runKind: string
   model: string
-  /** "claude" or "codex", as the host reports it. */
+  /** "claude", "codex" or "acp", as the host reports it. */
   runtime: string
   /** Input that wasn't read from or written to the cache. */
   input: number
@@ -194,8 +194,11 @@ export function poorHit(t: Pick<Totals, "input" | "cacheRead" | "cacheWrite">) {
   return fedTokens(t) >= POOR_HIT_MIN && (hitRate(t) ?? 1) < POOR_HIT
 }
 
-/** Codex's cache writes, which don't say which cache they went to. */
+/** Codex's and ACP agents' cache writes, which don't say which cache they went to. */
 export const codexWrites = (t: Totals) => t.cacheWrite - t.cacheWrite1h - t.cacheWrite5m - t.cacheWriteUnsplit
+
+/** A runtime's name, as a model is labelled with it. */
+export const runtimeName = (runtime: string | undefined): string => (runtime === "codex" ? "Codex" : runtime === "acp" ? "ACP" : "Claude")
 
 export function value(t: Totals, m: Metric) {
   return m === "tokens" ? allTokens(t) : m === "output" ? t.output : t.cost

@@ -36,7 +36,10 @@ import { DOCS_SERVER, GH_SERVER, usesServer } from "./claude/access.ts"
 
 /** What decides what a run is told besides its thread: the agent it runs on and its permission mode. */
 export interface RunTold {
+  /** Any agent but Claude Code: Codex, or an ACP agent. */
   readonly codex: boolean
+  /** HE-69: an ACP agent (`codex` too); not by default. */
+  readonly acp?: boolean | undefined
   readonly permission_mode: PermissionMode
   /** The task's temp folder (its `TMPDIR`), which it is told of; none by default. */
   readonly tmp?: string | null | undefined
@@ -215,6 +218,7 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           docs: documentsOf(dataDir.documents(task.id), task),
           target: target !== null && target.status !== "done" ? target : null,
           codex: run.codex,
+          acp: run.acp === true,
           plan: run.permission_mode === "plan",
           profile,
           profiles: yield* profiles.list,
@@ -348,7 +352,7 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
         const runtime = o.runtime ?? (yield* runtimeOf(project, profile.claude_config_ids))
         const permission_mode = o.permission_mode ?? project.permission_mode ?? (yield* settings.get).default_permission_mode ?? "default"
         const kind = threadKindOf(task)
-        const context = yield* contextOf(task, kind, { codex: runtime === "codex", permission_mode })
+        const context = yield* contextOf(task, kind, { codex: runtime !== "claude", acp: runtime === "acp", permission_mode })
         return { text: systemPrompt(kind, context), runtime, permission_mode }
       })
 

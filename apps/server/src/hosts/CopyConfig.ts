@@ -109,7 +109,8 @@ export class CopyConfig extends Context.Service<CopyConfig, CopyConfigShape>()("
         const exported = yield* from.exportArchive(source.id)
         const existing = (yield* to.configs).find((c) => c.name === name)
         const dir = input.config_dir?.trim() ? input.config_dir : source.config_dir
-        const target = existing ?? (yield* to.create({ name, config_dir: dir, agent: source.agent }))
+        const target =
+          existing ?? (yield* to.create({ name, config_dir: dir, agent: source.agent, ...(source.command == null ? {} : { command: source.command }) }))
         yield* to.importArchive(target.id, exported.archive, input.overwrite === true)
         return { ok: true, files: exported.files }
       })

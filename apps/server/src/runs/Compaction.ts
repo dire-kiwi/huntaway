@@ -28,8 +28,8 @@ export const compactIdle = Effect.gen(function* () {
   const now = yield* Clock.currentTimeMillis
   for (const id of yield* repo.idleSessions(minutesAgo(now, AUTO_COMPACT_AFTER_MINUTES), minutesAgo(now, AUTO_COMPACT_UNTIL_MINUTES))) {
     const task = yield* tasks.get(id)
-    // Compacting while the prompt cache is warm is a Claude saving.
-    if (task === null || (yield* facts.config(task))?.agent === "codex") continue
+    // Compacting while the prompt cache is warm is a Claude saving (Codex compacts itself; an ACP agent can't be).
+    if (task === null || ((yield* facts.config(task))?.agent ?? "claude") !== "claude") continue
     yield* runs
       .compact(id, `Compacting the conversation after ${AUTO_COMPACT_AFTER_MINUTES} minutes idle`)
       .pipe(Effect.catch((e) => Effect.logWarning(`task=${id} auto-compact failed: ${e._tag}`)))

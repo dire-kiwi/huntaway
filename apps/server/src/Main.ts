@@ -83,6 +83,8 @@ import { Memory } from "./assistant/Memory.ts"
 import { Tracked } from "./assistant/Tracked.ts"
 import { AssistantHandlers } from "./rpc/assistant.ts"
 import { AssistantLaunch } from "./runs/AssistantLaunch.ts"
+import { AcpQueriesLive } from "./agents/acp/AcpQueriesLive.ts"
+import type { AcpQueries } from "./agents/AcpQueries.ts"
 import { CodexQueriesLive } from "./agents/codex/CodexQueriesLive.ts"
 import { CodexQueries } from "./agents/CodexQueries.ts"
 import { ContextMeter } from "./agents/ContextMeter.ts"
@@ -412,15 +414,17 @@ const GithubLive = Layer.mergeAll(GithubRemote.layer, PrWatch.layer, PullRequest
  * What asks a model besides runs: titles, window restarts, and Codex's one-off questions (its models, skills, rate limits
  * and titles). Tests give scripted ones, so no test calls a model or starts a Codex.
  */
-export interface ModelCalls<T, E1, R1, E2, R2, C = never, E3 = never, R3 = never> {
+export interface ModelCalls<T, E1, R1, E2, R2, C = never, E3 = never, R3 = never, A = never, E4 = never, R4 = never> {
   /** `TitleModel`, and what a test drives it with (`TitleScript`). */
   readonly titles: Layer.Layer<TitleModel | T, E1, R1>
   readonly window: Layer.Layer<WindowPrompt, E2, R2>
   /** `CodexQueries`: a config's models, skills, rate limits and titles from a short-lived `codex app-server` (5.3). */
   readonly codex: Layer.Layer<CodexQueries | C, E3, R3>
+  /** HE-69: `AcpQueries`: an ACP config's models, from `acp-run --list-models`. */
+  readonly acp: Layer.Layer<AcpQueries | A, E4, R4>
 }
 /** The agents area over what is above it. */
-const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
+const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3, A, E4, R4>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3, A, E4, R4>) =>
   Layer.mergeAll(UsageWindow.loop, AgentTools.catchingUp).pipe(
     Layer.provideMerge(
       Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer, CodexQueries.registered),
@@ -435,8 +439,8 @@ const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1,
     ),
     // 6.6: what the prompts, a run's end and the merge queue read of a task's workflows (the workflows area registers it).
     Layer.provideMerge(WorkflowFacts.layer),
-    // A Codex config's titles are asked of Codex, as its models are (5.3).
-    Layer.provideMerge(models.codex),
+    // A Codex config's titles are asked of Codex, as its models are (5.3); an ACP config's models of its agent (HE-69).
+    Layer.provideMerge(Layer.merge(models.codex, models.acp)),
     Layer.provideMerge(GithubLive),
   )
 /** The runs area over what is above it, with `output` handling runs' lines (tests give their own). */
@@ -562,7 +566,7 @@ const DesktopLive = DesktopTools.pipe(
  * The areas of M2 to M5 over the agents area: runs and their ends, permissions, reviews, the merge queue and pull
  * requests. `areasLayer` puts M6's on top (a `pipe` takes twenty steps at most).
  */
-const runAreasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
+const runAreasLayer = <T, E1, R1, E2, R2, C, E3, R3, A, E4, R4>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3, A, E4, R4>) =>
   // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
   Layer.mergeAll(InReview.layer, MergedWatcher.layer).pipe(
     // The merge queue and its gate (4.7): the gh tools ask the gate before a merge; the gate decides approval cards, and
@@ -630,8 +634,8 @@ export const InstalledLive = Layer.effect(
 )
 
 /** Every area's services, with `models` for the board's own model calls and `plugins` for the plugins it runs. */
-export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(
-  models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>,
+export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3, A, E4, R4>(
+  models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3, A, E4, R4>,
   plugins: Layer.Layer<InstalledPlugins, never, ServerConfig> = InstalledLive,
 ) =>
   // The demo board is seeded once every area is built, before Recovery runs.
@@ -712,7 +716,7 @@ export const PlatformLoops = Layer.mergeAll(Telemetry.exporter, Lag.ticker)
 export const ProjectLoops = Layer.mergeAll(Projects.recorder, Projects.gitSweeper)
 
 export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, ProjectLoops, AutomationLoops, AssistantLoops, PlatformLoops, Terminals.reaper /* 6.1 */).pipe(
-  Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),
+  Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive, acp: AcpQueriesLive })),
 )
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */

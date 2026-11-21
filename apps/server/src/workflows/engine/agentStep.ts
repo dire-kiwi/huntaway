@@ -133,7 +133,8 @@ export const startAgent = Effect.fnUntraced(function* (d: Deps, run: RunState, n
     instructions: asked,
     output: node.output,
     skills: node.skills ?? [],
-    codex: config?.agent === "codex",
+    // Any agent but Claude Code (HE-69: an ACP agent too) is told its skills without Claude Code's Skill tool.
+    codex: (config?.agent ?? "claude") !== "claude",
     earlier,
     replies: verdict ? yield* d.readers.userReplies(task.id, REPLIES) : null,
     recheck,
