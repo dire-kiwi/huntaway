@@ -408,8 +408,10 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   ended. `task/Terminal.tsx` is the old pane: the socket is `/api/terminal/<ticket>` on the task's host, with a ticket
   from `terminal.open` asked for each connection (a ticket that can't be had is retried as a dropped socket is). The
   client's `hostSocketUrl` puts it on the page's own server for its own tasks, and through the hub's relay (a relay
-  ticket for that path) for a task on another host; the relay passes no query on, so a relayed terminal takes its size
-  from the first `resize` (HE-74: the pane first opened every task's terminal on the page's own server).
+  ticket for that path) for a task on another host (HE-74: the pane first opened every task's terminal on the page's own
+  server). The relay passes no query on, so a relayed terminal starts at the host's default size and takes the pane's
+  from its `resize` frames: one on open, and the same again on the first output, since a host whose pty helper predates
+  HE-74 could lose a resize that came while its terminal started.
   A terminal is still made once its font has loaded and a frame later, and reset before re-attaching; Restart and
   Reconnect remount the pane (`key`), which the lint's effect rules asked for in place of an `attempt` dependency, and
   the connection's mutable state is one object in the effect. xterm's styles are imported by `index.css`.

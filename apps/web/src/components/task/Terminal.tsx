@@ -208,15 +208,19 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
           })
           return undefined
         }
+        const sendSize = () => send(toJson({ type: "resize", cols: term.cols, rows: term.rows }))
         const attach = (url: string) => {
           const sock = new WebSocket(url)
           sock.binaryType = "arraybuffer"
           at.ws = sock
           let unstable: (() => void) | undefined
+          // The size again once the session has said something: a host may lose a resize that arrives while its terminal
+          // starts (one before HE-74's fix to its pty helper), and a relayed socket's URL carries no size (HE-74).
+          let sized = false
           sock.addEventListener("open", () => {
             // Attached for a while: a drop after that starts its retries over.
             unstable = after("5 seconds", () => (at.retries = 0))
-            send(toJson({ type: "resize", cols: term.cols, rows: term.rows }))
+            sendSize()
           })
           sock.addEventListener("message", (e: MessageEvent<unknown>) => {
             if (typeof e.data === "string") {
@@ -229,6 +233,10 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
               return
             }
             if (!(e.data instanceof ArrayBuffer)) return
+            if (!sized) {
+              sized = true
+              sendSize()
+            }
             const bytes = new Uint8Array(e.data)
             term.write(bytes, () => ack(bytes.length))
           })

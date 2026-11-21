@@ -43,15 +43,27 @@ for (const tool of [false, true])
       let socket,
         connections = 0
       const input = []
+      // The resize frames of each connection, and how many came before its first output.
+      const resizes = []
       await page.routeWebSocket(/\/api\/terminal\//, (ws) => {
         socket = ws
         connections++
         assert.match(new URL(ws.url()).pathname, new RegExp(`/api/terminal/t${tickets}$`))
+        const sized = { before: 0, after: [] }
+        resizes.push(sized)
+        let output = false
         ws.onMessage((data) => {
-          if (typeof data !== "string") input.push(data.toString())
+          const frame = typeof data === "string" ? JSON.parse(data) : null
+          if (frame === null) input.push(data.toString())
+          else if (frame.type === "resize" && output) sized.after.push(frame)
+          else if (frame.type === "resize") {
+            sized.before++
+            // Output once the size sent on open is in, as a host's comes once its terminal has started.
+            output = true
+            ws.send(Buffer.from("Terminal output ready\r\n$ "))
+          }
         })
         ws.send(JSON.stringify({ type: "ready" }))
-        ws.send(Buffer.from("Terminal output ready\r\n$ "))
       })
       await ui.run([`goto /t/${task.id}`, tool ? "click Open lazygit in a terminal" : "click terminal"])
       // xterm (a lazy chunk), the terminal's status and its font load first, which took seconds on a busy CI runner. The
@@ -60,6 +72,10 @@ for (const tool of [false, true])
       await eventually(() => assert.ok(connections, "terminal connects even when a canvas context is unavailable"))
       assert.deepEqual(calls.find((c) => c.tag === "terminal.open")?.payload, { task_id: task.id, tool: tool ? "lg" : null })
       await page.getByText("Terminal output ready", { exact: false }).waitFor()
+      // HE-74: the size again after the first output, for a host that lost the one sent on open (a relayed socket's URL
+      // carries no size).
+      await eventually(() => assert.ok(resizes[0]?.before >= 1 && resizes[0].after.length >= 1, "the size is sent on open and again after the first output"))
+      assert.ok(resizes[0].after[0].cols > 0 && resizes[0].after[0].rows > 0)
       await page.locator(".xterm-helper-textarea").press("a")
       await eventually(() => assert.ok(input.includes("a"), "keyboard input reaches the session"))
       await ui.run(["click thread"])

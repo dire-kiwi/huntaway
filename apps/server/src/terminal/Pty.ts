@@ -8,8 +8,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 // Node has no openpty without a native module, so a small Python helper holds the terminal: the command runs as the
 // session leader of a new pty (Python's `pty.fork`), the helper copies its stdin to the terminal and the terminal's
 // output to its stdout, and takes `<cols> <rows>` lines on fd 3 to resize it. It exits once the terminal's side has
-// closed (or its stdin has), and the command is hung up when it goes. Kept as it was for M6; a small Rust binary beside
-// the shim (`ia-pty`) can replace it if Python proves a burden on a release host.
+// closed (or its stdin has), and the command is hung up when it goes. The command starts only once the helper has set
+// the first size (a pipe the child waits on): the child used to set it after the fork, which could undo a resize the
+// helper had already taken from fd 3 and leave the command at the first size (HE-74). Kept as it was for M6 otherwise;
+// a small Rust binary beside the shim (`ia-pty`) can replace it if Python proves a burden on a release host.
 
 const HELPER = `
 import os, pty, sys, fcntl, termios, struct, select, signal
@@ -17,16 +19,21 @@ cols, rows = int(sys.argv[1]), int(sys.argv[2])
 argv = sys.argv[3:]
 def winsize(fd, c, r):
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", max(r, 1), max(c, 1), 0, 0))
+go_r, go_w = os.pipe()
 pid, fd = pty.fork()
 if pid == 0:
     try:
-        winsize(0, cols, rows)
+        os.close(go_w)
+        os.read(go_r, 1)
+        os.close(go_r)
         os.execvp(argv[0], argv)
     except Exception as e:
         sys.stderr.write("starting terminal process: %s\\n" % e)
     os._exit(127)
 signal.signal(signal.SIGTERM, lambda *a: (os.close(fd), os._exit(0)))
 winsize(fd, cols, rows)
+os.close(go_r)
+os.close(go_w)
 def write_all(f, data):
     while data:
         data = data[os.write(f, data):]

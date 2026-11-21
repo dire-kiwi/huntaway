@@ -150,7 +150,7 @@ export const hostSessionAtom: (host: HostId) => Atom.Atom<SessionView> = Atom.fa
  * The websocket URL of `path` on `host` (a terminal's `/api/terminal/<ticket>`, with `search` such as `?cols=…`): on the
  * page's own server for its own host (or before the hub has said which that is), else through the hub's relay, with a
  * relay ticket for `path` (docs/plan/08-hosts.md, Relay). The relay passes no query on, so `search` is only for the
- * page's own host: a relayed terminal takes its size from the client's first `resize`.
+ * page's own host: a relayed terminal starts at the host's default size and takes the pane's from its `resize` frames.
  */
 export const hostSocketUrl = (host: HostId, path: string, search = ""): Effect.Effect<string, Unavailable, AtomRegistry.AtomRegistry> =>
   Effect.gen(function* () {

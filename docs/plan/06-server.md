@@ -1082,7 +1082,9 @@ shim (`ia-pty`) if Python proves a burden on a release host. Flow control by ack
   `Terminals.registered`). A project or profile deleted with its tasks is left to the reaper.
 - **Left out**: the assistant's workspace and a documents-only task's folder as a terminal's place (they come with their
   areas: the terminal opens where `LaunchFacts` puts their agent until then); a relayed terminal on another host (M7,
-  `hub.hosts.openRelay`). The pty is still the Python helper (`terminal/Pty.ts`); `ia-pty` was not needed.
+  `hub.hosts.openRelay`; the client's side came with HE-74). The pty is still the Python helper (`terminal/Pty.ts`);
+  `ia-pty` was not needed. Its command starts only once the helper has set the first size (HE-74: the child set it
+  after the fork, and could undo a resize the helper had already taken).
 
 ### Desktop, update, analytics — [inventory 05](inventory/05-hosts-update.md), [07](inventory/07-server-root-api.md)
 
