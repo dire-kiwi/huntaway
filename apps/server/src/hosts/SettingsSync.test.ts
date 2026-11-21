@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Context, Effect, Exit, FileSystem, Layer, Option } from "effect"
 import { TestClock } from "effect/testing"

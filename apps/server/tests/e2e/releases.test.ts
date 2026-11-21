@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Deferred, Effect, Fiber, FileSystem, Option, Path, Schema, Stream } from "effect"
 import { RpcClient } from "effect/rpc"
@@ -19,7 +19,7 @@ import { launcherUrl, launchServer } from "./supervised.ts"
 // would), the server marks it bad and runs the good one. Roll back goes back to the server the host was installed as.
 
 const launcher = launcherUrl
-const entry = new URL("../../src/bin.ts", import.meta.url)
+const entry = new URL("../../src/entry.ts", import.meta.url)
 const PLATFORM = `${process.platform === "darwin" ? "mac" : process.platform}-${process.arch}`
 
 /**
@@ -37,14 +37,14 @@ const tarball = (version: string, kind: Kind): Buffer => {
     const root = `${dir}/${top}`
     mkdirSync(`${root}/server/src`, { recursive: true })
     mkdirSync(`${root}/ui`)
-    // The launcher as a release has it; it runs server/src/bin.ts with the Node it finds.
+    // The launcher as a release has it; it runs server/src/entry.ts with the Node it finds.
     copyFileSync(launcher, `${root}/huntaway`)
     chmodSync(`${root}/huntaway`, 0o755)
     writeFileSync(`${root}/ia-shim`, "not run: the test servers run no agents\n")
     writeFileSync(`${root}/ui/index.html`, `<html>release ${version}</html>\n`)
     writeFileSync(`${root}/build.json`, `{ "version": "${version}", "commit": "${commitOf(version)}" }\n`)
     writeFileSync(
-      `${root}/server/src/bin.ts`,
+      `${root}/server/src/entry.ts`,
       kind === "good"
         ? `import "${entry.href}"\n`
         : kind === "dies_after_recovery"

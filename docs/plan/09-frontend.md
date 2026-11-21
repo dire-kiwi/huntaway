@@ -852,6 +852,57 @@ the client" are replaced (inventory 10, section 14):
 - A terminal is created after its font has loaded and one frame later; it is reset before re-attaching.
 - An open tab detects a new build and offers a reload. There is no service-worker cache.
 
+### The bundle (HE-71)
+
+A board opened over a network (a linked host's, a phone's) waits mostly on bytes, not on the server: before HE-71 the
+first load was 1.99 MB uncompressed and took about 1.0 s to the first card at 20 Mbit/s and 40 ms, 3.6 s at 5 Mbit/s
+and 100 ms (on localhost, under 0.1 s either way). Three changes:
+
+- **Precompressed.** `apps/web/vite.config.ts`'s `precompress` plugin writes `<file>.br` (brotli 11) and `<file>.gz`
+  (gzip 9) beside each text file of the build over 1 KiB (js, css, html, svg, json, webmanifest, ttf…), when that saves
+  a tenth or more. The server's `StaticUi` (`apps/server/src/http/routes.ts`) sends `.br`, else `.gz`, to a browser
+  whose `Accept-Encoding` takes it (q-values and `*` read), with the file's own type, `Content-Encoding` and
+  `Vary: Accept-Encoding`; the variant is served by the same `HttpStaticServer` under its own name, so its ETag (size
+  and time), 304s and ranges are its own. No variant on disk (a file too small, a UI folder from before), the file as
+  it is. Nothing is compressed per request. `scripts/package-server.sh` copies `dist` whole, so a release's `ui/` and
+  the desktop app carry the variants. The build takes about 5 s longer for it.
+- **Split.** Every page but the boards is a chunk loaded the first time it is opened (`App.tsx`: Settings, a project's
+  settings, Analytics, the Guide, a host's page, onboarding, the assistant, a plugin's page), with `React.lazy`; a page
+  shows `PageLoading` (a word after a moment, as `BoardLoading`) while its chunk comes. The task's views (`TaskView`,
+  `TaskPanel`, `TaskModal`) and the Markdown renderer (react-markdown, GFM: `thread/MarkdownView.tsx` behind
+  `thread/Markdown.tsx`) are chunks too, but fetched as the app starts, beside the board's snapshot, through atoms
+  (`taskViewsAtom` in `App.tsx`, `markdownViewAtom`) rather than `React.lazy`: once loaded they draw in the same render,
+  where a lazy component suspends on its first render and shows its fallback for a moment (which made opening a task
+  flash, and broke the checks that open one). Until then a task shows nothing and a text takes its room unseen. The
+  Guide's links other pages use are in `settings/GuideLink.tsx`, so the Guide (with its own Markdown) leaves the entry.
+  The entry went from 1,443 KB to 742 KB (the first load from 1,892 KiB in 8 files to 1,270 KiB in 24, 455 to 330 KiB
+  as brotli). What is left in it: the board, the layout, the New task dialog, `mdast-util-from-markdown` (the
+  composer's tokens, `layout/taskTokens.ts`) and react-dom.
+- **A chunk that doesn't load.** A tab opened before an update asks for chunks the new build doesn't have (404), and a
+  network blip fails one. The pages and the compare view are inside `ChunkBoundary` (`layout/ChunkError.tsx`), an error
+  boundary that shows `ChunkError` (it couldn't load, with Reload) in the page's place, rather than React unmounting the
+  whole app; another page tries again. Task views that failed show `ChunkError` on a task's page and floating over the
+  board for the panel or the dialog; a Markdown renderer that failed leaves texts as they are, shown (`whitespace-pre-wrap`).
+- **The RPC socket is compressed.** Both listeners (`Main.ts`, `ReadOnlyMain.ts`) turn on `ws`'s permessage-deflate
+  (`http/websocket.ts`) for messages of 1 KiB or more: the first `board.watch` message is about 1.8 KB a task as JSON
+  and deflates about 7 times smaller. It applies to the websockets the server accepts (the terminal, the task's
+  browser), except the relay's piped ones (`hosts/pipe.ts`): `ws` queues a frame for zlib before it reaches the
+  connection, out of sight of the pipe's wait for a drain, so a fast sender would be read into memory. `accept` takes
+  the extension out of the upgrade request and `dial` doesn't offer it; `pipe.test.ts` runs its hub with these options.
+  A message is at most 16 MiB inflated (`maxPayload`, RPC's own limit; 1009 past it): `/api/rpc` upgrades before any
+  token, and `ws`'s default of 100 MiB let a few kilobytes deflated make the server allocate that much
+  (`http/websocket.test.ts`). The desktop pane's DevTools answers can be bigger (a long diff's accessibility tree is
+  tens of MiB), so the pane sends a message over 1 MiB as `{"parts":n}` and `n` binary parts of 1 MiB, up to 100
+  (`paneParts` in `@huntaway/shared`), and the server joins them (`paneText`); `Browsers.test.ts` has a 20 MiB tree
+  go through the listener.
+
+After: 0.41 s to the first card at 20 Mbit/s and 40 ms, 1.0 s at 5 Mbit/s and 100 ms (Chromium's network emulation,
+the demo board, an empty cache). Not done: `board.watch` still waits for `public.health`'s answer (one round trip on
+the open socket) to learn the page's own host id, which keys every host's atoms (`hostRuntime`, `hostBoardAtom`,
+`boardHostIdsAtom`); the board stream's `hello` carries it only once the watch has started, so starting it sooner
+would mean putting the id in `index.html` (served as a static, precompressed file) or guessing it from the last visit
+and re-keying when wrong.
+
 ## The desktop shell: `apps/desktop`
 
 The Electron shell (six CommonJS files, 1,687 lines) becomes TypeScript, with its main process an Effect program
@@ -900,12 +951,22 @@ apps/desktop/
   `apps/server/bin/huntaway` once `apps/server/node_modules` is installed), run as a child that is not in a process
   group of its own, so that stopping it is SIGTERM to the launcher alone (SIGKILL after 10 seconds). Its PATH is the
   login shell's for a packaged app; the old shell changed its own `process.env.PATH` instead.
+- **The order of a start** (HE-71): the single-instance lock first (main.ts's `early`), then the layers, then
+  `Servers.prestart` begins finding or starting the server before `app.whenReady()` (it needs nothing of Electron's;
+  the first window's `resolve` takes that result, and a window counts as open until the first one is, so a server lost
+  meanwhile is still started again). How a release build was installed (`pacman -Qqo`) is one cached effect in
+  `Servers`, begun as its layer is built, for the started server's environment and for the windows' package update
+  (the preload's synchronous `shellUpdateKind` reply waits for it if it must). Once no server answers on the port, the
+  login shell's PATH and the release variables (frame stamp, install kind) are begun and then awaited together just
+  before the spawn; a server already up costs no login shell. The window is created without waiting for any of it:
+  the shell stamp `checkShell` compares against is hashed beside it.
 - **What the shell reads of the server**: `HUNTAWAY_READY {"port","token"}`, `HUNTAWAY_PROGRESS {step, done, total,
   file}` as it starts (06-server.md, Startup, step 2), and `HUNTAWAY_BACKUP_FAILED {reason, why, dir}` for the error
   page's "Start without a backup". The server does not print the last yet (its `Backup` fails the start with a
   `StartupError`); until it does, a failed backup shows as a server that exited.
-- **The progress page** (HE-44): a window with no board to show yet shows it rather than a black window: while
-  `Servers.resolve` takes more than 300 ms (a server starting, or another launch's being waited for), and in every window
+- **The progress page** (HE-44): a window with no board to show yet shows it rather than a black window: at once when
+  this app is starting the server (`Servers.starting`, HE-71), else while `Servers.resolve` takes more than 300 ms
+  (another launch's server being waited for; one already up loads the board with no flash of it), and in every window
   as the app quits to relaunch (a new shell after an Update, or its own package update, after which the next instance
   says "Starting Huntaway 0.0.5": `relaunch-windows.json` is `{windows, heading}` now, and a plain list is still read).
   Like the error page it is a `data:` URL in the board's theme: the app's heading, the step (`Servers.startup`: looking
@@ -929,8 +990,8 @@ apps/desktop/
   has no streaming hash), still before the rename.
 - **Tests**: the old `desktop-versions`, `desktop-boot` and `desktop-shell-update` cases, and `Servers.test.ts`, which
   runs stand-in launchers (shell scripts) on a free port: the ready line, an installed version that exits and is
-  blamed once the next is up, a failed backup, attaching to a server already there, remote mode, and windows sharing
-  one start.
+  blamed once the next is up, a failed backup, attaching to a server already there, remote mode, windows sharing
+  one start, a start begun before any window (`prestart`, HE-71), and a packaged app's login-shell PATH.
 
 ## The phone app
 

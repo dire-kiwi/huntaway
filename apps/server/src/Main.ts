@@ -1,4 +1,5 @@
-import { NodeHttpServer, NodeServices } from "@effect/platform-node"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Effect, Layer } from "effect"
 import { Mac, SecureRandom } from "effect/crypto"
 // 6.8: Web Push's cryptography; 6.10: the SHA-256 of a Cua Driver download; 6.5: a signed webhook delivery's.
@@ -70,6 +71,7 @@ import { RoutineHost } from "./automations/RoutineHost.ts"
 import { Routines } from "./automations/Routines.ts"
 import { Scheduler } from "./automations/Scheduler.ts"
 import { Webhooks } from "./automations/Webhooks.ts"
+import { websocketOptions } from "./http/websocket.ts"
 import { WebhookRoute } from "./http/webhooks.ts"
 import { AutomationHandlers } from "./rpc/automations.ts"
 // 6.7: the assistant.
@@ -859,7 +861,7 @@ export const RoutesLive = Layer.mergeAll(
 export const serverLayer = (config: ServerConfig["Service"]) =>
   // Once it listens, this host dials the hubs it is a host of and discovery answers on the port it got (step 6).
   Layer.mergeAll(HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }), Hubs.dialIn, Discovery.responder).pipe(
-    Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),
+    Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host, websocket: websocketOptions })),
     Layer.provideMerge(AreasLive),
     Layer.provideMerge(PlatformLive),
     Layer.provideMerge(NodeServices.layer),

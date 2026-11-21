@@ -331,7 +331,7 @@ export class Restack extends Context.Service<Restack, RestackShape>()("huntaway-
         })
 
       const resume = Effect.gen(function* () {
-        for (const t of (yield* repo.all).filter((x) => x.kind === "task" && x.restack === "due" && x.status !== "done")) yield* schedule(t.id)
+        for (const id of yield* repo.restacksDue) yield* schedule(id)
       }).pipe(Effect.withSpan("Restack.resume"))
 
       return Restack.of({ reconcileDependants, schedule, afterRun, settled, resume })

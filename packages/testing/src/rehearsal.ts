@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Effect, FileSystem, Layer, Option } from "effect"
 import { ProfileId, ProjectId, TaskId } from "@huntaway/contracts"
 import { AcpQueries } from "huntaway-server/src/agents/AcpQueries.ts"

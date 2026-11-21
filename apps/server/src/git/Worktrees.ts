@@ -544,7 +544,7 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
       })
 
       const recover = Effect.fn("Worktrees.recover")(function* () {
-        for (const t of yield* repo.all) {
+        for (const t of yield* repo.worktreesInFlux) {
           if (t.worktree_state === "setting_up") {
             yield* write(t.id, { worktree_state: "error", worktree_error: "the server stopped while the worktree was being set up" }).pipe(Effect.ignore)
           } else if (t.worktree_state === "tearing_down") {

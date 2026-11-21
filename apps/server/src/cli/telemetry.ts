@@ -1,6 +1,5 @@
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { Config, Console, DateTime, Effect, FileSystem, Layer, Option, Redacted, Result, Runtime, Schema } from "effect"
-import { Command, Flag } from "effect/cli"
 import { FetchHttpClient } from "effect/http"
 import type { HttpClient } from "effect/http"
 import { SqlClient } from "effect/sql"
@@ -30,12 +29,6 @@ class TelemetryCliExit extends Schema.TaggedError<TelemetryCliExit, { readonly b
 const fail = (command: string, message: string) =>
   Console.error(`huntaway telemetry ${command}: ${message}`).pipe(Effect.andThen(Effect.fail(new TelemetryCliExit({ code: 1 }))))
 
-const urlFlag = Flag.String("url").pipe(
-  Flag.withDescription("ClickHouse: http://USER[:PASSWORD]@HOST:8123[/DATABASE] (default $HUNTAWAY_TELEMETRY_URL)"),
-  Flag.withFallbackConfig(Config.String("HUNTAWAY_TELEMETRY_URL")),
-  Flag.optional,
-)
-
 /** The ClickHouse a URL names, with its password from the URL or HUNTAWAY_TELEMETRY_PASSWORD. */
 const targetOf = Effect.fnUntraced(function* (command: string, raw: string) {
   const parsed = splitUrl(raw)
@@ -60,7 +53,7 @@ const using =
 const withHttp = <A, E>(effect: Effect.Effect<A, E, HttpClient.HttpClient>) => using(FetchHttpClient.layer)(effect)
 
 /** Creates the database and the tables, or brings them up to date (every statement can run again). */
-const init = Effect.fn("telemetry.init")(function* (url: Option.Option<string>) {
+export const init = Effect.fn("telemetry.init")(function* (url: Option.Option<string>) {
   const t = yield* required("init", url)
   if (!/^[A-Za-z_]\w*$/.test(t.database)) return yield* fail("init", `"${t.database}" isn't a ClickHouse database name`)
   const run = Effect.gen(function* () {
@@ -79,7 +72,7 @@ and is set up on its Settings page (Telemetry), or with --telemetry-url.`)
 })
 
 /** An empty insert into each table, as a host's Test button does into `events`. */
-const test = Effect.fn("telemetry.test")(function* (url: Option.Option<string>) {
+export const test = Effect.fn("telemetry.test")(function* (url: Option.Option<string>) {
   const t = yield* required("test", url)
   let failed = 0
   for (const table of TABLES) {
@@ -94,7 +87,7 @@ const test = Effect.fn("telemetry.test")(function* (url: Option.Option<string>) 
 })
 
 /** A host's history from before it sent, for the profiles that send, straight to ClickHouse (not through the outbox). */
-const backfill = Effect.fn("telemetry.backfill")(function* (dataDirFlag: Option.Option<string>, url: Option.Option<string>, dryRun: boolean) {
+export const backfill = Effect.fn("telemetry.backfill")(function* (dataDirFlag: Option.Option<string>, url: Option.Option<string>, dryRun: boolean) {
   const fs = yield* FileSystem.FileSystem
   const home = yield* Config.String("HOME").pipe(Config.withDefault("/"))
   const dataHome = yield* Config.String("XDG_DATA_HOME").pipe(Config.withDefault(`${home}/.local/share`))
@@ -165,27 +158,3 @@ const backfill = Effect.fn("telemetry.backfill")(function* (dataDirFlag: Option.
   // Read-only, beside the running server.
   return yield* using(Layer.orDie(SqliteClient.layer({ filename: file, readonly: true })))(work)
 })
-
-const initCommand = Command.make("init", { url: urlFlag }, ({ url }) => init(url)).pipe(
-  Command.withDescription("Create the database (default huntaway) and its tables, or bring them up to date: give it a login that can, such as an admin's"),
-)
-const testCommand = Command.make("test", { url: urlFlag }, ({ url }) => test(url)).pipe(
-  Command.withDescription("Check that a login can insert into the tables, as a host's writer must"),
-)
-const backfillCommand = Command.make(
-  "backfill",
-  {
-    dataDir: Flag.String("data-dir").pipe(
-      Flag.withDescription("The board's data folder (default $HUNTAWAY_DATA_DIR, else ~/.local/share/huntaway-effect)"),
-      Flag.optional,
-    ),
-    url: urlFlag,
-    dryRun: Flag.Boolean("dry-run").pipe(Flag.withDescription("Count what would be sent, and send nothing"), Flag.withDefault(false)),
-  },
-  ({ dataDir, url, dryRun }) => backfill(dataDir, url, dryRun),
-).pipe(Command.withDescription("Send this host's history from before telemetry was turned on, for the profiles that send"))
-
-export const telemetryCommand = Command.make("telemetry").pipe(
-  Command.withDescription("Set up and check the ClickHouse telemetry goes to (a password left out of --url is read from HUNTAWAY_TELEMETRY_PASSWORD)"),
-  Command.withSubcommands([initCommand, testCommand, backfillCommand]),
-)

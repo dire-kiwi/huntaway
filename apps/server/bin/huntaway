@@ -1,6 +1,6 @@
 #!/bin/sh
 # The huntaway server's launcher: `huntaway serve …` and its other subcommands. Carried over from dire-kiwi/huntaway-legacy
-# (apps/server/bin/huntaway at f2298f0c) with the entry file renamed (src/bin.ts), the hooks as entry files of their own
+# (apps/server/bin/huntaway at f2298f0c) with the entry file renamed (src/entry.ts, which loads src/bin.ts), the hooks as entry files of their own
 # (src/hooks/), and its variables under HUNTAWAY_* (docs/plan/02-repository.md). It keeps the server's PID stable across
 # restarts, restarts a crashed server with backoff, and execs what the server asks for on exit code 75.
 # A server started from a test is not a test process itself.
@@ -12,8 +12,8 @@ here=$(dirname "$self")
 # A release's package has this script as its `huntaway`, with the server in server/ and Node in node/ beside it; a
 # checkout has it in apps/server/bin/. A package's server is precompiled to .js, so Node doesn't load its TypeScript
 # compiler for it; a checkout runs the .ts.
-if [ -f "$here/server/src/bin.js" ]; then src=$here/server/src ext=js
-elif [ -f "$here/server/src/bin.ts" ]; then src=$here/server/src ext=ts
+if [ -f "$here/server/src/entry.js" ]; then src=$here/server/src ext=js
+elif [ -f "$here/server/src/entry.ts" ]; then src=$here/server/src ext=ts
 else src=$here/../src ext=ts; fi
 # The server goes by it for what runs it (agents' MCP helpers, and which installed release it is).
 HUNTAWAY_EXE=$self
@@ -54,6 +54,8 @@ fi
 # that imports nothing from effect, so it starts in tens of milliseconds, without loading bin.ts. Node keeps what it
 # compiled for them (TypeScript with its types stripped, and V8's code) in its compile cache in the temp folder, so the
 # next call's hook doesn't load the TypeScript stripper again: from a checkout, about 20 ms of node rather than 45.
+# `serve` and the other subcommands run src/entry.*, which turns the same cache on in the process (HE-71), so that it
+# isn't in the environment every agent and its children inherit.
 case "$1" in
   approval-hook | gh-hook | gh-run)
     hook=$1
@@ -74,7 +76,7 @@ case "$1" in
     exec "$node" $flags "$src/$entry.$ext" "$@"
     ;;
   "" | serve) ;;
-  *) exec "$node" $flags "$src/bin.$ext" "$@" ;;
+  *) exec "$node" $flags "$src/entry.$ext" "$@" ;;
 esac
 
 # `serve` runs node as this shell's child, so the server keeps this process's id when it restarts, as the Rust server
@@ -139,10 +141,10 @@ while :; do
   rm -f "$dir/started"
   began=$(date +%s)
   if [ -n "$skip_backup_once" ]; then
-    HUNTAWAY_SKIP_DB_BACKUP_ONCE=$skip_backup_once "$node" $flags "$src/bin.$ext" "$@" <&3 3<&- &
+    HUNTAWAY_SKIP_DB_BACKUP_ONCE=$skip_backup_once "$node" $flags "$src/entry.$ext" "$@" <&3 3<&- &
     skip_backup_once=
   else
-    "$node" $flags "$src/bin.$ext" "$@" <&3 3<&- &
+    "$node" $flags "$src/entry.$ext" "$@" <&3 3<&- &
   fi
   child=$!
   while :; do

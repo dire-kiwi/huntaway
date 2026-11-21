@@ -1,4 +1,5 @@
-import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Effect, Layer, Option, Predicate, Ref, Schema, Stream } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
 import type { HttpClientResponse } from "effect/http"
