@@ -146,15 +146,15 @@ jobs:
       - uses: *setup-vp
         with: *setup-vp-with
 
-      # A runner's disk is read in from its image on first use: the first start of Chromium takes about 3 s on an idle
-      # runner and 0.5 s after that, and in the middle of the tests, with every CPU busy, more than the 20 s the server
-      # gives Chrome to answer (HE-73). Starting it once here reads it in while the runner is idle.
+      # A runner's disk is read in from its image on first use: the first start of Chromium took 3 s on one idle runner
+      # and 49 s on another, and 0.5 s after that, and in the middle of the tests, with every CPU busy, more than the
+      # 20 s the server gives Chrome to answer (HE-73). Starting it once here reads it in before the tests.
       - name: Chromium
         run: |
           [ -x "$CHROMIUM" ] || { echo "::error::$CHROMIUM isn't on this runner: the browser's tests need a Chromium"; exit 1; }
-          timeout 120 "$CHROMIUM" --headless --no-sandbox --disable-gpu --no-first-run --user-data-dir="$RUNNER_TEMP/chromium" \
+          timeout 300 "$CHROMIUM" --headless --no-sandbox --disable-gpu --no-first-run --user-data-dir="$RUNNER_TEMP/chromium" \
             --dump-dom about:blank > /dev/null 2> "$RUNNER_TEMP/chromium.log" || { cat "$RUNNER_TEMP/chromium.log"; exit 1; }
-          "$CHROMIUM" --version
+          echo "$("$CHROMIUM" --version) started in ${SECONDS}s"
 
       - name: pnpm test
         run: pnpm test
