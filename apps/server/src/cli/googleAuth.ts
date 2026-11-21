@@ -1,6 +1,5 @@
 import { Clock, Config, Console, Context, Deferred, Effect, FileSystem, Layer, Option, Result, Schema } from "effect"
 import type { Scope } from "effect"
-import { Command, Flag } from "effect/cli"
 import { Digest, SecureRandom } from "effect/crypto"
 import { Base64Url } from "effect/encoding"
 import { HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
@@ -127,62 +126,55 @@ const hostName = Effect.gen(function* () {
 })
 
 /**
- * The command, with `listen`: the HTTP server on 127.0.0.1 and a port (Node's, from the entry point). It needs an HTTP
- * client, `SecureRandom` and `Digest`, which the entry point provides.
+ * The command (bin.ts has its flags, and loads this file to run it), with `listen`: the HTTP server on 127.0.0.1 and a
+ * port (Node's, from the entry point). It needs an HTTP client, `SecureRandom` and `Digest`, which the entry point provides.
  */
-export const googleAuthCommand = (listen: (port: number) => Layer.Layer<HttpServer.HttpServer, HttpServerError.ServeError, Scope.Scope>) =>
-  Command.make(
-    "google-auth",
-    {
-      clientSecret: Flag.String("client-secret").pipe(
-        Flag.withDescription("The OAuth client's JSON, downloaded from Google Cloud (a Desktop app client)"),
-        Flag.optional,
-      ),
-      credentialsDir: Flag.String("credentials-dir").pipe(
-        Flag.withDescription("Where to keep the credentials (workspace-mcp's WORKSPACE_MCP_CREDENTIALS_DIR)"),
-        Flag.optional,
-      ),
-      port: Flag.Int("port").pipe(Flag.withDescription(`The port to listen on (default ${CONSENT_PORT})`), Flag.withDefault(CONSENT_PORT)),
-    },
-    ({ clientSecret, credentialsDir, port }) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem
-        const home = yield* Config.String("HOME").pipe(Config.withDefault("/"))
-        const secretPath = Option.getOrElse(clientSecret, () => defaultClientSecret(home))
-        const text = yield* fs.readFileString(secretPath).pipe(Effect.mapError((e) => failed(`reading the OAuth client from ${secretPath}: ${e.message}`)))
-        const client = readClient(text)
-        if (Result.isFailure(client)) return yield* failed(`in ${secretPath}: ${client.failure}`)
-        const dir = Option.getOrElse(credentialsDir, () => defaultCredentialsDir(home))
-        const host = yield* hostName
-        yield* Console.log(`Signing in to Google for the assistant's Google server, with the OAuth client in ${secretPath}.`)
-        // The loopback listener, on the port given (so it's built here, not at the entry point).
-        const listening = yield* Layer.build(listen(port)).pipe(
-          Effect.mapError(() => failed(`listening on 127.0.0.1:${port} (pick another with --port, and forward that one)`)),
-        )
-        const done = yield* signIn(client.success, dir, (url, redirect) =>
-          Effect.gen(function* () {
-            const at = redirect.replace(/\/$/u, "").split(":").at(-1) ?? String(port)
-            if (client.success.web) {
-              yield* Console.log(
-                `\nThat's a Web application client: Google sends the browser back only to its registered redirect URIs, so add ${redirect} to them (or use a Desktop app client).`,
-              )
-            }
+export const googleAuth =
+  (listen: (port: number) => Layer.Layer<HttpServer.HttpServer, HttpServerError.ServeError, Scope.Scope>) =>
+  ({
+    clientSecret,
+    credentialsDir,
+    port,
+  }: {
+    readonly clientSecret: Option.Option<string>
+    readonly credentialsDir: Option.Option<string>
+    readonly port: number
+  }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const home = yield* Config.String("HOME").pipe(Config.withDefault("/"))
+      const secretPath = Option.getOrElse(clientSecret, () => defaultClientSecret(home))
+      const text = yield* fs.readFileString(secretPath).pipe(Effect.mapError((e) => failed(`reading the OAuth client from ${secretPath}: ${e.message}`)))
+      const client = readClient(text)
+      if (Result.isFailure(client)) return yield* failed(`in ${secretPath}: ${client.failure}`)
+      const dir = Option.getOrElse(credentialsDir, () => defaultCredentialsDir(home))
+      const host = yield* hostName
+      yield* Console.log(`Signing in to Google for the assistant's Google server, with the OAuth client in ${secretPath}.`)
+      // The loopback listener, on the port given (so it's built here, not at the entry point).
+      const listening = yield* Layer.build(listen(port)).pipe(
+        Effect.mapError(() => failed(`listening on 127.0.0.1:${port} (pick another with --port, and forward that one)`)),
+      )
+      const done = yield* signIn(client.success, dir, (url, redirect) =>
+        Effect.gen(function* () {
+          const at = redirect.replace(/\/$/u, "").split(":").at(-1) ?? String(port)
+          if (client.success.web) {
             yield* Console.log(
-              `\n1. Forward this port from the machine your browser is on, if you haven't (in another terminal there):\n\n     ssh -N -L ${at}:127.0.0.1:${at} ${host}\n`,
+              `\nThat's a Web application client: Google sends the browser back only to its registered redirect URIs, so add ${redirect} to them (or use a Desktop app client).`,
             )
-            yield* Console.log(`2. Open this in that browser, sign in and allow access:\n\n     ${url}\n`)
-            yield* Console.log(`Waiting for Google to send the browser back to ${redirect} (up to 15 minutes)…`)
-          }),
-        ).pipe(Effect.provideService(HttpServer.HttpServer, Context.get(listening, HttpServer.HttpServer)))
-        yield* Console.log(`\nSigned in as ${done.email}. Its credentials are in ${done.file} (readable by you alone).`)
-        if (done.missing.length > 0) {
+          }
           yield* Console.log(
-            `Google didn't grant all it was asked for (some boxes were left unticked): ${done.missing.join(", ")}. Run this again to give them.`,
+            `\n1. Forward this port from the machine your browser is on, if you haven't (in another terminal there):\n\n     ssh -N -L ${at}:127.0.0.1:${at} ${host}\n`,
           )
-        }
-        return yield* Console.log("The assistant's Google card shows it as connected. The Google server picks it up from its next run.")
-      }).pipe(
-        Effect.scoped,
-        Effect.catchTag("GoogleAuthFailed", (e) => Console.error(`huntaway google-auth: ${e.reason}`).pipe(Effect.andThen(Effect.fail(e)))),
-      ),
-  ).pipe(Command.withDescription("Sign in to Google for the assistant's Google server (Gmail, Calendar, Drive), on a headless host"))
+          yield* Console.log(`2. Open this in that browser, sign in and allow access:\n\n     ${url}\n`)
+          yield* Console.log(`Waiting for Google to send the browser back to ${redirect} (up to 15 minutes)…`)
+        }),
+      ).pipe(Effect.provideService(HttpServer.HttpServer, Context.get(listening, HttpServer.HttpServer)))
+      yield* Console.log(`\nSigned in as ${done.email}. Its credentials are in ${done.file} (readable by you alone).`)
+      if (done.missing.length > 0) {
+        yield* Console.log(`Google didn't grant all it was asked for (some boxes were left unticked): ${done.missing.join(", ")}. Run this again to give them.`)
+      }
+      return yield* Console.log("The assistant's Google card shows it as connected. The Google server picks it up from its next run.")
+    }).pipe(
+      Effect.scoped,
+      Effect.catchTag("GoogleAuthFailed", (e) => Console.error(`huntaway google-auth: ${e.reason}`).pipe(Effect.andThen(Effect.fail(e)))),
+    )

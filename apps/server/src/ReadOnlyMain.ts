@@ -1,4 +1,5 @@
-import { NodeHttpServer, NodeServices } from "@effect/platform-node"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Layer } from "effect"
 import { Aead, Digest, Kdf, KeyAgreement, Mac, SecureRandom, Signature } from "effect/crypto"
 import { HttpRouter } from "effect/http"

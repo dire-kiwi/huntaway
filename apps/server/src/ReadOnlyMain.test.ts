@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Context, Deferred, Effect, Exit, FileSystem, Layer, Ref, Schema } from "effect"
 import { Headers, HttpClient, HttpClientError } from "effect/http"

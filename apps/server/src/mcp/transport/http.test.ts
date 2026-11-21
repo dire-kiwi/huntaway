@@ -1,4 +1,4 @@
-import { NodeHttpServer } from "@effect/platform-node"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Fiber, Layer, Queue, Redacted, Schema, Stream } from "effect"
 import { Tool } from "effect/ai"

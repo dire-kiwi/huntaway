@@ -1,4 +1,5 @@
-import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Effect, Stream } from "effect"
 import { writeSync } from "node:fs"
 import { homedir } from "node:os"

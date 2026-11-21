@@ -19,7 +19,7 @@ fail() { echo "release-check: $*" >&2; exit 1; }
 
 got=$("$rel/huntaway" --version)
 [[ $got == "huntaway $version" ]] || fail "huntaway --version says '$got', not 'huntaway $version'"
-[[ -f $rel/server/src/bin.js && -z $(find "$rel/server/src" "$rel/server/migrations" -name '*.ts' -print -quit) ]] ||
+[[ -f $rel/server/src/entry.js && -f $rel/server/src/bin.js && -z $(find "$rel/server/src" "$rel/server/migrations" -name '*.ts' -print -quit) ]] ||
   fail "expected the server compiled to .js in server/src and server/migrations"
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/release-check.XXXXXX")

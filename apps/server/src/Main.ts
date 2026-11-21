@@ -1,4 +1,5 @@
-import { NodeHttpServer, NodeServices } from "@effect/platform-node"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Effect, Layer } from "effect"
 import { Mac, SecureRandom } from "effect/crypto"
 // 6.8: Web Push's cryptography; 6.10: the SHA-256 of a Cua Driver download; 6.5: a signed webhook delivery's.

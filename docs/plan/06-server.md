@@ -1534,7 +1534,8 @@ now refuses a call whose input is not JSON (exit 2); the old one let it through.
 `NODE_COMPILE_CACHE` (in the temp folder) for the hooks: from a checkout, Node otherwise loads its TypeScript stripper
 on every call. Measured on the reference machine through `bin/huntaway`: about 57–60 ms with an empty cache (the first
 call), 25–33 ms after; `tests/e2e/hooks.test.ts` holds the median under 60 ms. A release runs the precompiled `.js`
-and strips nothing.
+and strips nothing. `serve` and the other subcommands use the same cache, turned on in the process (`src/entry.ts`,
+[The CLI](#the-cli)), not in the environment.
 
 ## Startup
 
@@ -1592,7 +1593,7 @@ module under `lifecycle/` or a loop's layer.
 
 #### As built in 9.1 (HE-8)
 
-- **`ImportGuard`** (`platform/ImportGuard.ts`) is built by `bin.ts`'s `serve` over `ServerConfig` alone, before
+- **`ImportGuard`** (`platform/ImportGuard.ts`) is built by `serve` (`serve.ts`) over `ServerConfig` alone, before
   anything else: no `import.json`, the board as usual; `rehearsal: true`, `ReadOnlyMain`; otherwise it fails with a
   `StartupError` naming the process ids that have `<from>/<database>` open (`ImportRecord.processesWithOpen`) and saying
   to stop the old server for good, or to stop this one and start only the old one. An `import.json` that does not read
@@ -1646,3 +1647,27 @@ module under `lifecycle/` or a loop's layer.
 | `codex-run <spec>`                        | The Codex adapter, started under the shim (not through `effect/cli`: it is a run's process)  |
 | `approval-hook`, `gh-hook`, `gh-run`      | The hooks, dispatched by the launcher before any of this loads                               |
 | `--version`                               | `huntaway <version>`: the release smoke test depends on the exact form                       |
+
+As built in HE-71 (startup time; on a fresh board most of the time to `HUNTAWAY_READY` was Node loading code):
+
+- **The entry file.** The launcher runs `src/entry.ts` (`entry.js` in a release, which is also how it tells a
+  release's layout) for `serve` and every subcommand but the hooks and `codex-run`. It calls
+  `module.enableCompileCache()` on `$TMPDIR/node-compile-cache` (the hooks' folder) and only then imports `bin.ts`:
+  Node keeps what it compiled (TypeScript with its types stripped, and V8's code) and the next start reads it back.
+  It is turned on in the process rather than with `NODE_COMPILE_CACHE`, which agents and their children would
+  inherit. `serve` writes the cache (`module.flushCompileCache()`) once it has printed `HUNTAWAY_READY`, as a server
+  seldom exits the way that has Node write it; a short command writes it as it exits.
+- **Each command loads what it runs.** `bin.ts` has every command's flags and help, and imports what runs one with
+  `import()` when it runs: `serve` is `serve.ts` (`ImportGuard`, then `Main.ts` or `ReadOnlyMain.ts`, whichever the
+  folder is served by), `token` the identity, and the others their `cli/` file, which exports the command's function
+  (`rpc`, `sshHostMain`, `importLegacyMain`, `install`, `init`/`test`/`backfill`, `googleAuth`). `--version`, `--help`
+  and `rpc --list` no longer load the server.
+- **`@effect/platform-node` by module.** Its index re-exports `NodeRedis` and `NodeCluster*`, and so loads the redis
+  client (about 650 modules) wherever it is imported: its modules are imported one by one
+  (`import * as NodeServices from "@effect/platform-node/NodeServices"`), and `no-restricted-imports` refuses the index
+  under `apps/server/src` and `packages/testing`. `undici` (with `NodeHttpClient`) is loaded by `socksClient` when a
+  host with a SOCKS proxy first needs it.
+- Measured from a checkout on the reference machine (a fresh board, `scripts/test-server.sh --no-agents`, medians):
+  `HUNTAWAY_READY` 863 ms before, 815 ms with an empty cache, 473 ms with a warm one (a restart); 2,109 modules loaded,
+  now about 1,120. `huntaway --version` about 800 ms before, 170 ms after (240 ms with an empty cache), `rpc --list`
+  800 ms before, 210 ms after.

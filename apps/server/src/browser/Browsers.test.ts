@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process"
 import { createServer } from "node:http"
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Fiber, FileSystem, Layer, Option, PubSub, Queue, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"

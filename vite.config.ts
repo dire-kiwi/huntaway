@@ -44,6 +44,12 @@ const restrict = (patterns: Array<{ group: Array<string>; message: string }>): [
 const noTesting = { group: ["@huntaway/testing", "@huntaway/testing/*"], message: "packages/testing is for tests only." }
 const noApps = { group: ["huntaway-server", "huntaway-server/*", "huntaway-web", "huntaway-web/*"], message: "A package does not import an app." }
 const noNode = { group: ["node:*"], message: "This package runs anywhere: no Node modules." }
+// HE-71: @effect/platform-node's index re-exports NodeRedis and NodeCluster*, and so loads the redis client (about 650
+// modules) at every start. Its modules are imported one by one: `@effect/platform-node/NodeServices`.
+const noPlatformNodeIndex = {
+  name: "@effect/platform-node",
+  message: "Import its modules one by one (@effect/platform-node/NodeServices): its index loads the redis client.",
+}
 const noEffect = {
   group: ["effect", "effect/*", "@effect/*"],
   message: "Plain TypeScript: the hooks load this per tool call, so it does not import effect.",
@@ -141,8 +147,9 @@ export default defineConfig({
       },
       {
         files: ["apps/server/src/**"],
-        rules: { "no-restricted-imports": restrict([noTesting]) },
+        rules: { "no-restricted-imports": ["error", { paths: [noPlatformNodeIndex], patterns: [noTesting] }] },
       },
+      { files: ["packages/testing/**"], rules: { "no-restricted-imports": ["error", { paths: [noPlatformNodeIndex] }] } },
       // The kept React components: view code, moved over one feature at a time (docs/plan/09-frontend.md).
       {
         files: ["apps/web/src/components/**"],
@@ -164,7 +171,10 @@ export default defineConfig({
       // Entry points provide layers and read the environment.
       {
         files: [
+          "apps/server/src/entry.ts",
           "apps/server/src/bin.ts",
+          // HE-71: `serve`, which bin.ts loads for it.
+          "apps/server/src/serve.ts",
           "apps/server/src/codex-run.ts",
           "apps/server/src/Main.ts",
           // 9.1: the read-only server's composition root, the second one.

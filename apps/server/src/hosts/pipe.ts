@@ -1,4 +1,5 @@
-import { NodeHttpServerRequest, NodeWS } from "@effect/platform-node"
+import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest"
+import * as NodeWS from "@effect/platform-node/NodeWS"
 import { Effect } from "effect"
 import type { Duration } from "effect"
 import { HttpServerRequest } from "effect/http"

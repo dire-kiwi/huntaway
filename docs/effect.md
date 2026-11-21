@@ -26,7 +26,8 @@ names that changed and that the spike or HA-408 tripped over:
 | `DateTime.unsafeMake`                                                         | `DateTime.makeUnsafe`                                                                                                                                                              |
 
 Use the barrel imports the package's own docs use: `import { Effect, Layer, Schema } from "effect"` and
-`import { RpcServer } from "effect/rpc"`. The three hook commands are the exception: they import nothing from
+`import { RpcServer } from "effect/rpc"`. Not `@effect/platform-node`'s, whose index loads the redis client: its
+modules one by one, `import * as NodeServices from "@effect/platform-node/NodeServices"` (HE-71; a lint error). The three hook commands are the exception: they import nothing from
 `effect` (see [06-server.md](plan/06-server.md#hook-commands)).
 
 Versions are exact in the pnpm catalog. `effect/http`, `effect/rpc`, `effect/sql`, `effect/ai`, `effect/process`,

@@ -10,9 +10,11 @@ apps/
   server/                 the server (package huntaway-server)
     bin/huntaway          the launcher: sh, carried over; keeps the PID, restarts on a crash, execs on exit 75
     src/
-      bin.ts              entry point: the CLI
+      entry.ts            what the launcher runs: turns on Node's compile cache, then loads bin.ts (HE-71)
+      bin.ts              entry point: the CLI, its commands' flags; loads what runs a command when it runs
+      serve.ts            `serve`: ImportGuard, then Main.ts or ReadOnlyMain.ts
       Main.ts             composition root: every layer, in startup order
-      cli/                one file per subcommand (serve, token, rpc, import-legacy, install-service, ssh-host, …)
+      cli/                one file per subcommand (rpc, import-legacy, install-service, ssh-host, telemetry, …)
       hooks/              approval-hook, gh-hook, gh-run: plain TypeScript, no effect import
       codex-run.ts        the adapter between a run's files and `codex app-server` (its own process, uses Effect)
       platform/           Db, Migrations, Events, KeyedLock, Proc, DataDir, ServerConfig, Secrets, Telemetry, Backup
