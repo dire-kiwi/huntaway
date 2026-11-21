@@ -149,6 +149,27 @@ jobs:
       - name: pnpm test:scripts
         run: pnpm test:scripts
 
+  chrome-diag:
+    needs: tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Cold Chrome starts (temporary, HE-73)
+        run: |
+          nproc; free -m; df -h / /tmp; echo "DBUS=${DBUS_SESSION_BUS_ADDRESS-unset} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR-unset}"
+          bin=
+          for p in /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/google-chrome; do
+            [ -e "$p" ] && { ls -la "$p"; readlink -f "$p"; [ -n "$bin" ] || bin=$p; }
+          done
+          echo "systemChrome would be $bin"
+          d=$(mktemp -d)
+          for i in 1 2 3; do
+            s=$(date +%s%N)
+            timeout 120 "$bin" --headless --no-sandbox --disable-gpu --no-first-run --user-data-dir="$d/$i" --dump-dom about:blank > /dev/null 2> "$d/err$i"
+            echo "run $i: exit $? after $(( ($(date +%s%N) - s) / 1000000 )) ms"; cat "$d/err$i"
+          done
+          "$bin" --version
+
   # `pnpm test:e2e`: the whole-server tier (apps/server/tests/e2e), real server processes started through the launcher.
   e2e:
     needs: tree
