@@ -1,4 +1,5 @@
-import { NodeHttpServerRequest, NodeWS } from "@effect/platform-node"
+import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest"
+import * as NodeWS from "@effect/platform-node/NodeWS"
 import { Effect } from "effect"
 import type { Duration } from "effect"
 import { HttpServerRequest } from "effect/http"
@@ -10,6 +11,11 @@ import { Socket } from "effect/socket"
 // `Writer` hands a frame to `ws.send` and returns, so a pipe of `reader.pull` into `writer.writeAll` alone reads a fast
 // peer as fast as it sends and keeps whatever the slow side has not taken in memory. Here each write also waits for the
 // connection under the slow side to drain, so a slow reader slows the sender, in both directions.
+//
+// A piped socket is never compressed (HE-71). With permessage-deflate, `ws.send` queues a frame for zlib and the
+// connection's buffer stays empty until it is deflated, so the wait for a drain doesn't see it: a sender faster than
+// zlib is read as fast as it sends, into that queue. The listeners offer deflate (`http/websocket.ts`), so `accept`
+// takes the extension out of the request before it upgrades, and `dial` doesn't offer it.
 
 /** The connection under a websocket: what a write waits on to drain. A Node `net.Socket` is one. */
 export interface Transport {
@@ -48,6 +54,8 @@ const drained = (transport: Transport | undefined): Effect.Effect<void> =>
 export const accept: Effect.Effect<Pipeable, HttpServerError.HttpServerError, HttpServerRequest.HttpServerRequest> = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest
   const incoming = NodeHttpServerRequest.toIncomingMessage(request)
+  // `ws` negotiates from the headers of the request it is given, as the upgrade happens.
+  delete incoming.headers["sec-websocket-extensions"]
   const socket = yield* request.upgrade
   return { socket, transport: () => incoming.socket }
 })
@@ -72,7 +80,7 @@ export const dial = (
     const socket = yield* Socket.fromWebSocket(
       Effect.acquireRelease(
         Effect.sync(() => {
-          const ws = new NodeWS.WebSocket(url, [...(options.protocols ?? [])], { headers: { ...options.headers } })
+          const ws = new NodeWS.WebSocket(url, [...(options.protocols ?? [])], { headers: { ...options.headers }, perMessageDeflate: false })
           ws.once("upgrade", (response) => {
             under.current = response.socket
             options.onOpen?.(response.socket)

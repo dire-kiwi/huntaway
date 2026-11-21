@@ -1,32 +1,42 @@
+import { useAtomMount, useAtomValue } from "@effect/atom-react"
 import { isAssistant, isGroupTask, isRoutine } from "@huntaway/client"
+import { Effect } from "effect"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { clsx } from "clsx"
 import { lazy, Suspense, useEffect } from "react"
 import { Loader2 } from "lucide-react"
 import { activeProfile, loadActiveProfile } from "./activeProfile"
 import { Board, GroupBoard, ProfileBoard } from "./components/board/Board"
 import { profileNames, useProfileName } from "./components/boardHelpers"
+import { ChunkBoundary, ChunkError } from "./components/layout/ChunkError"
 import { Sidebar } from "./components/layout/Sidebar"
 import { RehearsalBanner } from "./components/layout/RehearsalBanner"
 import { UnhandledErrors } from "./components/layout/UnhandledErrors"
-import { Analytics } from "./components/settings/Analytics"
-import { Guide } from "./components/settings/Guide"
-import { HostPage } from "./components/settings/HostPage"
-import { Onboarding } from "./components/settings/Onboarding"
-import { ProjectSettings } from "./components/settings/project/ProjectSettings"
-import { Settings } from "./components/settings/Settings"
 import { TokenScreen } from "./components/settings/TokenScreen"
-import { AssistantPage } from "./components/task/AssistantPage"
-import { TaskModal, TaskPanel, TaskView } from "./components/task/TaskView"
 // 6.1
 import { startToolKeepalive } from "./components/task/terminalTools"
+import { markdownViewAtom } from "./components/task/thread/Markdown"
 import { useDrawer, useNarrow } from "./narrow"
 import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl } from "./router"
 import { useBoard } from "./state/board"
 import { navigate, usePanel, useRoute, useTaskModal } from "./state/route"
-import { PluginPage } from "./components/plugins/PluginPage"
 
 // 6.11: the compare view of the tasks made from one prompt, in a chunk of its own.
 const CompareView = lazy(() => import("./components/changes/Compare").then((m) => ({ default: m.CompareView })))
+// Every page but the boards, and the task's own views, are chunks of their own too, loaded when first opened, so the
+// board's first load fetches only the board (HE-71, docs/plan/09-frontend.md, The bundle).
+const Settings = lazy(() => import("./components/settings/Settings").then((m) => ({ default: m.Settings })))
+const ProjectSettings = lazy(() => import("./components/settings/project/ProjectSettings").then((m) => ({ default: m.ProjectSettings })))
+const Analytics = lazy(() => import("./components/settings/Analytics").then((m) => ({ default: m.Analytics })))
+const Guide = lazy(() => import("./components/settings/Guide").then((m) => ({ default: m.Guide })))
+const HostPage = lazy(() => import("./components/settings/HostPage").then((m) => ({ default: m.HostPage })))
+const Onboarding = lazy(() => import("./components/settings/Onboarding").then((m) => ({ default: m.Onboarding })))
+const AssistantPage = lazy(() => import("./components/task/AssistantPage").then((m) => ({ default: m.AssistantPage })))
+const PluginPage = lazy(() => import("./components/plugins/PluginPage").then((m) => ({ default: m.PluginPage })))
+// What opening a task needs (its views, the Markdown renderer) is fetched as the app starts, beside the board's
+// snapshot, so a task opens at once and its text is drawn as Markdown straight away: only the pages wait to be opened.
+// Atoms rather than `React.lazy`, so once loaded they are drawn in the same render, without a fallback in between.
+const taskViewsAtom = Atom.make(Effect.promise(() => import("./components/task/TaskView"))).pipe(Atom.keepAlive)
 
 export function App() {
   const authed = useBoard((s) => s.authed)
@@ -35,6 +45,12 @@ export function App() {
   const route = useRoute()
   const panel = usePanel()
   const modal = useTaskModal()
+  const viewsResult = useAtomValue(taskViewsAtom)
+  const views = AsyncResult.getOrElse(viewsResult, () => undefined)
+  // The task's views didn't load (the network, or a build that changed under this tab): say so, with Reload, rather than
+  // loading for ever.
+  const viewsFailed = AsyncResult.isFailure(viewsResult)
+  useAtomMount(markdownViewAtom)
   const routeTask = useBoard((s) => (route.name === "task" ? s.tasks[route.taskId] : undefined))
   const narrow = useNarrow()
   const drawerOpen = useDrawer((d) => d.open)
@@ -88,7 +104,11 @@ export function App() {
   // A board with none of its own can still link hosts that have some (Settings → Hosts, M7).
   if (profiles.length === 0) {
     if (!loaded) return <BoardLoading />
-    return route.name === "settings" ? <Settings tab={route.tab} /> : <Onboarding />
+    return (
+      <ChunkBoundary resetKey={route.name}>
+        <Suspense fallback={<PageLoading />}>{route.name === "settings" ? <Settings tab={route.tab} /> : <Onboarding />}</Suspense>
+      </ChunkBoundary>
+    )
   }
 
   return (
@@ -116,26 +136,33 @@ export function App() {
         {/* The task panel slides in over the content below its top bar, rather than squeezing it. */}
         <div className="relative min-w-0 flex-1">
           <div className="h-full min-w-0">
-            {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
-            {route.name === "board" && <Board projectId={route.projectId} />}
-            {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
-            {route.name === "task" && <TaskView taskId={route.taskId} />}
-            {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
-            {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
-            {route.name === "settings" && <Settings tab={route.tab} />}
-            {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}
-            {route.name === "guide" && <Guide page={route.page} />}
-            {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
-            {route.name === "plugin" && <PluginPage key={route.plugin} route={route} />}
+            <ChunkBoundary resetKey={page}>
+              <Suspense fallback={<PageLoading />}>
+                {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
+                {route.name === "board" && <Board projectId={route.projectId} />}
+                {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
+                {route.name === "task" && (views ? <views.TaskView taskId={route.taskId} /> : viewsFailed ? <ChunkError /> : <PageLoading />)}
+                {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
+                {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
+                {route.name === "settings" && <Settings tab={route.tab} />}
+                {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}
+                {route.name === "guide" && <Guide page={route.page} />}
+                {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
+                {route.name === "plugin" && <PluginPage key={route.plugin} route={route} />}
+              </Suspense>
+            </ChunkBoundary>
           </div>
-          {panel && hasPanel(route) && <TaskPanel panel={panel} />}
+          {panel && hasPanel(route) && views && <views.TaskPanel panel={panel} />}
         </div>
         {panel?.compare === true && hasPanel(route) && (
-          <Suspense fallback={null}>
-            <CompareView taskId={panel.taskId} />
-          </Suspense>
+          <ChunkBoundary resetKey={panel.taskId}>
+            <Suspense fallback={null}>
+              <CompareView taskId={panel.taskId} />
+            </Suspense>
+          </ChunkBoundary>
         )}
-        {modal !== null && <TaskModal key={modal} taskId={modal} />}
+        {modal !== null && views && <views.TaskModal key={modal} taskId={modal} />}
+        {viewsFailed && route.name !== "task" && ((panel && hasPanel(route)) || modal !== null) && <ChunkError floating />}
         <UnhandledErrors />
       </div>
     </div>
@@ -147,6 +174,15 @@ function BoardLoading() {
   return (
     <div className="animate-fade-in-late flex h-full items-center justify-center gap-2 text-[13px] text-muted" role="status">
       <Loader2 size={14} className="animate-spin text-accent" /> Loading the board…
+    </div>
+  )
+}
+
+/** While a page's chunk loads the first time it is opened: nothing, then a word if it takes a moment. */
+function PageLoading() {
+  return (
+    <div className="animate-fade-in-late flex h-full items-center justify-center gap-2 text-[13px] text-muted" role="status">
+      <Loader2 size={14} className="animate-spin text-accent" /> Loading…
     </div>
   )
 }

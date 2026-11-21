@@ -1,4 +1,5 @@
-import { NodeHttpServer, NodeWS } from "@effect/platform-node"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
+import * as NodeWS from "@effect/platform-node/NodeWS"
 import { assert, describe, it } from "@effect/vitest"
 import { Clock, Effect, Exit, Layer, Redacted, Schema } from "effect"
 import { Headers, HttpRouter, HttpServer } from "effect/http"

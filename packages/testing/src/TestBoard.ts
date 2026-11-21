@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Effect, FileSystem, Layer } from "effect"
 import { CodexQueries } from "huntaway-server/src/agents/CodexQueries.ts"
 import { TitleModel } from "huntaway-server/src/agents/TitleModel.ts"

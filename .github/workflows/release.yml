@@ -113,7 +113,7 @@ jobs:
           if [ "${{ matrix.os }}" = mac ]; then res=$(echo release/mac*/*.app/Contents/Resources); else res=release/linux-unpacked/resources; fi
           ls "$res"
           [ "$("$res/huntaway" --version)" = "huntaway $VERSION" ]
-          [ -f "$res/server/src/bin.js" ] && [ -x "$res/ia-shim" ] && [ -x "$res/node/bin/node" ] && [ -f "$res/ui/index.html" ]
+          [ -f "$res/server/src/entry.js" ] && [ -x "$res/ia-shim" ] && [ -x "$res/node/bin/node" ] && [ -f "$res/ui/index.html" ]
 
       # The server on its own, for hosts, with the desktop shell of this release in electron/ (apps/desktop/dist, built
       # by the step before), which an installed app loads once it has updated to it.

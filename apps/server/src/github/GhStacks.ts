@@ -61,7 +61,10 @@ export interface GhStacksShape {
    * it, and the levels on it with it. In the background, one link at a time.
    */
   readonly link: (id: TaskId) => Effect.Effect<void>
-  /** Link the open stack levels with pull requests that aren't in a GitHub stack yet, as when the server starts. */
+  /**
+   * Link the open stack levels with pull requests that aren't in a GitHub stack yet, as when the server starts. In the
+   * background: it returns at once, and `settled` waits for it too.
+   */
   readonly linkAll: Effect.Effect<void>
   /** Waits for the links asked for so far (tests). */
   readonly settled: Effect.Effect<void>
@@ -259,12 +262,20 @@ export class GhStacks extends Context.Service<GhStacks, GhStacksShape>()("huntaw
         for (const x of stackedLevels(yield* repo.projectTasks(t.project_id), id)) yield* queue(x.id)
       })
 
-      const linkAll = Effect.gen(function* () {
-        for (const t of yield* repo.all) {
-          if (t.kind !== "task" || t.status === "done" || t.github_stack !== null || t.pr_url === null || t.project_id === null) continue
-          if (stackedBelow(yield* repo.projectTasks(t.project_id), t) !== null) yield* queue(t.id)
+      // Each project with a candidate is read once, and the candidates are found among its tasks.
+      const scan = Effect.gen(function* () {
+        for (const project of yield* repo.unstackedPrProjects) {
+          const rows = yield* repo.projectTasks(project)
+          for (const t of rows) {
+            if (t.status === "done" || t.github_stack !== null || t.pr_url === null) continue
+            if (stackedBelow(rows, t) !== null) yield* queue(t.id)
+          }
         }
-      }).pipe(Effect.withSpan("GhStacks.linkAll"))
+      }).pipe(
+        Effect.catchCause((c) => Effect.logError("finding the stack levels to link on GitHub", c)),
+        Effect.withSpan("GhStacks.linkAll"),
+      )
+      const linkAll = FiberSet.run(links, scan).pipe(Effect.asVoid)
 
       const restacked = Effect.fn("GhStacks.restacked")(function* (t: Task, dir: string, pushed: string, base: string) {
         const pr = targetOfUrl(t.pr_url)

@@ -1,7 +1,10 @@
-import { NodeHttpServer, NodeWS } from "@effect/platform-node"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
+import * as NodeWS from "@effect/platform-node/NodeWS"
 import { assert, describe, it } from "@effect/vitest"
 import { Deferred, Effect, Layer, Ref } from "effect"
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http"
+import { createServer } from "node:http"
+import { websocketOptions } from "../http/websocket.ts"
 import { accept, dial, pipe } from "./pipe.ts"
 import type { Pipeable, Transport } from "./pipe.ts"
 
@@ -14,6 +17,11 @@ import type { Pipeable, Transport } from "./pipe.ts"
 // no write of the hub's leaves more than about one batch in its own buffer for the slow side. Then the receiver reads,
 // and every frame arrives, in order. A pipe of Effect's reader into its writer alone is the control: it never pauses
 // the sender, and its buffer for the receiver grows to the whole load (the reason pipe.ts waits for a drain).
+//
+// The hub and the host listen with the server's own websocket options (permessage-deflate, HE-71) and the load doesn't
+// compress, as a terminal's or a browser's stream mostly doesn't: a frame `ws` queues for deflate isn't in the
+// connection's buffer, so a pipe that let its sockets negotiate deflate would read a sender faster than zlib into that
+// queue. Both of the hub's sockets are uncompressed, though the client and the host offer deflate.
 
 const CHUNK = 64 * 1024
 /** 96 MiB: far beyond what the kernel's buffers on a loopback connection hold (a few MiB each way). */
@@ -22,10 +30,31 @@ const TOTAL = CHUNK * CHUNKS
 /** The most a write may leave in the hub's buffer: a batch the reader pulled (its 64 KiB mark and a frame) and slack. */
 const MOST_BUFFERED = 1024 * 1024
 
-/** A terminal's output: frame `i` is `CHUNK` bytes of `i % 251`, with a text frame after every 100th. */
+/** `CHUNK` bytes that don't deflate (xorshift32), the same in every frame but further apart than deflate's 32 KiB window. */
+const NOISE = (() => {
+  const bytes = new Uint8Array(CHUNK)
+  let x = 2463534242
+  for (let i = 0; i < CHUNK; i++) {
+    x ^= x << 13
+    x ^= x >>> 17
+    x ^= x << 5
+    bytes[i] = x & 0xff
+  }
+  return bytes
+})()
+
+/** Frame `i`: the noise, with its first and last bytes `i % 251`. */
+const frame = (i: number) => {
+  const bytes = NOISE.slice()
+  bytes[0] = i % 251
+  bytes[CHUNK - 1] = i % 251
+  return bytes
+}
+
+/** A terminal's output: frame `i` of `CHUNK` bytes, with a text frame after every 100th. */
 const sendLoad = (ws: NodeWS.WebSocket, chunks = CHUNKS) => {
   for (let i = 0; i < chunks; i++) {
-    ws.send(new Uint8Array(CHUNK).fill(i % 251))
+    ws.send(frame(i))
     if (i % 100 === 99) ws.send(`{"type":"ping","n":${i}}`)
   }
 }
@@ -40,7 +69,8 @@ const receiveLoad = (ws: NodeWS.WebSocket) =>
         if (data.toString() !== `{"type":"ping","n":${next - 1}}`) resume(Effect.fail(`text frame out of order at ${next}`))
         return
       }
-      if (data.byteLength !== CHUNK || data[0] !== next % 251 || data[CHUNK - 1] !== next % 251) resume(Effect.fail(`frame ${next} wrong`))
+      if (data.byteLength !== CHUNK || data[0] !== next % 251 || data[CHUNK - 1] !== next % 251 || data[CHUNK / 2] !== NOISE[CHUNK / 2])
+        resume(Effect.fail(`frame ${next} wrong`))
       next++
       bytes += data.byteLength
       if (next === CHUNKS) resume(Effect.succeed(bytes))
@@ -60,7 +90,7 @@ const hostServer = (paused: boolean) =>
     const connected = yield* Deferred.make<NodeWS.WebSocket>()
     const server = yield* Effect.acquireRelease(
       Effect.callback<NodeWS.WebSocketServer>((resume) => {
-        const made = new NodeWS.WebSocketServer({ port: 0, host: "127.0.0.1" })
+        const made = new NodeWS.WebSocketServer({ ...websocketOptions, port: 0, host: "127.0.0.1" })
         made.once("listening", () => resume(Effect.succeed(made)))
       }),
       (made) =>
@@ -154,7 +184,7 @@ const hub = (hostUrl: string, sender: "client" | "host", watch: Watch, naive = f
       ),
     ),
     { disableListenLog: true, disableLogger: true },
-  ).pipe(Layer.provideMerge(NodeHttpServer.layerTest))
+  ).pipe(Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0, host: "127.0.0.1", websocket: websocketOptions })))
 
 /** Where the hub listens. */
 const hubUrl = Effect.map(HttpServer.HttpServer, (server) => (server.address._tag === "UnixPathAddress" ? "" : `ws://127.0.0.1:${server.address.port}/relay`))
@@ -177,6 +207,7 @@ describe("two piped websockets (7.0)", () => {
           yield* opened(ws)
           ws.pause()
           const hostSide = yield* host.connected
+          assert.deepStrictEqual([ws.extensions, hostSide.extensions], ["", ""], "the hub's sockets are not compressed")
           sendLoad(hostSide)
           yield* Deferred.await(watch.senderPaused)
           assert.isBelow(yield* Ref.get(watch.written), TOTAL / 2, "the hub forwarded most of the load before the client read any")
@@ -200,6 +231,7 @@ describe("two piped websockets (7.0)", () => {
           const ws = yield* client(yield* hubUrl)
           yield* opened(ws)
           const hostSide = yield* host.connected
+          assert.deepStrictEqual([ws.extensions, hostSide.extensions], ["", ""], "the hub's sockets are not compressed")
           sendLoad(ws)
           yield* Deferred.await(watch.senderPaused)
           assert.isBelow(yield* Ref.get(watch.written), TOTAL / 2)
@@ -224,6 +256,7 @@ describe("two piped websockets (7.0)", () => {
           yield* opened(ws)
           ws.pause()
           const hostSide = yield* host.connected
+          assert.deepStrictEqual([ws.extensions, hostSide.extensions], ["", ""], "the hub's sockets are not compressed")
           sendLoad(hostSide, CONTROL_CHUNKS)
           // Every byte reaches the hub's writer, which keeps what the client has not read.
           yield* Deferred.await(watch.allWritten)

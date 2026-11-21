@@ -1,111 +1,28 @@
-import { NodeHttpServer, NodeRuntime, NodeServices } from "@effect/platform-node"
-import { Console, Context, Effect, Layer, Option, Redacted, Schema } from "effect"
-import { Command, Flag } from "effect/cli"
-import { StartupStep } from "@huntaway/contracts"
-import { createServer } from "node:http"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { Config, Console, Effect, Layer, Option, Redacted } from "effect"
+import { Argument, Command, Flag } from "effect/cli"
 import { Digest, Mac, SecureRandom } from "effect/crypto"
-import { FetchHttpClient, HttpServer } from "effect/http"
-import { installServiceCommand } from "./cli/installService.ts"
-// 6.7: the Google consent step for the assistant's Google server.
-import { googleAuthCommand } from "./cli/googleAuth.ts"
-import { rpcCommand } from "./cli/rpc.ts"
-// 9.1: the importer of an old board.
-import { importLegacyCommand } from "./cli/importLegacy.ts"
-import { sshHostCommand } from "./cli/sshHost.ts"
-import { Releases } from "./update/Releases.ts"
-import { Supervisor } from "./update/Supervisor.ts"
-// 6.9
-import { telemetryCommand } from "./cli/telemetry.ts"
-import { serverLayer } from "./Main.ts"
-import { DataDir } from "./platform/DataDir.ts"
-import { Identity } from "./platform/Identity.ts"
-import { Listening } from "./platform/Listening.ts"
+import { FetchHttpClient } from "effect/http"
+import { CONSENT_PORT } from "./assistant/googleText.ts"
 import { InfoAndAbove, LoggingLive } from "./platform/Logging.ts"
-import { StartupProgress } from "./platform/StartupProgress.ts"
-import { releaseBuild, ServerConfig, serveArgs, serveFlags, VERSION } from "./platform/ServerConfig.ts"
+import { releaseBuild, ServerConfig, serveFlags, VERSION } from "./platform/ServerConfig.ts"
 import type { ServeFlags } from "./platform/ServerConfig.ts"
-// 9.1: the guard over an imported folder, and the read-only server a rehearsal is served by.
-import { ImportGuard } from "./platform/ImportGuard.ts"
-import { readOnlyServerLayer } from "./ReadOnlyMain.ts"
 
 // The entry point (docs/plan/06-server.md, The CLI): `huntaway [serve] [flags]`, `huntaway token [--hub]`,
-// `huntaway --version`. The launcher (bin/huntaway) runs this file; the hooks have entry files of their own.
+// `huntaway --version` and the other subcommands. The launcher (bin/huntaway) runs it through entry.ts, which turns on
+// Node's compile cache; the hooks and codex-run have entry files of their own.
+//
+// HE-71: this file has each command's flags and help, and loads what runs a command when it runs (`import()`), so that
+// `huntaway --version`, `--help` or `rpc` doesn't load the whole server first: `serve` is serve.ts (which loads Main.ts),
+// the others their cli/ modules.
 
-/** What the desktop shell and the test scripts read from stdout: `HUNTAWAY_READY {"port":…,"token":…}`. */
-const ReadyLine = Schema.fromJsonString(Schema.Struct({ port: Schema.Int, token: Schema.NullOr(Schema.String) }))
-const StartupLine = Schema.fromJsonString(StartupStep)
-
-/** Shutdown waits this long for its finalizers, then the process exits regardless. */
-const SHUTDOWN_FALLBACK = "2 seconds"
-
-/** Shutdown's fallback: once the scope starts closing, the process exits within `SHUTDOWN_FALLBACK` regardless. */
-const exitFallback = Effect.addFinalizer(() =>
-  Effect.sleep(SHUTDOWN_FALLBACK).pipe(Effect.andThen(Effect.sync(() => process.exit(0))), Effect.forkDetach, Effect.asVoid),
-)
-
-/** What the desktop shell and the test scripts read, once the server listens: `HUNTAWAY_READY {"port":…,"token":…}`. */
-const ready = (port: number, identity: Identity["Service"]) =>
-  Effect.flatMap(Schema.encodeEffect(ReadyLine)({ port, token: identity.tokenGiven ? null : Redacted.value(identity.token) }), (line) =>
-    Console.log(`HUNTAWAY_READY ${line}`),
-  )
-
-/** How far the start has got, for the desktop app: `HUNTAWAY_PROGRESS {"step":…}` (contracts' `StartupStep`). */
-const printProgress = (step: StartupStep) =>
-  Schema.encodeEffect(StartupLine)(step).pipe(
-    Effect.flatMap((line) => Console.log(`HUNTAWAY_PROGRESS ${line}`)),
-    Effect.ignore,
-  )
-
-/**
- * Startup step 1 (docs/plan/06-server.md, Startup): `ImportGuard`, before the identity and the database are built. A
- * rehearsal folder is served read-only, and a switch's refuses to start while the old server has its database open.
- */
+/** `serve`, the default command: serve.ts, and the server behind it, are loaded only for it. */
 const serve = (flags: ServeFlags) =>
-  Effect.gen(function* () {
-    // The configuration is read once: it takes the launcher's restart file out of the environment as it does.
-    const config = yield* ServerConfig
-    const guard = yield* Effect.service(ImportGuard).pipe(Effect.provide(ImportGuard.layer))
-    if (!guard.readOnly) return yield* serveBoard
-    // A rehearsal listens on this machine only unless `--host` (or HUNTAWAY_HOST) says otherwise.
-    return yield* serveReadOnly(guard).pipe(Effect.provideService(ServerConfig, Option.isSome(flags.host) ? config : { ...config, host: "127.0.0.1" }))
-  }).pipe(Effect.provide(ServerConfig.layerFrom(serveArgs(flags))))
-
-/** A rehearsal (`ReadOnlyMain`): it reads, starts nothing, changes nothing outside its folder, and calls nothing on the network. */
-const serveReadOnly = (guard: ImportGuard["Service"]) =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig
-    yield* exitFallback
-    const context = yield* Layer.build(readOnlyServerLayer(config).pipe(Layer.provide(ImportGuard.layerOf(guard.record))))
-    const server = Context.get(context, HttpServer.HttpServer)
-    const identity = Context.get(context, Identity)
-    const port = server.address._tag === "UnixPathAddress" ? 0 : server.address.port
-    yield* Context.get(context, Listening).bound(port)
-    yield* Effect.logInfo(
-      `read-only rehearsal of ${guard.record?.from ?? "an imported board"}: listening on ${HttpServer.formatAddress(server.address)} (host ${identity.hostId}, data ${Context.get(context, DataDir).root})`,
-    )
-    yield* ready(port, identity)
-    return yield* Effect.never
-  }).pipe(Effect.scoped)
-
-const serveBoard = Effect.gen(function* () {
-  const config = yield* ServerConfig
-  yield* exitFallback
-  const context = yield* Layer.build(serverLayer(config)).pipe(Effect.provideService(StartupProgress, printProgress))
-  const server = Context.get(context, HttpServer.HttpServer)
-  const identity = Context.get(context, Identity)
-  // Only now, listening with the hubs dialled and discovery answering, has a release come up: it becomes current (the
-  // old server settled after listen, dial-out and discovery). One that fails before this stays `trying`, and the next
-  // start marks it bad and goes back (Releases.execInstalled).
-  yield* Context.get(context, Releases).settle
-  const port = server.address._tag === "UnixPathAddress" ? 0 : server.address.port
-  // What runs are told to reach the server on: the port the listener got (`--port 0` asks for a free one).
-  yield* Context.get(context, Listening).bound(port)
-  yield* Effect.logInfo(`listening on ${HttpServer.formatAddress(server.address)} (host ${identity.hostId}, data ${Context.get(context, DataDir).root})`)
-  yield* ready(port, identity)
-  // From now on the launcher starts the server again if it crashes (step 6).
-  yield* Context.get(context, Supervisor).started
-  return yield* Effect.never
-}).pipe(Effect.scoped)
+  Effect.flatMap(
+    Effect.promise(() => import("./serve.ts")),
+    (m) => m.serve(flags),
+  )
 
 const serveCommand = Command.make("serve", serveFlags, serve).pipe(Command.withDescription("Run the board's server (the default)"))
 
@@ -114,31 +31,159 @@ const tokenCommand = Command.make(
   { dataDir: serveFlags.dataDir, hub: Flag.Boolean("hub").pipe(Flag.withDescription("Print the hub token instead"), Flag.withDefault(false)) },
   ({ dataDir, hub }) =>
     Effect.gen(function* () {
-      const identity = yield* Identity
-      yield* Console.log(Redacted.value(hub ? identity.hubToken : identity.token))
-    }).pipe(
-      Effect.provide(
-        Layer.provideMerge(Identity.layer, DataDir.layer).pipe(
-          Layer.provide(Mac.layerWebCrypto),
-          Layer.provide(SecureRandom.layerWebCrypto),
-          Layer.provideMerge(
-            ServerConfig.layerFrom({
-              host: "127.0.0.1",
-              port: 0,
-              dataDir,
-              uiDir: Option.none(),
-              name: Option.none(),
-              token: Option.none(),
-              demo: false,
-              openToken: false,
-              profiles: [],
-              skipDbBackup: false,
-            }),
+      const [{ Identity }, { DataDir }] = yield* Effect.promise(() => Promise.all([import("./platform/Identity.ts"), import("./platform/DataDir.ts")]))
+      const identity = yield* Effect.service(Identity).pipe(
+        Effect.provide(
+          Layer.provideMerge(Identity.layer, DataDir.layer).pipe(
+            Layer.provide(Mac.layerWebCrypto),
+            Layer.provide(SecureRandom.layerWebCrypto),
+            Layer.provideMerge(
+              ServerConfig.layerFrom({
+                host: "127.0.0.1",
+                port: 0,
+                dataDir,
+                uiDir: Option.none(),
+                name: Option.none(),
+                token: Option.none(),
+                demo: false,
+                openToken: false,
+                profiles: [],
+                skipDbBackup: false,
+              }),
+            ),
           ),
         ),
-      ),
-    ),
+      )
+      yield* Console.log(Redacted.value(hub ? identity.hubToken : identity.token))
+    }),
 ).pipe(Command.withDescription("Print the board token (or, with --hub, the hub token)"))
+
+const rpcCommand = Command.make(
+  "rpc",
+  {
+    method: Argument.String("method").pipe(Argument.withDescription("The method, as `huntaway rpc --list` names it (host.info)"), Argument.optional),
+    json: Argument.String("json").pipe(Argument.withDescription("Its payload as JSON (default none, or {})"), Argument.optional),
+    env: Flag.String("env").pipe(
+      Flag.withDescription("scripts/test-server.sh's env file or data dir (default $HUNTAWAY_TEST_ENV, then .huntaway-test-env)"),
+      Flag.optional,
+    ),
+    list: Flag.Boolean("list").pipe(Flag.withDescription("Print the method names"), Flag.withDefault(false)),
+  },
+  (args) =>
+    Effect.flatMap(
+      Effect.promise(() => import("./cli/rpc.ts")),
+      (m) => m.rpc(args),
+    ),
+).pipe(
+  Command.withDescription(
+    "Call a test server's RPC over HTTP and print the result as JSON (exit 1 with the tagged error on stderr; 2 for a bad method or payload)",
+  ),
+)
+
+// 9.1: the importer of an old board.
+const importLegacyCommand = Command.make(
+  "import-legacy",
+  {
+    from: Flag.String("from").pipe(Flag.withDescription("The old server's data folder (e.g. ~/.local/share/issue-agent); only read")),
+    dataDir: serveFlags.dataDir,
+    check: Flag.Boolean("check").pipe(
+      Flag.withDescription("Check the import against the old database and exit 1 if the report has a failure; on a folder already imported, check it alone"),
+      Flag.withDefault(false),
+    ),
+    force: Flag.Boolean("force").pipe(Flag.withDescription("Record live runs as interrupted instead of refusing"), Flag.withDefault(false)),
+    rehearsal: Flag.Boolean("rehearsal").pipe(
+      Flag.withDescription("Beside a running old server: a board with no identity or credentials of the old host's, which only a read-only server opens"),
+      Flag.withDefault(false),
+    ),
+    replace: Flag.Boolean("replace").pipe(
+      Flag.withDescription(
+        "The new folder has a board already, to be replaced: with its server stopped, set it aside under replaced-<time>/ in that folder and import in its place",
+      ),
+      Flag.withDefault(false),
+    ),
+    database: Flag.String("db").pipe(Flag.withDescription("Which old database file, when the old folder has more than one"), Flag.optional),
+  },
+  (args) =>
+    Effect.flatMap(
+      Effect.promise(() => import("./cli/importLegacy.ts")),
+      (m) => m.importLegacyMain(args),
+    ),
+).pipe(Command.withDescription("Import an old Huntaway board's data folder into a new one (docs/guide/switching.md)"))
+
+const sshHostCommand = Command.make(
+  "ssh-host",
+  {
+    port: Flag.Int("port").pipe(Flag.withDescription("The port the host listens on here"), Flag.withDefault(7879)),
+    dataDir: Flag.String("data-dir").pipe(Flag.withDescription("Its data folder (default ~/.local/share/huntaway-effect)"), Flag.optional),
+  },
+  (args) =>
+    Effect.flatMap(
+      Effect.promise(() => import("./cli/sshHost.ts")),
+      (m) => m.sshHostMain(args),
+    ),
+).pipe(Command.withDescription("The forced command for a hub's SSH key: print this machine's host and its token"))
+
+const installServiceCommand = Command.make("install-service", serveFlags, (flags) =>
+  Effect.flatMap(
+    Effect.promise(() => import("./cli/installService.ts")),
+    (m) => m.install(flags),
+  ),
+).pipe(Command.withDescription("Run `huntaway serve [serve flags…]` as a systemd user service, started at boot"))
+
+// 6.9
+const telemetryUrl = Flag.String("url").pipe(
+  Flag.withDescription("ClickHouse: http://USER[:PASSWORD]@HOST:8123[/DATABASE] (default $HUNTAWAY_TELEMETRY_URL)"),
+  Flag.withFallbackConfig(Config.String("HUNTAWAY_TELEMETRY_URL")),
+  Flag.optional,
+)
+const telemetry = Effect.promise(() => import("./cli/telemetry.ts"))
+const telemetryCommand = Command.make("telemetry").pipe(
+  Command.withDescription("Set up and check the ClickHouse telemetry goes to (a password left out of --url is read from HUNTAWAY_TELEMETRY_PASSWORD)"),
+  Command.withSubcommands([
+    Command.make("init", { url: telemetryUrl }, ({ url }) => Effect.flatMap(telemetry, (m) => m.init(url))).pipe(
+      Command.withDescription("Create the database (default huntaway) and its tables, or bring them up to date: give it a login that can, such as an admin's"),
+    ),
+    Command.make("test", { url: telemetryUrl }, ({ url }) => Effect.flatMap(telemetry, (m) => m.test(url))).pipe(
+      Command.withDescription("Check that a login can insert into the tables, as a host's writer must"),
+    ),
+    Command.make(
+      "backfill",
+      {
+        dataDir: Flag.String("data-dir").pipe(
+          Flag.withDescription("The board's data folder (default $HUNTAWAY_DATA_DIR, else ~/.local/share/huntaway-effect)"),
+          Flag.optional,
+        ),
+        url: telemetryUrl,
+        dryRun: Flag.Boolean("dry-run").pipe(Flag.withDescription("Count what would be sent, and send nothing"), Flag.withDefault(false)),
+      },
+      ({ dataDir, url, dryRun }) => Effect.flatMap(telemetry, (m) => m.backfill(dataDir, url, dryRun)),
+    ).pipe(Command.withDescription("Send this host's history from before telemetry was turned on, for the profiles that send")),
+  ]),
+)
+
+// 6.7: the Google consent step for the assistant's Google server, with Node's HTTP server on the loopback for the
+// browser's way back.
+const googleAuthCommand = Command.make(
+  "google-auth",
+  {
+    clientSecret: Flag.String("client-secret").pipe(
+      Flag.withDescription("The OAuth client's JSON, downloaded from Google Cloud (a Desktop app client)"),
+      Flag.optional,
+    ),
+    credentialsDir: Flag.String("credentials-dir").pipe(
+      Flag.withDescription("Where to keep the credentials (workspace-mcp's WORKSPACE_MCP_CREDENTIALS_DIR)"),
+      Flag.optional,
+    ),
+    port: Flag.Int("port").pipe(Flag.withDescription(`The port to listen on (default ${CONSENT_PORT})`), Flag.withDefault(CONSENT_PORT)),
+  },
+  (args) =>
+    Effect.gen(function* () {
+      const [{ googleAuth }, NodeHttpServer, { createServer }] = yield* Effect.promise(() =>
+        Promise.all([import("./cli/googleAuth.ts"), import("@effect/platform-node/NodeHttpServer"), import("node:http")]),
+      )
+      return yield* googleAuth((port) => NodeHttpServer.layer(createServer, { port, host: "127.0.0.1" }))(args)
+    }),
+).pipe(Command.withDescription("Sign in to Google for the assistant's Google server (Gmail, Calendar, Drive), on a headless host"))
 
 const huntaway = Command.make("huntaway", serveFlags, serve).pipe(
   Command.withDescription("Huntaway: a kanban board for orchestrating Claude Code and Codex agents"),
@@ -149,10 +194,8 @@ const huntaway = Command.make("huntaway", serveFlags, serve).pipe(
     importLegacyCommand,
     sshHostCommand,
     installServiceCommand,
-    // 6.9
     telemetryCommand,
-    // 6.7: Node's HTTP server on the loopback, for the browser's way back.
-    googleAuthCommand((port) => NodeHttpServer.layer(createServer, { port, host: "127.0.0.1" })),
+    googleAuthCommand,
   ]),
 )
 

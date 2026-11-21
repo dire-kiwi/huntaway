@@ -18,7 +18,7 @@ import { approvalOf, change, feed, reload, repoOf, review, ServerAgain, WaitBoar
 import { BACKGROUND_NOT_WAITING, BACKGROUND_WAITING } from "./wait.ts"
 import { failedCheck, github, onGitHub, pull7 } from "../../github/tests/pullRequests.ts"
 import { fakeGitHub, git } from "@huntaway/testing"
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 
 // The `wait` and `background_wait` tools as an agent calls them through `ToolCalls` (the wait cases of the old
 // mcp/tools/dispatch.test.ts and agent/runner/requests.test.ts, and background_wait's of runner/background.test.ts).

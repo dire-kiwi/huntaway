@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:net"
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, FileSystem } from "effect"
 import { systemChrome } from "@huntaway/testing"

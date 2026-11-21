@@ -4,6 +4,7 @@ import { Base64 } from "effect/encoding"
 import { Socket } from "effect/socket"
 import { BrowserClientFrame } from "@huntaway/contracts"
 import type { BrowserPage, BrowserServerFrame } from "@huntaway/contracts"
+import { PaneJoin } from "@huntaway/shared"
 import { toJson } from "../platform/columns.ts"
 import { num, pageOf, str } from "./cdp.ts"
 import type { Cdp, CdpPage } from "./cdp.ts"
@@ -57,6 +58,18 @@ export const socketText = (reader: Socket.Reader): Stream.Stream<string> =>
     Stream.orElseSucceed(() => ""),
     Stream.filter((t) => t !== ""),
   )
+
+/** A desktop pane's messages as text, with the ones it sent in parts put back together (`paneParts`, HE-71). */
+export const paneText = (reader: Socket.Reader): Stream.Stream<string> =>
+  Stream.suspend(() => {
+    const join = new PaneJoin()
+    return Stream.fromEffectRepeat(reader.pull).pipe(
+      Stream.flattenIterable,
+      Stream.map((f) => join.push(f) ?? ""),
+      Stream.orElseSucceed(() => ""),
+      Stream.filter((t) => t !== ""),
+    )
+  })
 
 interface Frames {
   /** Chrome's id of the frame on the wire, which the viewer hasn't acknowledged yet. */

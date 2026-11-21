@@ -10,7 +10,7 @@ import { Exit } from "effect"
 import { Copy, Loader2 } from "lucide-react"
 import { useState } from "react"
 import { useAction } from "../../state/mutation"
-import { GuideLink } from "../settings/Guide"
+import { GuideLink } from "../settings/GuideLink"
 import { Button, copyText, IconButton, resultError, resultValue } from "../ui"
 
 /** A command to run, with a button that copies it. */

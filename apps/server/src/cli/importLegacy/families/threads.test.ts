@@ -1,5 +1,5 @@
 import { SqliteClient } from "@effect/sql-sqlite-node"
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { describe, expect, it } from "@effect/vitest"
 import { Effect, FileSystem, Layer, Option, Result, Schema } from "effect"
 import { SqlClient } from "effect/sql"

@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Fiber, Option, Redacted, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"

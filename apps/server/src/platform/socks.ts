@@ -1,8 +1,7 @@
-import { NodeHttpClient } from "@effect/platform-node"
 import { Effect } from "effect"
 import type { Scope } from "effect"
 import { HttpClient } from "effect/http"
-import { buildConnector, Socks5ProxyAgent } from "undici"
+import type { buildConnector } from "undici"
 import { Invalid } from "@huntaway/contracts"
 
 // HE-67: the host's SOCKS proxy (Settings → the host's page, `socks_proxy`), which its preview checks
@@ -61,24 +60,28 @@ const REDIRECTS = 20
  * The connection to the proxy itself: undici's, given the proxy's host without the brackets an IPv6 address has in a URL
  * (`[::1]`), which undici's SOCKS5 agent passes on as they are.
  */
-const toProxy = (): buildConnector.connector => {
-  const connect = buildConnector({ timeout: CONNECT_MS })
+const toProxy = (build: typeof buildConnector): buildConnector.connector => {
+  const connect = build({ timeout: CONNECT_MS })
   return (options, callback) =>
     connect({ ...options, hostname: bare(options.hostname), ...(options.host === undefined ? {} : { host: bare(options.host) }) }, callback)
 }
 
 /**
  * An HTTP client whose requests all go through the SOCKS5 proxy `proxy` (as `checkSocksProxy` stores it), for the
- * scope. It follows redirects, as the server's own client (`fetch`) does.
+ * scope. It follows redirects, as the server's own client (`fetch`) does. undici and platform-node's client on it are
+ * loaded here, the first time a host with a proxy needs them, not as the server starts (HE-71: about 230 modules).
  */
 export const socksClient = (proxy: string): Effect.Effect<HttpClient.HttpClient, never, Scope.Scope> =>
-  Effect.acquireRelease(
-    Effect.sync(() => new Socks5ProxyAgent(proxy, { connect: toProxy() })),
-    (agent) => Effect.promise(() => agent.destroy().catch(() => undefined)),
-  ).pipe(
-    Effect.flatMap((agent) => Effect.provideService(NodeHttpClient.makeUndici, NodeHttpClient.Dispatcher, agent)),
-    Effect.map(HttpClient.followRedirects(REDIRECTS)),
-  )
+  Effect.gen(function* () {
+    const [{ buildConnector, Socks5ProxyAgent }, NodeHttpClient] = yield* Effect.promise(() =>
+      Promise.all([import("undici"), import("@effect/platform-node/NodeHttpClient")]),
+    )
+    const agent = yield* Effect.acquireRelease(
+      Effect.sync(() => new Socks5ProxyAgent(proxy, { connect: toProxy(buildConnector) })),
+      (made) => Effect.promise(() => made.destroy().catch(() => undefined)),
+    )
+    return HttpClient.followRedirects(yield* Effect.provideService(NodeHttpClient.makeUndici, NodeHttpClient.Dispatcher, agent), REDIRECTS)
+  })
 
 /** Chrome's flags for `proxy`: none without one. Chrome itself leaves this machine's pages out of it. */
 export const chromeProxyArgs = (proxy: string | null): ReadonlyArray<string> => (proxy === null ? [] : [`--proxy-server=${proxy}`])

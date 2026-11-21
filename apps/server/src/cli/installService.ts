@@ -1,8 +1,7 @@
 import { Console, Effect, Layer } from "effect"
-import { Command } from "effect/cli"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Proc } from "../platform/Proc.ts"
-import { ServerConfig, serveArgs, serveFlags } from "../platform/ServerConfig.ts"
+import { ServerConfig, serveArgs } from "../platform/ServerConfig.ts"
 import type { ServeArgs, ServeFlags } from "../platform/ServerConfig.ts"
 import { StartupError } from "../platform/StartupError.ts"
 import { installFromCli, keptEnv } from "../update/Service.ts"
@@ -23,7 +22,8 @@ const listening = (port: number) =>
     )
   })
 
-const install = (flags: ServeFlags) =>
+/** `huntaway install-service` (its flags, `serve`'s, are bin.ts's, which loads this file to run it). */
+export const install = (flags: ServeFlags) =>
   Effect.gen(function* () {
     const args = serveArgs(flags)
     const context = yield* Layer.build(
@@ -53,7 +53,3 @@ const installWith = (args: ServeArgs) =>
     const check = Effect.provideService(listening(args.port), HttpClient.HttpClient, http)
     return yield* installFromCli(spec, check, (line) => Console.log(line)).pipe(Effect.mapError((e) => new StartupError({ reason: e.reason })))
   })
-
-export const installServiceCommand = Command.make("install-service", serveFlags, install).pipe(
-  Command.withDescription("Run `huntaway serve [serve flags…]` as a systemd user service, started at boot"),
-)

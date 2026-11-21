@@ -1,5 +1,4 @@
 import { Config, Console, Context, Effect, FileSystem, Layer, Option, Path, Runtime, Schedule, Schema } from "effect"
-import { Command, Flag } from "effect/cli"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
 import { RpcClient } from "effect/rpc"
 import { HostRpcGroup } from "@huntaway/contracts"
@@ -72,15 +71,9 @@ const sshHost = Effect.fn("ssh-host")(function* (port: number, dataDirGiven: Opt
   yield* Console.log(yield* Schema.encodeEffect(Line)({ info, port, started: false, token }).pipe(Effect.orDie))
 })
 
-export const sshHostCommand = Command.make(
-  "ssh-host",
-  {
-    port: Flag.Int("port").pipe(Flag.withDescription("The port the host listens on here"), Flag.withDefault(7879)),
-    dataDir: Flag.String("data-dir").pipe(Flag.withDescription("Its data folder (default ~/.local/share/huntaway-effect)"), Flag.optional),
-  },
-  ({ port, dataDir }) =>
-    sshHost(port, dataDir).pipe(
-      Effect.scoped,
-      Effect.tapError((e) => Console.error(`huntaway ssh-host: ${e._tag === "SshHostFailed" ? e.reason : e.message}`)),
-    ),
-).pipe(Command.withDescription("The forced command for a hub's SSH key: print this machine's host and its token"))
+/** `huntaway ssh-host` (its flags are bin.ts's, which loads this file to run it). */
+export const sshHostMain = ({ port, dataDir }: { readonly port: number; readonly dataDir: Option.Option<string> }) =>
+  sshHost(port, dataDir).pipe(
+    Effect.scoped,
+    Effect.tapError((e) => Console.error(`huntaway ssh-host: ${e._tag === "SshHostFailed" ? e.reason : e.message}`)),
+  )
