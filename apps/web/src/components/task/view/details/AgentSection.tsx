@@ -3,7 +3,7 @@ import { AgentConfigId } from "@huntaway/contracts"
 import { useBoard } from "../../../../state/board"
 import { useMutation } from "../../../../state/mutation"
 import { useHost } from "../../../boardHelpers"
-import { ActivityTime, Ago, cost, waitTitle } from "../../../ui"
+import { ActivityTime, Ago, cost, Select, waitTitle } from "../../../ui"
 import { AgentMark } from "../../../ui/AgentIcon"
 import { useThreadConfig } from "../hooks"
 import { Row, Section } from "./Section"
@@ -45,17 +45,17 @@ function ConfigRow({ task }: { task: Task }) {
   return (
     <Row label="Config">
       {canChange ? (
-        <select
+        <Select
           className="h-6 rounded border border-line bg-panel px-1 text-[12px] text-fg outline-none"
           value={current.id}
-          onChange={(e) => void update(task.host_id, { id: task.id, patch: { claude_config_id: AgentConfigId.make(e.target.value) } })}
+          onChange={(v) => void update(task.host_id, { id: task.id, patch: { claude_config_id: AgentConfigId.make(v) } })}
         >
           {options.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>
           ))}
-        </select>
+        </Select>
       ) : (
         <span className="flex items-center gap-1.5" title={current.config_dir}>
           {current.name}

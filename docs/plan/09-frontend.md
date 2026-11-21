@@ -752,8 +752,9 @@ and the override went with the last one.
   - The subproject grouping in the token tables is deleted (reports' `subproject` is always false).
   - The code that runs inside a plan's frame holds its scroll with `performance.now()` on resize rather than a timer.
 - **Not done.** `task/Thread.tsx` still loads older pages from an effect when a subagent's thread starts before the
-  window (moving it into the action that opens the view is `thread/`'s); `ui-check` can't drive a `<select>` or a
-  `datetime-local`, so those were checked through the whole-app checks only.
+  window (moving it into the action that opens the view is `thread/`'s); `ui-check` can't drive a
+  `datetime-local`, so that was checked through the whole-app checks only (nor a `<select>` then: since HE-70 the
+  app's selects are `ui/Select.tsx`, clicked as any button).
 - **Checks.** `pnpm check`, `pnpm test` (236 files) and all 71 `tests/ui` files pass, as on `main`. New unit tests:
   `packages/client/test/queries.test.ts` (one atom per payload, a mutation reading its group again and not another's,
   a board trigger), `tests/unit/ui/{dates,reminders}.test.ts` (run in several time zones), `analyticsRange.test.ts`,
@@ -835,6 +836,44 @@ its name, and what it does behind the ? beside that (HE-39). All are off at firs
     test clock, a run skipped because the user has just written, a quiet one, and one that reports);
     `Automations.test.ts` and `schedule.test.ts` (several times, `{{last_run}}`, `{{quiet_runs}}`);
     `tests/ui/checkIns.test.mjs` (nothing while off; Add check-ins; the editor's times).
+
+### The page's own selects (HE-70)
+
+The browser's `<select>` drew its list in the system's colours and font (a white list on the dark board), so every
+select in the web app is `Select` (`components/ui/Select.tsx`): a button that shows the picked option and opens a
+list drawn by the page, in the menus' style (`ContextMenu`), with a tick by the picked one.
+
+- **Used as a `<select>` was.** Its children are the same `<option value>`s (in arrays, as a `.map` makes them;
+  `disabled` ones shown but not picked), and it takes `value`, `className`, `title`, `aria-label` and `disabled`.
+  `onChange` gets the picked value, a string as `e.target.value` was, and only when it changes. As a native select:
+  its width is its widest option's unless its class sets one (every option's text sits unseen in one grid cell, in
+  `::before`, so it isn't text on the page), a value no option has shows the first, and typing an option's first
+  letters picks it, with the list closed or open.
+- **Placed in the window** (`position: fixed`, as `Help` is) under the button, or above it when there's more room
+  there, as wide as the button at least and at most 360 px tall, and moved with it when anything scrolls; inline,
+  not in a portal, so a dialog's focus trap and a popover's press-outside see it as theirs. The button is
+  its parent's child as the select was (the list comes before it, so a parent's `space-y` margin still reaches the
+  button), and its baseline is the picked option's text, as a native select's is.
+  Its button's base class is `inline-flex`, which a `hidden` in the caller's class doesn't reliably beat: a select
+  shown only in one layout is wrapped in an element that hides it (the Guide's page picker).
+- **The highlight is kept by the option's value**, not its place: a board update that adds, removes or reorders
+  options while the list is open leaves it on the same option, so Enter picks what was arrowed to (or, the option gone,
+  the picked one). `tests/ui/select.test.mjs` adds a task above the highlighted one in a task's Depends on list.
+- **The highlighted option is scrolled into view** as the list opens and as the highlight moves, not on every redraw:
+  a board update while the list is open doesn't undo the wheel's scrolling of it.
+- **The keyboard's focus stays on the button** (a `combobox` with `aria-activedescendant`): the arrows, Home and End
+  move, Enter or Space picks, Tab and a press elsewhere close it (it closes on the button's blur; a press in the list
+  is kept from taking the focus). Escape is taken in the window's capture phase, so it closes the list and not the
+  dialog, task panel or popover it's in.
+- **The page's shortcuts** left keys pressed in a `select` alone: those checks (`forPage`, the lasso, Compare, the
+  git keys, the thread's and task view's keys, a workflow's Delete, a prompt card's digits) now look for
+  `[role=combobox]`.
+- **Not changed:** the `<select>` a plan's `ia-question type="select"` makes inside the plan's sandboxed frame
+  (`planTheme.ts`): it is the document's own form, styled by the plan's theme.
+- **Checks.** The `tests/ui` checks that picked in a select (`automations`, `assistant`, `confirmErrors`,
+  `globalAgentToolsHost`, `mergesInto`, `push`, `permissions`, `skillSources`, `plan`, `reviewerOptions`,
+  `systemPromptPreview`, `workflowPresets`) do it through the harness's `pick(combobox, value | { label } | { index })`,
+  which clicks the button and then the option, and read it with `pickedValue` (the button's `data-value`).
 
 ### Logic that must not be lost on the way
 

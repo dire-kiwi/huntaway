@@ -60,7 +60,7 @@ export function useLasso(root: HTMLElement | null): Point[] | null {
         e.button !== 2 ||
         !e.ctrlKey ||
         e.pointerType === "touch" ||
-        (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable], [data-modal], [data-task-modal]"))
+        (e.target instanceof Element && e.target.closest("input, textarea, [role=combobox], [contenteditable], [data-modal], [data-task-modal]"))
       )
         return
       e.preventDefault()
@@ -139,7 +139,7 @@ export function useClearSelection(active: boolean) {
       if (
         e.key === "Escape" &&
         !document.querySelector("[data-modal], [data-task-modal]") &&
-        !(e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable]"))
+        !(e.target instanceof Element && e.target.closest("input, textarea, [role=combobox], [contenteditable]"))
       )
         useSelection.getState().clear()
     }

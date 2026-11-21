@@ -8,7 +8,7 @@ import { ExternalLink, Import, KeyRound, Loader2, Monitor, Play, Plus, RefreshCw
 import { useState } from "react"
 import { useBoard } from "../../state/board"
 import { useAction } from "../../state/mutation"
-import { Button, Field, Input, Modal, ModalFooter, resultError, resultValue, timeAgo, Toggle, useConfirm } from "../ui"
+import { Button, Field, Input, Modal, ModalFooter, resultError, resultValue, Select, timeAgo, Toggle, useConfirm } from "../ui"
 import { SpaceSignInModal } from "./SiteSignIns"
 import { BringSignInsModal } from "./TeleportDialog"
 
@@ -203,24 +203,24 @@ function NewSpaceModal({ hostId, onClose }: { hostId: string; onClose: () => voi
           <Input autoFocus value={name} placeholder="Browser tests" onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field label="Claude Code signed in as">
-          <select className={selectClass} value={claude} onChange={(e) => setClaude(e.target.value)}>
+          <Select className={selectClass} value={claude} onChange={setClaude}>
             <option value="">Not signed in</option>
             {claudes.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
         <Field label="Codex signed in as">
-          <select className={selectClass} value={codex} onChange={(e) => setCodex(e.target.value)}>
+          <Select className={selectClass} value={codex} onChange={setCodex}>
             <option value="">Not signed in</option>
             {codexes.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
         <Toggle checked={direct} onChange={setDirect} label={<span>Direct link: reachable on this host&apos;s network, not only through the board</span>} />
         {action.error && <div className="rounded bg-red-500/10 p-2 text-[12px] whitespace-pre-wrap text-red-300">{action.error}</div>}

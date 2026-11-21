@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import crypto from "node:crypto"
 import http from "node:http"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, makeTask, seedBoard, startServer, withBrowser } from "./harness.mjs"
+import { eventually, makeTask, pick, pickedValue, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
 // Web Push (the old tests/ui/push.test.mjs): a device turns push on in Settings and gets the board's notifications,
 // encrypted for it, from a push service on this machine. The server's agent is the fake `claude`, whose permission
@@ -196,10 +196,10 @@ test("a device turns push on in Settings and gets the board's notifications", as
     assert.equal(await page.getByRole("checkbox", { name: /Routine reports/ }).isChecked(), false)
     assert.equal(await page.getByRole("checkbox", { name: /Assistant's replies/ }).isChecked(), true)
     // And whose permission prompts: every task's, which a prompt then is, without its needs-attention.
-    await page.getByLabel(/^Permission prompts pushed to/).selectOption("all")
+    await pick(page.getByLabel(/^Permission prompts pushed to/), "all")
     await eventually(async () => assert.equal((await pushes())[0].events.prompts, "all"))
     await ui.run(["goto /settings/notifications", "wait On for this device"])
-    assert.equal(await page.getByLabel(/^Permission prompts pushed to/).inputValue(), "all")
+    assert.equal(await pickedValue(page.getByLabel(/^Permission prompts pushed to/)), "all")
     const second = await asking("Push: asks again")
     push = await service.next()
     const prompt = decrypt(keys, push.body)

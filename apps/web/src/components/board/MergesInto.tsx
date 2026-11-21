@@ -9,7 +9,7 @@ import { documentsOnly, isMerged, isScratch, keyPrefix, STATUSES, type HostProje
 import { TaskId } from "@huntaway/contracts"
 import { openTask } from "../../state/route"
 
-import { Button, CARD_BADGE, ProgressCount, Wide } from "../ui"
+import { Button, CARD_BADGE, ProgressCount, Select, Wide } from "../ui"
 import { LinkedTaskRow, stackedBelowId, useOpenLevels, useStackState, useStacksOn } from "./StackedOn"
 import { board, useBoard } from "../../state/board"
 import { useMutation } from "../../state/mutation"
@@ -274,10 +274,10 @@ export function MergesIntoSection({ task, project }: { task: Task; project?: Pro
           )}
         </div>
       ) : (
-        <select
+        <Select
           aria-label="Merges into"
           value={task.merges_into ?? ""}
-          onChange={(e) => save(e.target.value)}
+          onChange={save}
           className={selectClass}
           title="The task whose branch this task's work merges into: its worktree starts from that branch, its pull request targets it, and Ready for merge merges it there"
         >
@@ -291,7 +291,7 @@ export function MergesIntoSection({ task, project }: { task: Task; project?: Pro
               {keyOf(t, project)} {t.title}
             </option>
           ))}
-        </select>
+        </Select>
       )}
       {!fixed && st === "merged" && target && <div className="text-[12px] text-faint">{keyOf(target, project)} is merged, so this goes where that went.</div>}
       {(st === "closed" || st === "deleted") && task.status !== "done" && goneId && (
@@ -418,14 +418,14 @@ export function HeldChoice({
         </Button>
         {siblings.length > 1 && (
           <div className="flex w-full items-center gap-1.5">
-            <select aria-label="The new target" value={heir} onChange={(e) => setHeir(e.target.value)} className={clsx(selectClass, "min-w-0 flex-1")}>
+            <Select aria-label="The new target" value={heir} onChange={setHeir} className={clsx(selectClass, "min-w-0 flex-1")}>
               <option value="">Pick one of them…</option>
               {siblings.map((t) => (
                 <option key={t.id} value={t.id}>
                   {keyOf(t, project)} {t.title}
                 </option>
               ))}
-            </select>
+            </Select>
             <Button
               size="sm"
               disabled={busy || !pick}

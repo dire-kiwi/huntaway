@@ -39,7 +39,7 @@ test("the column beside the thread has the task's key items, and nothing to set 
       `wait ${KEY} >> text=A task waiting on an answer`,
     ])
     // Nothing to add a dependency with here, nor the links' fields.
-    assert.equal(await page.locator(`${KEY.slice(4)} select, ${KEY.slice(4)} input`).count(), 0)
+    assert.equal(await page.locator(`${KEY.slice(4)} [role=combobox], ${KEY.slice(4)} input`).count(), 0)
     // A task with none of them has only its status.
     await ui.run([`goto /p/${project.id}?task=${waiting.id}`, `wait ${KEY} >> text=Needs attention`])
     assert.deepEqual(await sections(page, KEY), ["Status"])

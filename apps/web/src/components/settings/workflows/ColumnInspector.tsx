@@ -1,7 +1,7 @@
 import type { HostProject as Project } from "@huntaway/client"
 import { COLUMN_ROUNDS, Status, workflowWaits, type WorkflowGraph, type WorkflowNode } from "@huntaway/contracts"
 import { Schema } from "effect"
-import { Field, Input } from "../../ui"
+import { Field, Input, Select } from "../../ui"
 import { TemplateField } from "../TemplateField"
 import { Wired, selectClass } from "./fields"
 import { doneNote, mergeNote, type NodePatch } from "./graph"
@@ -46,11 +46,10 @@ export function ColumnInspector({
   return (
     <>
       <Field label="Column" hint="A workflow has one step for each column.">
-        <select
+        <Select
           className={selectClass}
           value={n.status}
-          onChange={(e) => {
-            const status = e.target.value
+          onChange={(status) => {
             if (!isStatus(status)) return
             const none = status === "needs_attention" || status === "done"
             onChange({ status, ...(none ? { prompt: "" } : {}), ...(none || status === "ready_for_merge" ? { done_when: undefined } : {}) })
@@ -61,7 +60,7 @@ export function ColumnInspector({
               {st.label}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
       {!promptless && (
         <Field
@@ -81,14 +80,10 @@ export function ColumnInspector({
       )}
       {waits && !merge && (
         <Field label="Done when">
-          <select
-            className={selectClass}
-            value={n.done_when ?? "run_end"}
-            onChange={(e) => onChange({ done_when: e.target.value === "finish" ? "finish" : undefined })}
-          >
+          <Select className={selectClass} value={n.done_when ?? "run_end"} onChange={(v) => onChange({ done_when: v === "finish" ? "finish" : undefined })}>
             <option value="run_end">The agent's turn ends (not asking you anything)</option>
             <option value="finish">The agent says so, with finish_work</option>
-          </select>
+          </Select>
         </Field>
       )}
       {n.status === "in_progress" && graph.edges.some((e) => e.input === undefined && e.to === n.id) && (

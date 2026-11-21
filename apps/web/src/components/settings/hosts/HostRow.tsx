@@ -10,7 +10,7 @@ import { useState } from "react"
 import { useBoard } from "../../../state/board"
 import { exitError, useAction, useMutation } from "../../../state/mutation"
 import { navigate } from "../../../state/route"
-import { Button, Help, Input, timeAgo, ToggleField, useConfirm } from "../../ui"
+import { Button, Help, Input, Select, timeAgo, ToggleField, useConfirm } from "../../ui"
 import { compareVersions } from "../versions"
 import { hubMutate, hubRpc, useHubMutation } from "./hub"
 import { useUpdateCommit } from "./useUpdateCommit"
@@ -271,16 +271,16 @@ function RoleField({ host }: { host: Host }) {
     <div className="mt-2 flex items-center gap-1.5 text-[12.5px]">
       <span className="text-muted">For</span>
       {reachable ? (
-        <select
+        <Select
           aria-label={`What ${host.name} is for`}
           className="h-7 rounded-md border border-line bg-panel px-1.5 text-[12.5px] outline-none"
           value={role}
           disabled={state.busy}
-          onChange={(e) => void update(host.id, { patch: { role: e.target.value === "access" ? "access" : "projects" } })}
+          onChange={(v) => void update(host.id, { patch: { role: v === "access" ? "access" : "projects" } })}
         >
           <option value="projects">Projects</option>
           <option value="access">Access only</option>
-        </select>
+        </Select>
       ) : (
         <span>{role === "access" ? "Access only" : "Projects"}</span>
       )}

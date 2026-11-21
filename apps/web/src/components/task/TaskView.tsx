@@ -85,7 +85,7 @@ export function TaskPanel({ panel }: { panel: Panel }) {
       // Leave Escape to whatever is being typed in, and to an open dialog.
       // A task dialog over the page (TaskModal) takes it first.
       const target = e.target instanceof Element ? e.target : null
-      if (target?.closest("input, textarea, select, [contenteditable]") || document.querySelector("[data-modal], [data-task-modal]")) return
+      if (target?.closest("input, textarea, [role=combobox], [contenteditable]") || document.querySelector("[data-modal], [data-task-modal]")) return
       closeTask()
     }
     window.addEventListener("keydown", onKey)
@@ -152,7 +152,7 @@ export function TaskModal({ taskId }: { taskId: string }) {
       if (e.key !== "Escape" || e.defaultPrevented) return
       // Leave Escape to what's being typed in, and to a dialog or menu over this one.
       const target = e.target instanceof Element ? e.target : null
-      if (target?.closest("input, textarea, select, [contenteditable]") || document.querySelector("[data-modal]")) return
+      if (target?.closest("input, textarea, [role=combobox], [contenteditable]") || document.querySelector("[data-modal]")) return
       e.preventDefault()
       closeTaskModal()
     }

@@ -9,6 +9,7 @@ import { useMutation } from "../../../state/mutation"
 import { useProject } from "../../boardHelpers"
 import { ModelPicker } from "../../layout/newTask/ModelPicker"
 import { ModelFallbackBadge } from "../ModelFallback"
+import { Select } from "../../ui"
 import { useThreadConfig } from "../view/hooks"
 
 const pickerClass =
@@ -44,19 +45,14 @@ export function ModelEffort({ task }: { task: Task }) {
         onChange={(m) => change({ model: m || null }, "model")}
       />
       <ModelFallbackBadge task={task} className="flex shrink-0 items-center gap-1 text-[11.5px]" />
-      <select
-        className={pickerClass}
-        title="Effort"
-        value={task.effort ?? ""}
-        onChange={(e) => change({ effort: isEffort(e.target.value) ? e.target.value : null }, "effort")}
-      >
+      <Select className={pickerClass} title="Effort" value={task.effort ?? ""} onChange={(v) => change({ effort: isEffort(v) ? v : null }, "effort")}>
         <option value="">{hostEffort ? `Default effort (${hostEffort})` : "Default effort"}</option>
         {[...new Set([...effortOptions(threadConfig, models, task.model ?? ""), ...(task.effort ? [task.effort] : [])])].map((e) => (
           <option key={e} value={e}>
             {e} effort
           </option>
         ))}
-      </select>
+      </Select>
       {err && (
         <span className="truncate text-[11px] text-red-400" title={err}>
           {err}

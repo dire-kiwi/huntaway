@@ -5,7 +5,7 @@ import { Schema } from "effect"
 import { useState } from "react"
 import { useBoard } from "../../../state/board"
 import { useMutation } from "../../../state/mutation"
-import { Field, Input } from "../../ui"
+import { Field, Input, Select } from "../../ui"
 
 // The host's settings are the board's (`hostSettings`, kept by its `settings_changed` events), so nothing is read here
 // (docs/plan/09-frontend.md). The old "Keep threads as items" switch is gone: every thread is items
@@ -45,12 +45,12 @@ export function AgentDefaultsRow({ host, showName }: { host: Pick<Host, "id" | "
               }}
             />
           ) : (
-            <select
+            <Select
               className={selectClass}
               value={settings.default_model ?? ""}
-              onChange={(e) => {
-                if (e.target.value === "__custom") setTyping(true)
-                else save({ default_model: e.target.value || null })
+              onChange={(v) => {
+                if (v === "__custom") setTyping(true)
+                else save({ default_model: v || null })
               }}
             >
               <option value="">Claude&apos;s default</option>
@@ -60,15 +60,14 @@ export function AgentDefaultsRow({ host, showName }: { host: Pick<Host, "id" | "
                 </option>
               ))}
               <option value="__custom">Specific model…</option>
-            </select>
+            </Select>
           )}
         </Field>
         <Field label="Effort">
-          <select
+          <Select
             className={selectClass}
             value={settings.default_effort ?? ""}
-            onChange={(e) => {
-              const v = e.target.value
+            onChange={(v) => {
               save({ default_effort: isEffort(v) ? v : null })
             }}
           >
@@ -78,15 +77,14 @@ export function AgentDefaultsRow({ host, showName }: { host: Pick<Host, "id" | "
                 {e}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
         <Field label="Permission mode">
-          <select
+          <Select
             className={selectClass}
             value={settings.default_permission_mode ?? ""}
             title="For threads whose project doesn't pick a mode"
-            onChange={(e) => {
-              const v = e.target.value
+            onChange={(v) => {
               save({ default_permission_mode: isMode(v) ? v : null })
             }}
           >
@@ -96,7 +94,7 @@ export function AgentDefaultsRow({ host, showName }: { host: Pick<Host, "id" | "
                 {m.label}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
       </div>
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}

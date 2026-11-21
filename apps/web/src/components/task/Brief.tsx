@@ -14,7 +14,7 @@ import { useMemo, useRef, useState } from "react"
 import { exitError, useMutation } from "../../state/mutation"
 import { WEEKDAYS } from "../settings/automations/draft"
 import { localTime, timeUntil, triggerText } from "../settings/automations/text"
-import { Button, localeDateString, localeString, parseJson, resultError, resultValue, toJson } from "../ui"
+import { Button, localeDateString, localeString, parseJson, resultError, resultValue, Select, toJson } from "../ui"
 
 /** The routine the template makes is called this (the server's brief `NAME`). */
 const BRIEF_NAME = "Morning brief"
@@ -137,13 +137,13 @@ export function BriefView({ assistant }: { assistant: Task }) {
           <Newspaper size={12} /> Brief
         </span>
         {versions.length > 0 && (
-          <select
+          <Select
             className="h-6 rounded border border-line bg-panel px-1 text-[12px] text-fg outline-none"
             title="One for each day it was written"
             aria-label="Day"
             value={doc?.version ?? ""}
-            onChange={(e) => {
-              const v = Number(e.target.value)
+            onChange={(version) => {
+              const v = Number(version)
               setPicked(v === latest?.version ? null : v)
             }}
           >
@@ -153,7 +153,7 @@ export function BriefView({ assistant }: { assistant: Task }) {
                 {v.version === latest?.version ? " (latest)" : ""}
               </option>
             ))}
-          </select>
+          </Select>
         )}
         {working && (
           <span className="flex items-center gap-1.5 text-muted">

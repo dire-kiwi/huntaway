@@ -4,7 +4,7 @@ import { Agent, type DefaultPrompts, type SystemPromptOptions } from "@huntaway/
 import { clsx } from "clsx"
 import { Schema } from "effect"
 import { useState } from "react"
-import { Help, resultError, resultValue, Textarea, Toggle } from "../../ui"
+import { Help, resultError, resultValue, Select, Textarea, Toggle } from "../../ui"
 import { Group } from "../parts"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
@@ -117,23 +117,16 @@ function SystemPromptPreview({ project }: { project: Project }) {
       help="What the board adds to the agent's own system prompt for a new thread in this project, with the options picked here and the project's saved settings. It's for the project's next task number, with a placeholder title and id, and isn't editable."
     >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <select
-          className={pickerClass}
-          title="Type"
-          aria-label="Type"
-          value={type}
-          onChange={(e) => setType(e.target.value === "scratch" ? "scratch" : "task")}
-        >
+        <Select className={pickerClass} title="Type" aria-label="Type" value={type} onChange={(v) => setType(v === "scratch" ? "scratch" : "task")}>
           <option value="task">Task</option>
           <option value="scratch">Scratch task</option>
-        </select>
-        <select
+        </Select>
+        <Select
           className={pickerClass}
           title="Agent"
           aria-label="Agent"
           value={shownRuntime}
-          onChange={(e) => {
-            const v = e.target.value
+          onChange={(v) => {
             if (isAgent(v)) setRuntime(v)
           }}
         >
@@ -142,7 +135,7 @@ function SystemPromptPreview({ project }: { project: Project }) {
               {a.label}
             </option>
           ))}
-        </select>
+        </Select>
         <div className="flex items-center gap-1" role="group" aria-label="Labels">
           {LABELS.map((l) => {
             const on = labels.includes(l)

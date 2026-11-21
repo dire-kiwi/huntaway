@@ -4,7 +4,7 @@
 // RPC socket (routeRpc), and changes the task's title with its preview URL so it can wait for the header to show it.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, failure, makeTask, routeRpc, seedBoard, startServer, withBrowser } from "./harness.mjs"
+import { eventually, failure, makeTask, pick, pickedValue, routeRpc, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
 let server, board
 beforeAll(async () => {
@@ -57,15 +57,15 @@ test("a refused model change says so", async () => {
     )
     // In the message box (HA-326).
     await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click thread"])
-    const model = page.locator('select[title="Model"]')
-    await model.selectOption("opus")
+    const model = page.locator('[role=combobox][title="Model"]')
+    await pick(model, "opus")
     await ui.run(["wait Couldn't change the model: disk full"])
-    assert.equal(await model.inputValue(), "", "it shows the saved model again")
+    assert.equal(await pickedValue(model), "", "it shows the saved model again")
     // A specific model typed in: saved on Enter, and refused the same way.
-    await model.selectOption({ label: "Specific model…" })
+    await pick(model, { label: "Specific model…" })
     await page.keyboard.type("claude-opus-5-5")
     await page.keyboard.press("Enter")
     await ui.run(["wait Couldn't change the model: disk full"])
-    assert.equal(await model.inputValue(), "", "it shows the saved model again")
+    assert.equal(await pickedValue(model), "", "it shows the saved model again")
   })
 })

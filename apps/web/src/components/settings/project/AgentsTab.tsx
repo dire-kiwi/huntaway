@@ -6,7 +6,7 @@ import { useBoard } from "../../../state/board"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 import { ConfigPicker } from "../ClaudeConfigs"
 import { GithubAccountSelect } from "../hosts/profileFields"
-import { Field, Input } from "../../ui"
+import { Field, Input, Select } from "../../ui"
 import { selectClass } from "../parts"
 
 const isMode = Schema.is(PermissionMode)
@@ -23,10 +23,9 @@ export function AgentsTab({ form, hostMode, set }: { form: ProjectForm; hostMode
         label="Permission mode"
         help="What agents may do without asking. With Ask, tool approvals show in the thread and flag the task as needing attention."
       >
-        <select
+        <Select
           value={form.permission_mode ?? ""}
-          onChange={(e) => {
-            const v = e.target.value
+          onChange={(v) => {
             set("permission_mode", isMode(v) ? v : null)
           }}
           className={selectClass}
@@ -37,7 +36,7 @@ export function AgentsTab({ form, hostMode, set }: { form: ProjectForm; hostMode
               {m.label} — {m.description}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
       <ProjectGithubAccount project={form} onChange={(a) => set("github_account", a)} />
     </>
@@ -52,14 +51,10 @@ function ProjectConfigs({ project, onChange }: { project: ProjectForm; onChange:
   return (
     <div className="space-y-2">
       <Field label="Agent configs" help="The configs new tasks pick from. With more than one, a new task asks which, starting with the default.">
-        <select
-          value={own ? "own" : "profile"}
-          onChange={(e) => onChange(e.target.value === "own" ? (profile?.claude_config_ids ?? []) : null)}
-          className={selectClass}
-        >
+        <Select value={own ? "own" : "profile"} onChange={(v) => onChange(v === "own" ? (profile?.claude_config_ids ?? []) : null)} className={selectClass}>
           <option value="profile">The profile's ({label})</option>
           <option value="own">This project's own</option>
-        </select>
+        </Select>
       </Field>
       {own && <ConfigPicker hostId={project.host_id} value={project.claude_config_ids ?? []} onChange={onChange} />}
     </div>

@@ -255,6 +255,25 @@ export function gate() {
   }
 }
 
+/**
+ * Picks an option in a `Select` (ui/Select.tsx), as `selectOption` did in a native select: the one with `choice`'s
+ * value, or `{ label }`'s text (a string or a RegExp), or the `{ index }`th.
+ */
+export async function pick(combobox, choice) {
+  await combobox.click()
+  const list = combobox.page().locator(`[role=listbox][id="${await combobox.getAttribute("aria-controls")}"]`)
+  const option =
+    typeof choice === "string"
+      ? list.locator(`[role=option][data-value="${choice}"]`)
+      : "label" in choice
+        ? list.getByRole("option", { name: choice.label, exact: true })
+        : list.getByRole("option").nth(choice.index)
+  await option.click()
+}
+
+/** A `Select`'s value, as `inputValue()` was a native select's. */
+export const pickedValue = (combobox) => combobox.getAttribute("data-value")
+
 /** A task's thread's scrolled area. */
 export const threadScroller = (page) => page.locator("[data-thread] [data-autoscroll]").first()
 

@@ -1,7 +1,7 @@
 import type { HostAgentConfig as ClaudeConfig, HostProject as Project } from "@huntaway/client"
 import { AgentConfigId, type WorkflowGraph, type WorkflowNode } from "@huntaway/contracts"
 import { ReviewerRow } from "../../task/Reviewers"
-import { Field, Input, Toggle } from "../../ui"
+import { Field, Input, Select, Toggle } from "../../ui"
 import { AgentStepTools } from "../AgentStepTools"
 import { TemplateField } from "../TemplateField"
 import { TEMPLATES, Wired, selectClass } from "./fields"
@@ -29,10 +29,10 @@ export function AgentInspector({
         <Input className="h-7" value={n.name} maxLength={60} onChange={(e) => onChange({ name: e.target.value })} />
       </Field>
       <Field label="Output">
-        <select className={selectClass} value={n.output} onChange={(e) => onChange({ output: e.target.value === "verdict" ? "verdict" : "text" })}>
+        <Select className={selectClass} value={n.output} onChange={(v) => onChange({ output: v === "verdict" ? "verdict" : "text" })}>
           <option value="text">Text: its last message</option>
           <option value="verdict">Verdict: pass, or the serious issues it found</option>
-        </select>
+        </Select>
       </Field>
       <Field label="Tab" hint="The task panel tab its output shows in. Steps can share one.">
         <Input className="h-7" value={n.tab ?? ""} maxLength={30} placeholder="No tab" onChange={(e) => onChange({ tab: e.target.value || undefined })} />

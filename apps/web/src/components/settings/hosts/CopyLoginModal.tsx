@@ -5,7 +5,7 @@ import type { AtomRegistry } from "effect/reactivity"
 import { useState } from "react"
 import { useBoard } from "../../../state/board"
 import { useAction } from "../../../state/mutation"
-import { Button, errorText, Field, Input, Modal, ModalFooter, Toggle } from "../../ui"
+import { Button, errorText, Field, Input, Modal, ModalFooter, Select, Toggle } from "../../ui"
 import { hubMutate } from "./hub"
 
 // Copying a config's login to another host (docs/plan/09-frontend.md "Step 1 as done for 6.11") is the hub's
@@ -95,17 +95,13 @@ export function CopyLoginModal({
           <p className="text-faint">No other host can take it.</p>
         ) : (
           <Field label="To host">
-            <select
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
-            >
+            <Select value={to} onChange={setTo} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
               {hosts.map((h) => (
                 <option key={h.id} value={h.id}>
                   {h.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
         )}
         {existing ? (

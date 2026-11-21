@@ -4,7 +4,7 @@ import { clsx } from "clsx"
 import { Flag, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useAvailableConfigs } from "../../boardHelpers"
-import { Button, Field, Input } from "../../ui"
+import { Button, Field, Input, Select } from "../../ui"
 import { AgentInspector } from "./AgentInspector"
 import { ColumnInspector } from "./ColumnInspector"
 import { ConditionInspector } from "./ConditionInspector"
@@ -78,10 +78,10 @@ export function NodeInspector({
       {n.kind === "open_pr" && <OpenPrInspector node={n} graph={graph} onChange={onChange} onUnwire={onUnwire} />}
       {n.kind !== "trigger" && inputs > 1 && (
         <Field label="Runs when">
-          <select className={selectClass} value={n.join ?? "any"} onChange={(e) => onChange({ join: e.target.value === "all" ? "all" : undefined })}>
+          <Select className={selectClass} value={n.join ?? "any"} onChange={(v) => onChange({ join: v === "all" ? "all" : undefined })}>
             <option value="any">Any of its inputs arrives</option>
             <option value="all">All of its inputs arrive</option>
-          </select>
+          </Select>
         </Field>
       )}
       {n.kind === "trigger" && !onRemove && (

@@ -9,7 +9,7 @@ import remarkGfm from "remark-gfm"
 import { GUIDE_PAGES, guideLink, headings, isGuidePage, loadGuidePage, namedPage, REPO_URL, slug } from "../../guide"
 import { href } from "../../router"
 import { navigate } from "../../state/route"
-import { MenuButton } from "../ui"
+import { MenuButton, Select } from "../ui"
 import { openGuide, scrollToHeading } from "./GuideLink"
 
 /** A heading's text, for its anchor. */
@@ -111,18 +111,22 @@ export function Guide({ page: wanted }: { page?: string | undefined }) {
       <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:px-3">
         <MenuButton />
         <h1 className="text-[14px] font-semibold">Guide</h1>
-        <select
-          aria-label="Guide page"
-          className="no-drag hidden min-w-0 rounded-md border border-line bg-panel px-2 py-1 text-[12px] narrow:block"
-          value={page}
-          onChange={(e) => navigate({ name: "guide", page: e.target.value })}
-        >
-          {GUIDE_PAGES.map((p) => (
-            <option key={p.page} value={p.page}>
-              {p.title}
-            </option>
-          ))}
-        </select>
+        {/* Only in the narrow layout, where the sidebar's list of pages is hidden. The div hides it: Select's own
+            display would win over a `hidden` in its class. */}
+        <div className="no-drag hidden min-w-0 narrow:flex">
+          <Select
+            aria-label="Guide page"
+            className="min-w-0 rounded-md border border-line bg-panel px-2 py-1 text-[12px]"
+            value={page}
+            onChange={(v) => navigate({ name: "guide", page: v })}
+          >
+            {GUIDE_PAGES.map((p) => (
+              <option key={p.page} value={p.page}>
+                {p.title}
+              </option>
+            ))}
+          </Select>
+        </div>
         <a
           href={`${REPO_URL}docs/guide/${page}.md`}
           target="_blank"

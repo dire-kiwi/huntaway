@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { makeProfile, repoDir, startServer, withBrowser } from "./harness.mjs"
+import { makeProfile, pickedValue, repoDir, startServer, withBrowser } from "./harness.mjs"
 
 // HA-50: the project settings' preview of what a new thread's agent is told.
 let server, project
@@ -26,7 +26,7 @@ test("the preview follows the permission mode a new thread inherits", async () =
     await withBrowser(server, {}, async (ui) => {
       const { page } = ui
       await ui.run([`goto /p/${project.id}/settings/prompts`, "wait SHOP-1"])
-      assert.equal(await page.locator("select[aria-label='Agent']").inputValue(), "codex")
+      assert.equal(await pickedValue(page.getByRole("combobox", { name: "Agent" })), "codex")
       await showing(page, PLAN_NOTE)
       const toggle = page.getByRole("switch", { name: "Plan mode" })
       assert.equal(await toggle.getAttribute("aria-checked"), "true")

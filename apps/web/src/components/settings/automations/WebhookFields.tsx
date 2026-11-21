@@ -6,7 +6,7 @@ import { useBoard } from "../../../state/board"
 import { useMutation } from "../../../state/mutation"
 import { after } from "../../../state/timers"
 import { useHost } from "../../boardHelpers"
-import { Button, copyText, Field, IconButton, Input, useConfirm, useDraft } from "../../ui"
+import { Button, copyText, Field, IconButton, Input, Select, useConfirm, useDraft } from "../../ui"
 import { rejectFailure } from "../agentTools/parts"
 import { OP_LABELS } from "./text"
 import { type Draft, type DraftFilter, listText } from "./draft"
@@ -208,12 +208,11 @@ export function WebhookFields({
               aria-label="Value to check"
               onChange={(e) => setFilter(i, { path: e.target.value })}
             />
-            <select
+            <Select
               className={selectClass}
               value={f.op}
               aria-label="Condition"
-              onChange={(e) => {
-                const op = e.target.value
+              onChange={(op) => {
                 if (isOp(op)) setFilter(i, { op })
               }}
             >
@@ -222,7 +221,7 @@ export function WebhookFields({
                   {OP_LABELS[op]}
                 </option>
               ))}
-            </select>
+            </Select>
             {f.op === "exists" || f.op === "not_exists" ? (
               <div />
             ) : (

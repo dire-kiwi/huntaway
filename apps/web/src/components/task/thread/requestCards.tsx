@@ -7,7 +7,7 @@ import { memo, useEffect, useRef, useState, type ReactNode, type Ref, type RefOb
 import { useBoard } from "../../../state/board"
 import { useAction, useMutation } from "../../../state/mutation"
 import { useProject } from "../../boardHelpers"
-import { Button, Textarea } from "../../ui"
+import { Button, Select, Textarea } from "../../ui"
 import { ProjectChangeDetail, ProjectCreationDetail, TaskDeletionDetail } from "./approvalDetails"
 import { fieldsOf, listOf, stringOf } from "./fields"
 import { Markdown } from "./Markdown"
@@ -103,7 +103,7 @@ function onDigit(e: KeyboardEvent) {
   if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.repeat || !/^[1-9]$/.test(e.key)) return
   const t = e.target instanceof HTMLElement ? e.target : null
   // Typing a number somewhere.
-  if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return
+  if (t && (t.isContentEditable || ["INPUT", "TEXTAREA"].includes(t.tagName) || t.role === "combobox")) return
   // Only the cards in the dialog on top, if there's one: a task open in a dialog over the page leaves the page's
   // thread on screen behind it, with its own cards.
   const dialogs = document.querySelectorAll('[aria-modal="true"]')
@@ -653,11 +653,11 @@ export const PlanCard = memo(function PlanCard({
           </Button>
           <label className="flex items-center gap-1.5 text-[12px] text-faint">
             and continue in
-            <select
+            <Select
               aria-label="Mode to continue in"
               value={mode}
               disabled={busy}
-              onChange={(e) => setMode(modes.find((m) => m === e.target.value) ?? mode)}
+              onChange={(v) => setMode(modes.find((m) => m === v) ?? mode)}
               className="h-7 rounded-md border border-line bg-raised px-1.5 text-[12px] text-fg outline-none hover:border-line-strong focus:border-accent/60"
             >
               {modes.map((m) => (
@@ -666,7 +666,7 @@ export const PlanCard = memo(function PlanCard({
                   {m === own ? " (this thread's)" : m === inherited ? " (thread default)" : ""}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <Button size="sm" disabled={busy} onClick={() => setFeedback("")}>
             Keep planning

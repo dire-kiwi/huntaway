@@ -18,7 +18,7 @@ import {
 } from "../../state/notify"
 import { exitError, useAction } from "../../state/mutation"
 import { Group, PanelHeading } from "../settings/parts"
-import { Button, Help, IconButton, resultError, resultValue, timeAgo, Toggle } from "../ui"
+import { Button, Help, IconButton, resultError, resultValue, Select, timeAgo, Toggle } from "../ui"
 import { chime, inDesktopApp, notifyPermission, showNotification, unlockSound } from "./notifier"
 import { endpointAtom, onHub, pushSupport, subscribe, unsubscribe } from "./push"
 
@@ -322,18 +322,18 @@ function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onCha
       ))}
       <label className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
         <span className="text-fg">Permission prompts</span>
-        <select
+        <Select
           className="h-7 rounded-md border border-line bg-panel px-1.5 text-[12px] text-fg outline-none"
           value={device.events.prompts}
           aria-label={`Permission prompts pushed to ${device.name || "this device"}`}
-          onChange={(ev) => onChange(Object.assign({}, device.events, { prompts: pushPrompts(ev.target.value) }))}
+          onChange={(v) => onChange(Object.assign({}, device.events, { prompts: pushPrompts(v) }))}
         >
           {PUSH_PROMPTS.map((p) => (
             <option key={p.id} value={p.id}>
               {p.label}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
     </div>
   )

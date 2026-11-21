@@ -8,7 +8,7 @@ import { useState } from "react"
 import { effortOptions, inheritedModel, modelOptions, modelPlaceholder, useAgentModels } from "../../agents"
 import { useBoard } from "../../state/board"
 import { ModelPicker } from "../layout/newTask/ModelPicker"
-import { Button, IconButton, Input, resultValue, Textarea } from "../ui"
+import { Button, IconButton, Input, resultValue, Select, Textarea } from "../ui"
 
 // Step 1 (docs/plan/09-frontend.md), for the profile form and the project settings' Review tab (6.12). The board's
 // skills a reviewer's own skills are picked from are the agent tools' (6.4).
@@ -299,14 +299,12 @@ export function ReviewerRow({
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-2">
-        <select
+        <Select
           className={pickerClass}
           title="Agent config"
           value={value.claude_config_id ?? ""}
           // Another agent has other models.
-          onChange={(e) =>
-            onChange(Object.assign({}, value, { claude_config_id: e.target.value ? AgentConfigId.make(e.target.value) : null, model: null, effort: null }))
-          }
+          onChange={(v) => onChange(Object.assign({}, value, { claude_config_id: v ? AgentConfigId.make(v) : null, model: null, effort: null }))}
         >
           <option value="">The task's config</option>
           {configs.map((c) => (
@@ -316,7 +314,7 @@ export function ReviewerRow({
             </option>
           ))}
           {value.claude_config_id && !config && <option value={value.claude_config_id}>Deleted config (uses the task's)</option>}
-        </select>
+        </Select>
         <ModelPicker
           value={model}
           onChange={(m) => onChange(Object.assign({}, value, { model: m || null }))}
@@ -324,12 +322,7 @@ export function ReviewerRow({
           placeholder={modelPlaceholder(config)}
           inherited={inheritedModel(config, models, inherit.project, inherit.profile, hostSettings?.default_model)}
         />
-        <select
-          className={pickerClass}
-          title="Effort"
-          value={value.effort ?? ""}
-          onChange={(e) => onChange(Object.assign({}, value, { effort: e.target.value || null }))}
-        >
+        <Select className={pickerClass} title="Effort" value={value.effort ?? ""} onChange={(v) => onChange(Object.assign({}, value, { effort: v || null }))}>
           <option value="">{hostSettings?.default_effort ? `Default effort (${hostSettings.default_effort})` : "Default effort"}</option>
           {effortOptions(config, models, model).map((e) => (
             <option key={e} value={e}>
@@ -337,7 +330,7 @@ export function ReviewerRow({
             </option>
           ))}
           {value.effort && !effortOptions(config, models, model).includes(value.effort) && <option value={value.effort}>{value.effort} effort</option>}
-        </select>
+        </Select>
         {extras && (
           <button
             type="button"
@@ -431,10 +424,10 @@ export function InheritPicker({
 }) {
   return (
     <div className="space-y-1.5">
-      <select className={pickerClass} title={`Whose ${what}`} value={own ? "own" : "profile"} onChange={(e) => onChange(e.target.value === "own")}>
+      <Select className={pickerClass} title={`Whose ${what}`} value={own ? "own" : "profile"} onChange={(v) => onChange(v === "own")}>
         <option value="profile">The profile's {what}</option>
         <option value="own">This project's own {what}</option>
-      </select>
+      </Select>
       {!own && <div className="text-[12.5px] text-muted">{profileHas}</div>}
     </div>
   )
