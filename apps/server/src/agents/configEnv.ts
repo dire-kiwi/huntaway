@@ -7,13 +7,20 @@ import type { AgentConfig } from "@huntaway/contracts"
 /** The config folder, with the agent's default for an empty one, `~` expanded against `home`. */
 export const configDir = (config: Pick<AgentConfig, "config_dir" | "agent">, home: string): string => {
   const d = config.config_dir.trim()
-  const dir = d === "" ? (config.agent === "codex" ? "~/.codex" : "~/.claude") : d
+  const dir = d === "" ? (config.agent === "codex" ? "~/.codex" : config.agent === "acp" ? "~/.gemini" : "~/.claude") : d
   return dir === "~" ? home : dir.startsWith("~/") ? `${home}${dir.slice(1)}` : dir
 }
 
+/**
+ * An ACP agent's home (HE-69): its config folder, when set, `~` expanded, as `GEMINI_HOME` (Antigravity's); blank is
+ * the agent's own, and no variable.
+ */
+export const acpHomeEnv = (config: Pick<AgentConfig, "config_dir" | "agent">, home: string): Record<string, string> =>
+  config.agent !== "acp" || config.config_dir.trim() === "" ? {} : { GEMINI_HOME: configDir(config, home) }
+
 /** The proxy set on the config itself (`api_url`), which the board passes to its agents. */
 const ownProxy = (config: Pick<AgentConfig, "api_url" | "agent">): string | null =>
-  config.api_url !== null && config.agent !== "codex" && config.api_url.trim() !== "" ? config.api_url : null
+  config.api_url !== null && config.agent === "claude" && config.api_url.trim() !== "" ? config.api_url : null
 
 /**
  * What a `claude` started with this config gets in its environment to go through its proxy: nothing without one.

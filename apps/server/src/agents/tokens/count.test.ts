@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { jsonText } from "../claude/tools.ts"
-import { countClaude, countCodex } from "./count.ts"
+import { countAcp, countClaude, countCodex } from "./count.ts"
 import type { Before, Counted, Earlier } from "./count.ts"
 import { counts, writeSplit } from "./counts.ts"
 import type { ByModel, Counts } from "./counts.ts"
@@ -96,6 +96,13 @@ const opusSplit = (output: number, w1h: number, w5m: number) => ({
   cacheCreationEphemeral5mInputTokens: w5m,
 })
 
+/** An ACP run on session S whose one turn used these tokens, as the adapter writes it (its totals from zero). */
+const acpRun = (input: number, cached: number, output: number) => [
+  json({ method: "thread/started", params: { thread: { id: "S" } } }),
+  json({ method: "huntaway/model", params: { threadId: "S", model: "gemini" } }),
+  usage("S", [input, cached, output], [input, cached, output]),
+]
+
 describe("countClaude and countCodex", () => {
   it("a Claude run uses what its session's totals went up by", () => {
     const lines = [
@@ -156,6 +163,15 @@ describe("countClaude and countCodex", () => {
     const rolled = [usage("main", [120, 0, 12], [20, 0, 2])]
     assert.strictEqual(model(countCodex(rolled, "m", earlier).models, "m").output, 2)
     assert.strictEqual(model(countCodex(rolled, "m", none).models, "m").output, 2)
+  })
+
+  it("an ACP run counts its own tokens, a resumed session's too: the adapter's totals start at zero each run", () => {
+    const first = countAcp(acpRun(5000, 0, 1000), "acp")
+    assert.strictEqual(first.runtime, "acp")
+    // The same session resumed: its earlier totals are no part of this run's.
+    const second = countAcp(acpRun(8000, 2000, 2000), "acp")
+    const m = model(second.models, "gemini")
+    assert.deepStrictEqual([m.input, m.cache_read, m.output], [6000, 2000, 2000])
   })
 
   it("a Codex subagent's tokens go to its own model", () => {

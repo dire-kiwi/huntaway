@@ -12,6 +12,7 @@ import {
   byReviewer,
   byTask,
   codexWrites,
+  runtimeName,
   effortLabel,
   fedTokens,
   format,
@@ -76,7 +77,7 @@ export function TokenStats({ data, project }: { data: TokenData; project: string
             <button
               key={m}
               onClick={() => setMetric(m)}
-              title={m === "cost" ? "What Claude Code said it cost. Codex doesn't say, so its runs count as nothing here." : undefined}
+              title={m === "cost" ? "What Claude Code said it cost. Codex and ACP agents don't say, so their runs count as nothing here." : undefined}
               className={clsx("rounded-md px-2 py-0.5 text-[12px]", metric === m ? "bg-raised text-fg" : "text-muted hover:text-fg")}
             >
               {METRIC_LABEL[m]}
@@ -112,13 +113,19 @@ function Tile({ label, value: shown, hint }: { label: string; value: string; hin
 
 function Tiles({ rows }: { rows: URow[] }) {
   const t = rows.length ? total(rows) : null
-  const codex = rows.filter((r) => r.runtime === "codex")
-  const codexTokens = codex.reduce((n, r) => n + allTokens(r), 0)
+  // Codex and ACP agents don't say what a run cost.
+  const others = rows.filter((r) => r.runtime === "codex" || r.runtime === "acp")
+  const otherTokens = others.reduce((n, r) => n + allTokens(r), 0)
+  const otherNames = [...new Set(others.map((r) => runtimeName(r.runtime)))].join(" and ")
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       <Tile label="All tokens" value={tokens(t ? allTokens(t) : 0)} hint={t ? `${tokens(t.cacheRead)} of them cache reads` : "none counted"} />
       <Tile label="Output tokens" value={tokens(t?.output ?? 0)} hint={t ? `${tokens(t.input + t.cacheWrite)} input and cache writes` : "–"} />
-      <Tile label="Cost" value={usd(t?.cost ?? 0)} hint={codex.length ? `Claude's; Codex used ${tokens(codexTokens)} tokens` : "as Claude Code reports it"} />
+      <Tile
+        label="Cost"
+        value={usd(t?.cost ?? 0)}
+        hint={others.length ? `Claude's; ${otherNames} used ${tokens(otherTokens)} tokens` : "as Claude Code reports it"}
+      />
       <Tile
         label="Runs"
         value={String(t?.runs ?? 0)}
@@ -254,7 +261,7 @@ function writeSplit(t: Totals) {
   const parts: string[] = []
   if (t.cacheWrite1h || t.cacheWrite5m) parts.push(`1h ${tokens(t.cacheWrite1h)}`, `5m ${tokens(t.cacheWrite5m)}`)
   if (t.cacheWriteUnsplit) parts.push(`${tokens(t.cacheWriteUnsplit)} unknown`)
-  if (codexWrites(t) > 0) parts.push(`${tokens(codexWrites(t))} Codex's, n/a`)
+  if (codexWrites(t) > 0) parts.push(`${tokens(codexWrites(t))} not Claude's, n/a`)
   return parts.join(", ")
 }
 
@@ -434,7 +441,7 @@ function ByModel({ rows, metric }: { rows: URow[]; metric: Metric }) {
               return (
                 <tr key={g.key} className="bg-panel/60">
                   <td className="truncate px-3 py-1.5" title={`${model}, in ${uses(g.totals)}`}>
-                    {model} <span className="text-faint">· {runtime === "codex" ? "Codex" : "Claude"}</span>
+                    {model} <span className="text-faint">· {runtimeName(runtime)}</span>
                   </td>
                   <Cells t={g.totals} metric={metric} whole={whole} />
                 </tr>

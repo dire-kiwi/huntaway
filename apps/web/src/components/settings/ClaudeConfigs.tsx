@@ -1,4 +1,15 @@
-import { AGENTS, agentInfo, agentOf, canRunAgents, mutate, usageKey, type Board, type HostAgentConfig as ClaudeConfig } from "@huntaway/client"
+import {
+  ACP_DEFAULT_COMMAND,
+  AGENTS,
+  agentInfo,
+  agentOf,
+  agentSuffix,
+  canRunAgents,
+  mutate,
+  usageKey,
+  type Board,
+  type HostAgentConfig as ClaudeConfig,
+} from "@huntaway/client"
 import { HostId, type Agent, type AgentConfig, type AgentConfigPatch } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Exit } from "effect"
@@ -55,7 +66,7 @@ export const configDir = (c: Pick<ClaudeConfig, "config_dir" | "agent">): string
 export const configProxy = (c: Pick<ClaudeConfig, "agent" | "api_url" | "settings_api_url">): string | null =>
   agentOf(c) === "claude" ? c.api_url || c.settings_api_url || null : null
 
-/** Marks a config that runs Codex rather than Claude Code, or one whose agents go through a proxy. */
+/** Marks a config that runs Codex or an ACP agent rather than Claude Code, or one whose agents go through a proxy. */
 export function AgentBadge({ config }: { config: ClaudeConfig }) {
   const proxy = configProxy(config)
   if (proxy) {
@@ -66,8 +77,14 @@ export function AgentBadge({ config }: { config: ClaudeConfig }) {
       </span>
     )
   }
-  if (agentOf(config) !== "codex") return null
-  return <span className="shrink-0 rounded bg-white/5 px-1 py-px text-[10.5px] text-muted">Codex</span>
+  const agent = agentOf(config)
+  if (agent === "claude") return null
+  const title = agent === "acp" ? `An ACP agent: runs ${config.command?.trim() || `${ACP_DEFAULT_COMMAND} (Google's Antigravity CLI)`}` : undefined
+  return (
+    <span className="shrink-0 rounded bg-white/5 px-1 py-px text-[10.5px] text-muted" title={title}>
+      {agentInfo(agent).short}
+    </span>
+  )
 }
 
 /** Profiles on the config's host that use it. */
@@ -89,9 +106,11 @@ function ConfigRow({
   onCopy: () => void
 }) {
   const usedBy = useUsedBy(config)
-  const canShowUsage = true
+  // An ACP agent's plan limits aren't read, and its login isn't copied.
+  const acp = agentOf(config) === "acp"
+  const canShowUsage = !acp
   // Through a proxy, which picks the account, there's no one window to restart.
-  const canRestart = !configProxy(config)
+  const canRestart = !acp && !configProxy(config)
   // Usage that's been fetched and has no session limit: a plan without the 5-hour window.
   const noWindow = useBoard((s) => {
     const u = s.usage[usageKey(config.host_id, config.id)]
@@ -118,6 +137,7 @@ function ConfigRow({
         <div className="w-28 shrink-0 truncate text-[12.5px]">{label}</div>
         <AgentBadge config={config} />
         <div className="min-w-0 flex-1 truncate text-[11.5px] text-faint">
+          {acp && <span className="font-mono">{config.command?.trim() || ACP_DEFAULT_COMMAND} · </span>}
           <span className="font-mono">{configDir(config)}</span>
           {usedBy.length > 0 && ` · ${usedBy.join(", ")}`}
         </div>
@@ -146,7 +166,7 @@ function ConfigRow({
             Restart 5h window
           </label>
         )}
-        {canCopy && (
+        {canCopy && !acp && (
           <Button size="sm" variant="ghost" onClick={onCopy} title="Copy this login and settings to another host">
             <Copy size={12} /> Copy login
           </Button>
@@ -170,7 +190,7 @@ interface Editing {
   name?: string | undefined
 }
 
-/** Every host's agent configs (Claude Code or Codex), shown together by name. */
+/** Every host's agent configs (Claude Code, Codex or an ACP agent), shown together by name. */
 export function ClaudeConfigsPanel() {
   const configs = useBoard((s) => s.claudeConfigs)
   const hosts = useBoard((s) => s.hosts)
@@ -185,12 +205,16 @@ export function ClaudeConfigsPanel() {
     <section>
       <PanelHeading
         title="Agent configs"
-        description="The Claude Code and Codex logins on each host, for profiles and projects to pick from."
+        description="The Claude Code, Codex and ACP agent logins on each host, for profiles and projects to pick from."
         help={
           <>
             <span className="block">
-              A config is a Claude Code or Codex config directory on a host, with its own login, settings and history. A thread&apos;s config decides which
-              agent runs it.
+              A config is a Claude Code, Codex or ACP agent config directory on a host, with its own login, settings and history. A thread&apos;s config decides
+              which agent runs it.
+            </span>
+            <span className="block">
+              An ACP agent is one that speaks the Agent Client Protocol: Google&apos;s Antigravity CLI (<code>{ACP_DEFAULT_COMMAND}</code>, for Gemini models)
+              unless its config names another.
             </span>
             <span className="block">Configs with the same name on different hosts appear together.</span>
           </>
@@ -306,11 +330,14 @@ function ConfigForm({
   const sameName = useBoard((s) => s.claudeConfigs.find((c) => presetName && c.name === presetName))
   const [agent, setAgentState] = useState<Agent>(agentOf(initial ?? sameName))
   const defaultDir = (a: Agent): string => {
+    // An ACP agent's is its own unless one is given.
+    if (a === "acp") return ""
     const base = agentInfo(a).dir
     return presetName ? `${base}-${presetName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}` : base
   }
   const [name, setName] = useState(initial?.name ?? presetName ?? "")
   const [dir, setDir] = useState(initial?.config_dir ?? defaultDir(agent))
+  const [command, setCommand] = useState(initial?.command ?? "")
   const [apiUrl, setApiUrl] = useState(initial?.api_url ?? "")
   // The keys are never sent back: blank keeps the saved one.
   const [apiKey, setApiKey] = useState("")
@@ -326,7 +353,7 @@ function ConfigForm({
   // A proxy its settings.json sets, as it was when the form opened: its usage needs the management key too.
   const settingsProxy = agent === "claude" && !proxied && initial?.settings_api_url && initial.config_dir === dir.trim() ? initial.settings_api_url : null
   const mgmtKey = managementKey.trim() ? { management_key: managementKey.trim() } : {}
-  /** What to send about the proxy: cleared (keys too) when it's taken away or the agent is Codex. */
+  /** What to send about the proxy: cleared (keys too) when it's taken away or the agent isn't Claude Code. */
   const proxyFields = (): ProxyFields => {
     // The management key stays for the proxy settings.json sets.
     if (settingsProxy) return { ...(initial?.api_url ? { api_url: null, api_key: null } : {}), ...mgmtKey }
@@ -340,7 +367,8 @@ function ConfigForm({
   const submit = (): void => {
     // A double press while it's saving does nothing, as before.
     if (busy) return
-    const config = { name: name.trim(), config_dir: dir.trim(), agent, ...proxyFields() }
+    // Only an ACP config has a command: blank is the default, `agy acp`.
+    const config = { name: name.trim(), config_dir: dir.trim(), agent, ...(agent === "acp" ? { command: command.trim() || null } : {}), ...proxyFields() }
     void run(initial ? mutate("configs.update", hostId, { id: initial.id, patch: config }) : mutate("configs.create", hostId, { config })).then((exit) => {
       if (Exit.isSuccess(exit)) onDone(exit.value)
     })
@@ -367,17 +395,45 @@ function ConfigForm({
           ))}
         </div>
       </Field>
+      {agent === "acp" && (
+        <Field
+          label="Command"
+          help={
+            <>
+              Any agent that speaks the Agent Client Protocol, as its program and arguments. Blank runs Google&apos;s Antigravity CLI (
+              <code>{ACP_DEFAULT_COMMAND}</code>); sign in by running <code>agy</code> once.
+            </>
+          }
+        >
+          <Input
+            className="font-mono text-[12px]"
+            value={command}
+            placeholder={ACP_DEFAULT_COMMAND}
+            onChange={(e) => setCommand(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && name.trim()) submit()
+            }}
+          />
+        </Field>
+      )}
       <Field
-        label="Config directory"
+        label={agent === "acp" ? "Config directory (optional)" : "Config directory"}
         help={
           <>
-            <span className="block">
-              On that host. Passed as <code>{info.env}</code>, so each config has its own login, settings and history. Run{" "}
-              <code>
-                {info.env}=… {agent}
-              </code>{" "}
-              there once to log in, or copy a login from another host.
-            </span>
+            {agent === "acp" ? (
+              <span className="block">
+                On that host. Blank is the agent&apos;s own (<code>{info.dir}</code> for Antigravity). Set, it&apos;s passed as <code>{info.env}</code>, so the
+                config has its own login, settings and history: run <code>{info.env}=… agy</code> there once to sign in.
+              </span>
+            ) : (
+              <span className="block">
+                On that host. Passed as <code>{info.env}</code>, so each config has its own login, settings and history. Run{" "}
+                <code>
+                  {info.env}=… {agent}
+                </code>{" "}
+                there once to log in, or copy a login from another host.
+              </span>
+            )}
             {initial && (
               <span className="block">Changing it moves agents to the new directory, but threads already started keep their conversation in the old one.</span>
             )}
@@ -387,6 +443,7 @@ function ConfigForm({
         <Input
           className="font-mono text-[12px]"
           value={dir}
+          placeholder={agent === "acp" ? info.dir : undefined}
           onChange={(e) => setDir(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && name.trim()) submit()
@@ -531,7 +588,7 @@ export function ConfigSelect({
       {configs.map((c) => (
         <option key={c.id} value={c.id}>
           {c.name}
-          {agentOf(c) === "codex" ? " (Codex)" : ""}
+          {agentSuffix(c)}
           {alert(c) ? ` · ${alert(c)?.short}` : ""}
         </option>
       ))}

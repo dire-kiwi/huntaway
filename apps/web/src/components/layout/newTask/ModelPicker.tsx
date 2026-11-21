@@ -16,7 +16,7 @@ export function ModelPicker({
   value: string
   onChange: (v: string) => void
   inherited?: string | null | undefined
-  /** Claude's aliases, or a Codex config's models. */
+  /** Claude's aliases, or a Codex or ACP config's models. */
   options: { id: string; label: string }[]
   placeholder?: string | undefined
   /**

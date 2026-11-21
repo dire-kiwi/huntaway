@@ -67,6 +67,12 @@ case "$1" in
     shift
     exec "$node" $flags "$src/codex-run.$ext" "$@"
     ;;
+  # The ACP adapter (HE-69), the same way; and the stdio-to-HTTP MCP bridge an ACP agent without http MCP servers gets.
+  acp-run | mcp-stdio)
+    entry=$1
+    shift
+    exec "$node" $flags "$src/$entry.$ext" "$@"
+    ;;
   "" | serve) ;;
   *) exec "$node" $flags "$src/bin.$ext" "$@" ;;
 esac

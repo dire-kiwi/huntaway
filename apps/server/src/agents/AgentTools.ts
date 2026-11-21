@@ -671,6 +671,11 @@ export class AgentTools extends Context.Service<AgentTools, AgentToolsShape>()("
           board = effective(inv).skills
           off = inv.globalSkills.map((s) => s.name).filter((n) => !board.some((s) => s.name === n))
         }
+        // HE-69: an ACP agent is given no skills (neither Claude Code's folders nor Codex's), so its composer offers none.
+        if (cfg?.agent === "acp") {
+          const none: TaskSkills = { agent: "acp", skills: [] }
+          return none
+        }
         const isCodex = cfg?.agent === "codex"
         let found: ReadonlyArray<TaskSkill>
         if (isCodex && cfg !== null) {

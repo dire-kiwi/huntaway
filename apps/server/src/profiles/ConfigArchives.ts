@@ -33,6 +33,12 @@ export const CLAUDE_ENTRIES = [
 /** The same for a Codex home. Sessions, logs and its databases stay put. */
 export const CODEX_ENTRIES = ["auth.json", "config.toml", "AGENTS.md", "skills", "rules", "prompts"] as const
 
+/**
+ * The same for an ACP agent's home (HE-69): Antigravity's (`GEMINI_HOME`, `~/.gemini`), its ACP sign-in and settings,
+ * its own settings and instructions, and its config (skills). Conversations and temporary files stay put.
+ */
+export const ACP_ENTRIES = ["antigravity-acp/acp_token.json", "antigravity-acp/settings.json", "settings.json", "GEMINI.md", "config"] as const
+
 /** tar couldn't be run. */
 export class ArchiveUnavailable extends Schema.TaggedError<ArchiveUnavailable, { readonly brand: unique symbol }>()("ArchiveUnavailable", {
   reason: Schema.String,
@@ -48,13 +54,14 @@ export const decodeArchive = (text: string): Result.Result<Uint8Array, Invalid> 
 
 /** Where a config's files are, which of them a copy takes, and the file holding its login. */
 export const configFiles = (row: Pick<AgentConfigRow, "config_dir" | "agent">, home: string) => {
-  const codex = row.agent === "codex"
   const given = row.config_dir.trim()
-  return {
-    dir: expandTilde(given === "" ? (codex ? "~/.codex" : "~/.claude") : given, home),
-    entries: codex ? CODEX_ENTRIES : CLAUDE_ENTRIES,
-    login: codex ? "auth.json" : ".credentials.json",
-  }
+  const [fallback, entries, login]: readonly [string, ReadonlyArray<string>, string] =
+    row.agent === "codex"
+      ? ["~/.codex", CODEX_ENTRIES, "auth.json"]
+      : row.agent === "acp"
+        ? ["~/.gemini", ACP_ENTRIES, "antigravity-acp/acp_token.json"]
+        : ["~/.claude", CLAUDE_ENTRIES, ".credentials.json"]
+  return { dir: expandTilde(given === "" ? fallback : given, home), entries, login }
 }
 
 const concat = (chunks: ReadonlyArray<Uint8Array>) => {

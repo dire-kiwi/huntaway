@@ -70,10 +70,10 @@ const ownPrompt: { readonly [Tag in ThreadKind["_tag"]]: (kind: ThreadKind, c: P
   Scratch: (kind, c) =>
     scratch({ key: keyOf(kind, c, c.task.number), title: c.task.title, id: c.task.id, sharedFolder: c.task.work_dir !== null, project: c.project }),
   Group: (_, c) => group({ number: c.task.number, title: c.task.title, id: c.task.id, group: c.task.group_name ?? "", projects: c.group }),
-  Assistant: (_, c) => assistant({ number: c.task.number, id: c.task.id, workDir: c.task.work_dir, codex: c.codex }),
+  Assistant: (_, c) => assistant({ number: c.task.number, id: c.task.id, workDir: c.task.work_dir, codex: c.codex, acp: c.acp }),
   Routine: (_, c) => routine({ number: c.task.number, id: c.task.id, parentId: c.task.parent_id ?? "", workDir: c.task.work_dir }),
-  PensRoot: (_, c) => pens({ number: c.task.number, id: c.task.id, codex: c.codex }),
-  Pen: (_, c) => pen({ number: c.task.number, id: c.task.id, codex: c.codex }),
+  PensRoot: (_, c) => pens({ number: c.task.number, id: c.task.id, codex: c.codex, acp: c.acp }),
+  Pen: (_, c) => pen({ number: c.task.number, id: c.task.id, codex: c.codex, acp: c.acp }),
   Review: underTask("review"),
   Summary: underTask("summary"),
   WorkflowStep: underTask("workflow"),
@@ -101,7 +101,7 @@ const grants = (profile: PromptContext["profiles"][number], name: string) => pro
 export const instructions = (base: string, kind: ThreadKind, c: PromptContext): string => {
   let s = base
   if (c.codex && c.plan) s += codexPlanMode
-  if (c.ghTools && c.codex) s += codexGithubNote(c.githubAccount)
+  if (c.ghTools && c.codex) s += codexGithubNote(c.githubAccount, c.acp === true)
   else if (c.ghTools) s += githubNote(c.githubAccount)
   if (c.docsTools && !isUnderTask(kind)) s += docsNote(c.codex)
   if (c.desktopHost !== null && c.desktopHost !== "") s += desktopNote(c.codex, c.desktopHost)

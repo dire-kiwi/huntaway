@@ -1,7 +1,22 @@
 import { describe, expect, it } from "@effect/vitest"
 import { type Host, HostId, LinkId, ProfileId, PROTOCOL, Timestamp } from "@huntaway/contracts"
-import { afterSend, assistantHome, boardHosts, hostHas, isArchived, outOfUsage, splitAttachments, usableHost, withAttachments } from "../src/index.ts"
-import { profile, task } from "./fixtures.ts"
+import {
+  afterSend,
+  AGENTS,
+  agentInfo,
+  agentSuffix,
+  askerName,
+  assistantHome,
+  boardHosts,
+  hostHas,
+  isArchived,
+  listsModels,
+  outOfUsage,
+  splitAttachments,
+  usableHost,
+  withAttachments,
+} from "../src/index.ts"
+import { config, profile, task } from "./fixtures.ts"
 
 const host = (id: string, more: Partial<Host> = {}): Host => ({
   id: HostId.make(id),
@@ -87,5 +102,27 @@ describe("the old client's pure helpers", () => {
     expect(isArchived(task({ status: "todo", done_at: null }), now)).toBe(false)
     expect(outOfUsage(task({ limit_reset_at: Timestamp.make("2026-11-05T01:00:00.000Z") }), now)).toBe(true)
     expect(outOfUsage(task({ limit_reset_at: Timestamp.make("2026-11-04T23:00:00.000Z") }), now)).toBe(false)
+  })
+})
+
+// HE-69: a third agent, any that speaks the Agent Client Protocol (Google's Antigravity by default).
+describe("agents", () => {
+  it("each agent has its own name, folder and variable, and only Claude Code takes Claude's aliases", () => {
+    expect(AGENTS.map((a) => a.id)).toEqual(["claude", "codex", "acp"])
+    expect(agentInfo("acp")).toMatchObject({ dir: "~/.gemini", env: "GEMINI_HOME", short: "ACP" })
+    expect(agentInfo("acp").label).toContain("Antigravity")
+    expect(agentInfo("codex").dir).toBe("~/.codex")
+    expect(agentInfo("claude").env).toBe("CLAUDE_CONFIG_DIR")
+    expect([listsModels("claude"), listsModels("codex"), listsModels("acp")]).toEqual([false, true, true])
+  })
+
+  it("a config's name is followed by its agent unless it's Claude Code's", () => {
+    expect([agentSuffix(config()), agentSuffix(config({ agent: "codex" })), agentSuffix(config({ agent: "acp" })), agentSuffix(undefined)]).toEqual([
+      "",
+      " (Codex)",
+      " (ACP)",
+      "",
+    ])
+    expect([askerName("claude"), askerName("codex"), askerName("acp"), askerName(undefined)]).toEqual(["Claude", "Codex", "The agent", "Claude"])
   })
 })

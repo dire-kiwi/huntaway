@@ -97,7 +97,8 @@ export class TitleModel extends Context.Service<TitleModel, TitleModelShape>()("
   /**
    * `claude -p --model haiku --output-format json` with no tools, no MCP servers, no session kept and no slash commands,
    * the input on stdin, in the data folder, with the config's folder and proxy; killed after 60 seconds. A Codex config's
-   * title is its cheapest model's, in an ephemeral thread (`CodexQueries.title`, 5.3).
+   * title is its cheapest model's, in an ephemeral thread (`CodexQueries.title`, 5.3). An ACP config's is asked as with
+   * no config (HE-69): Claude Code's default folder.
    */
   static readonly layer = Layer.effect(
     TitleModel,
@@ -108,9 +109,11 @@ export class TitleModel extends Context.Service<TitleModel, TitleModelShape>()("
       const configs = yield* AgentConfigRepo
       const codex = yield* CodexQueries
 
-      const ask = Effect.fn("TitleModel.ask")(function* (cfg: AgentConfigRow | null, system: string, input: string) {
+      const ask = Effect.fn("TitleModel.ask")(function* (given: AgentConfigRow | null, system: string, input: string) {
         // A Codex config's title comes from its own cheapest model (5.3).
-        if (cfg !== null && cfg.agent === "codex") return yield* codex.title(cfg, dataDir.root, system, input)
+        if (given !== null && given.agent === "codex") return yield* codex.title(given, dataDir.root, system, input)
+        // An ACP agent has no one-off calls the board can make: its title is Claude Code's, as without a config.
+        const cfg = given !== null && given.agent === "acp" ? null : given
         const args = ["-p", "--model", "haiku", "--output-format", "json", "--tools", "", "--strict-mcp-config"]
         args.push("--no-session-persistence", "--disable-slash-commands", "--system-prompt", system)
         const apiKey = cfg === null ? null : (yield* configs.keys(cfg.id)).api_key

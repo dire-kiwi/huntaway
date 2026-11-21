@@ -1,3 +1,4 @@
+import { BOARD_TOOLS } from "@huntaway/shared"
 import { Effect } from "effect"
 import { McpServers } from "../McpServers.ts"
 import type { RegisteredTool } from "../McpServers.ts"
@@ -18,44 +19,8 @@ import { workflowTools } from "./workflows.ts"
 // order the old server listed them (mcp.ts `board_tools`), which is the order runs are shown them. An area that adds
 // tools adds its list here; `BOARD_TOOLS` places each. Still to come: the automations (6.5) and the workflows (6.6).
 
-/** Every tool of the board's server, in `tools/list`'s order. */
-export const BOARD_TOOLS: ReadonlyArray<string> = [
-  "request_user_input",
-  "finish_work",
-  "request_connection",
-  "track_work",
-  "untrack_work",
-  "list_tracked_work",
-  "wait",
-  "background_wait",
-  "list_projects",
-  "list_tasks",
-  "get_task",
-  "get_task_field",
-  "create_task",
-  "update_task",
-  "delete_task",
-  "list_pens",
-  "create_pen",
-  "update_pen",
-  "delete_pen",
-  "send_to_task",
-  "suggest_task_actions",
-  "get_project",
-  "update_project",
-  "create_project",
-  "list_automations",
-  "create_automation",
-  "update_automation",
-  "delete_automation",
-  "run_automation",
-  "list_workflows",
-  "create_workflow",
-  "update_workflow",
-  "delete_workflow",
-  "run_workflow",
-  "submit_review",
-]
+/** Every tool of the board's server, in `tools/list`'s order (in packages/shared, where the ACP adapter reads it too). */
+export { BOARD_TOOLS }
 
 const rank = (r: RegisteredTool) => {
   const i = BOARD_TOOLS.indexOf(r.tool.name)
