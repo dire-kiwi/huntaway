@@ -889,6 +889,9 @@ and 100 ms (on localhost, under 0.1 s either way). Three changes:
   browser), except the relay's piped ones (`hosts/pipe.ts`): `ws` queues a frame for zlib before it reaches the
   connection, out of sight of the pipe's wait for a drain, so a fast sender would be read into memory. `accept` takes
   the extension out of the upgrade request and `dial` doesn't offer it; `pipe.test.ts` runs its hub with these options.
+  A message is at most 16 MiB inflated (`maxPayload`, RPC's own limit; 1009 past it): `/api/rpc` upgrades before any
+  token, and `ws`'s default of 100 MiB let a few kilobytes deflated make the server allocate that much
+  (`http/websocket.test.ts`).
 
 After: 0.41 s to the first card at 20 Mbit/s and 40 ms, 1.0 s at 5 Mbit/s and 100 ms (Chromium's network emulation,
 the demo board, an empty cache). Not done: `board.watch` still waits for `public.health`'s answer (one round trip on
