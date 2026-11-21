@@ -548,6 +548,39 @@ describe("ACP sessions' settings", () => {
     assert.strictEqual(currentModel(session), "flash")
   })
 
+  it("takes a resumed session out of yolo in every mode but bypassPermissions", () => {
+    // Antigravity offers only `default` and `yolo`: a session left in yolo by a bypassPermissions run goes back to
+    // `default` when the task is in plan or acceptEdits.
+    const legacy: SessionResponse = { sessionId: "s", modes: { currentModeId: "yolo", availableModes: [{ id: "default" }, { id: "yolo" }] } }
+    for (const mode of ["plan", "acceptEdits", "default", "dontAsk"])
+      assert.deepStrictEqual(modeChoice(legacy, mode), { _tag: "SetMode", modeId: "default" }, mode)
+    assert.deepStrictEqual(modeChoice(legacy, "bypassPermissions"), { _tag: "None" })
+    const config: SessionResponse = {
+      sessionId: "s",
+      configOptions: [
+        {
+          id: "mode",
+          name: "Mode",
+          category: "mode",
+          type: "select",
+          currentValue: "yolo",
+          options: [
+            { value: "default", name: "Default" },
+            { value: "yolo", name: "YOLO" },
+          ],
+        },
+      ],
+    }
+    for (const mode of ["plan", "acceptEdits"]) assert.deepStrictEqual(modeChoice(config, mode), { _tag: "Config", configId: "mode", value: "default" }, mode)
+  })
+
+  it("warns when the agent has modes but none for the board's", () => {
+    const yoloOnly: SessionResponse = { sessionId: "s", modes: { currentModeId: "yolo", availableModes: [{ id: "yolo" }, { id: "code" }] } }
+    assert.deepStrictEqual(modeChoice(yoloOnly, "plan"), { _tag: "Unavailable", what: "a mode for the board's plan" })
+    // An agent with no modes has none to set.
+    assert.deepStrictEqual(modeChoice({ sessionId: "s" }, "plan"), { _tag: "None" })
+  })
+
   it("lists the models and efforts", () => {
     assert.deepStrictEqual(modelList(session), {
       models: [

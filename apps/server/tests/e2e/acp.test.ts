@@ -109,6 +109,11 @@ describe.skipIf(shim === null)("an ACP agent's run on a whole server", () => {
         seen?.requests.map((r) => [r.type, r.resolution?.outcome]),
         [["permission", "allow"]],
       )
+      // The prompt is recorded as an ACP agent's (its card says "The agent", not "Codex"), with what answering it takes.
+      assert.deepStrictEqual(
+        seen?.requests.map((r) => [r.metadata?.["agent"], r.metadata?.["codex"] !== undefined]),
+        [["acp", true]],
+      )
 
       // The run ended, and the task went to In review, its session the agent's.
       const after = yield* http["tasks.get"]({ id: task.id })

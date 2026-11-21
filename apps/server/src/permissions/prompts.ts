@@ -1,7 +1,8 @@
 import { Predicate, Result } from "effect"
 import { Effort, PermissionMode as PermissionModes } from "@huntaway/contracts"
-import type { PermissionMode } from "@huntaway/contracts"
+import type { PermissionMode, ThreadMetadata, ThreadRequest } from "@huntaway/contracts"
 import { lateAnswers as lateAnswersText } from "../prompts/planAnswer.ts"
+import type { PromptRow } from "./PermissionRepo.ts"
 
 // The plain part of permission prompts (huntaway's mcp/permissions.ts): what a prompt waits for, what its mode decides,
 // and how a question's answers are checked and given to the agent. No I/O; `Permissions` uses them.
@@ -126,6 +127,19 @@ export const approvalQuestion = (kind: PromptKind, tool: string, input: unknown)
 /** The kind an approval shows: `workflow` for a workflow's (asked as an automation's, with `workflow` in its input). */
 export const shownKind = (kind: string, input: unknown): string =>
   kind === "automation" && Predicate.isObject(input) && input["workflow"] !== undefined && input["workflow"] !== null ? "workflow" : kind
+
+/** What the thread's request carries of the row (its card's data, inventory 08 3.3). */
+export const metadataOf = (row: PromptRow, type: ThreadRequest["type"], input: unknown): ThreadMetadata => ({
+  tool_name: row.tool_name,
+  ...(type === "permission" ? {} : { input }),
+  request_id: row.id,
+  status: row.status,
+  ...(row.kind === "tool" ? {} : { kind: shownKind(row.kind, input) }),
+  ...(row.expires_at === null ? {} : { expires_at: row.expires_at }),
+  ...(row.rule === null ? {} : { rule: { tool: row.rule, decision: "ask" } }),
+  ...(row.note === null ? {} : { note: row.note }),
+  message_id: row.write_no,
+})
 
 /**
  * The answers to a question prompt's questions, trimmed, checked against them: one list per question, and a question

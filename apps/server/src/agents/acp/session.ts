@@ -61,7 +61,11 @@ export const effortChoice = (session: SessionResponse, wanted: string | null): C
   return offers(option, wanted) ? { _tag: "Config", configId: option.id, value: wanted } : { _tag: "Unavailable", what: `the effort ${wanted}` }
 }
 
-/** The agent's mode ids for each of the board's permission modes, in order of preference. */
+/**
+ * The agent's mode ids for each of the board's permission modes, in order of preference. Every mode but "Bypass
+ * permissions" ends with the agent's `default` (it asks), so a resumed session left in a mode that asks nothing (`yolo`,
+ * from an earlier run) is always taken out of it.
+ */
 export const modeCandidates = (mode: string): ReadonlyArray<string> => {
   switch (mode) {
     // "Don't ask" denies what isn't allowed already: the agent asks (its default mode) and the board denies. ACP has no
@@ -69,9 +73,9 @@ export const modeCandidates = (mode: string): ReadonlyArray<string> => {
     case "bypassPermissions":
       return ["yolo", "bypassPermissions", "full-access", "full_access"]
     case "acceptEdits":
-      return ["auto_edit", "acceptEdits", "accept-edits"]
+      return ["auto_edit", "acceptEdits", "accept-edits", "default"]
     case "plan":
-      return ["plan"]
+      return ["plan", "default"]
     default:
       return ["default"]
   }
@@ -80,17 +84,25 @@ export const modeCandidates = (mode: string): ReadonlyArray<string> => {
 /** Whether the board's mode is one in which the agent asks nothing (its requests are allowed without the board). */
 export const fullAccess = (mode: string): boolean => mode === "bypassPermissions"
 
-/** The agent's mode for the board's `mode`: the first of its candidates the agent offers, if it offers one. */
+/**
+ * The agent's mode for the board's `mode`: the first of its candidates the agent offers. An agent with modes but none of
+ * the candidates is a warning (it stays in the mode it's in); one with no modes has none to set.
+ */
 export const modeChoice = (session: SessionResponse, mode: string): Choice => {
   const option = modeOption(session)
   const wanted = modeCandidates(mode)
+  const unavailable: Choice = { _tag: "Unavailable", what: `a mode for the board's ${mode}` }
   if (option !== undefined) {
     const id = wanted.find((w) => offers(option, w))
-    return id === undefined || current(option) === id ? none : { _tag: "Config", configId: option.id, value: id }
+    if (id === undefined) return unavailable
+    return current(option) === id ? none : { _tag: "Config", configId: option.id, value: id }
   }
   const modes = session.modes
-  const id = wanted.find((w) => (modes?.availableModes ?? []).some((m) => m.id === w))
-  return id === undefined || modes?.currentModeId === id ? none : { _tag: "SetMode", modeId: id }
+  const available = modes?.availableModes ?? []
+  if (available.length === 0) return none
+  const id = wanted.find((w) => available.some((m) => m.id === w))
+  if (id === undefined) return unavailable
+  return modes?.currentModeId === id ? none : { _tag: "SetMode", modeId: id }
 }
 
 /** The model the session is on: its model option's value, else the older `models`' current one. */

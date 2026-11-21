@@ -49,6 +49,7 @@ import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { AgentRequests } from "../runs/AgentRequests.ts"
 import type { ControlRequest } from "../runs/AgentRequests.ts"
 import type { Run } from "../runs/Run.ts"
+import { RunDir } from "../runs/RunDir.ts"
 import { RunRepo } from "../runs/RunRepo.ts"
 import { Runs } from "../runs/Runs.ts"
 import type { SendRefused } from "../runs/Runs.ts"
@@ -78,6 +79,7 @@ import {
   EXPIRED_UNANSWERED,
   isQuestion,
   lateAnswers,
+  metadataOf,
   modeAfterPlan,
   reason,
   shownAnswers,
@@ -119,6 +121,8 @@ export interface ToolUse {
   readonly tool_use_id: string | null
   /** A Codex request's (5.2): what answering it needs, kept with the thread's request so a restart can answer it. */
   readonly codex?: CodexAsk | undefined
+  /** An ACP agent's request (HE-69), which comes as Codex's: the card says the agent asks, not Codex. */
+  readonly acp?: boolean | undefined
 }
 
 /** Who asks: a call (`call_id`) of a run. A `can_use_tool` prompt also has its control request (`control_id`). */
@@ -230,18 +234,6 @@ const approvalOf = (row: PromptRow): Option.Option<Approval> =>
         tool_name: row.tool_name,
         input: parsed(row.input),
       })
-/** What the thread's request carries of the row (its card's data, inventory 08 3.3). */
-const metadataOf = (row: PromptRow, type: ThreadRequest["type"], input: unknown): ThreadMetadata => ({
-  tool_name: row.tool_name,
-  ...(type === "permission" ? {} : { input }),
-  request_id: row.id,
-  status: row.status,
-  ...(row.kind === "tool" ? {} : { kind: shownKind(row.kind, input) }),
-  ...(row.expires_at === null ? {} : { expires_at: row.expires_at }),
-  ...(row.rule === null ? {} : { rule: { tool: row.rule, decision: "ask" } }),
-  ...(row.note === null ? {} : { note: row.note }),
-  message_id: row.write_no,
-})
 
 export class Permissions extends Context.Service<Permissions, PermissionsShape>()("huntaway-server/permissions/Permissions") {
   static readonly layer = Layer.effect(
@@ -256,6 +248,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
       const events = yield* Events
       const changes = yield* Changes
       const runRepo = yield* RunRepo
+      const dirs = yield* RunDir
       const runs = yield* Runs
       const rules = yield* ApprovalRules
       const projects = yield* ProjectRepo
@@ -434,6 +427,8 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         readonly logged: string
         /** A Codex request's, in the thread request's metadata. */
         readonly codex?: CodexAsk | undefined
+        /** An ACP agent's request: `agent: "acp"` in the metadata, so the card names the agent and not Codex. */
+        readonly acp?: boolean | undefined
       }
 
       /**
@@ -485,6 +480,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
                 ...metadataOf({ ...base, write_no: n }, shown.type, r.input),
                 tool_use_id: r.toolUseId,
                 ...(r.codex === undefined ? {} : { codex: r.codex }),
+                ...(r.acp === true ? { agent: "acp" } : {}),
               }
               return { ...shown, metadata }
             }
@@ -592,6 +588,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           input,
           toolUseId: use.tool_use_id,
           codex: use.codex,
+          acp: use.acp,
           attention: reason(use.tool_name, input),
           rule: rule?.decision === "ask" ? rule : null,
           logged: use.tool_name,
@@ -876,6 +873,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           input: prompt.input,
           tool_use_id: prompt.tool_use_id,
           codex: prompt.ask,
+          acp: yield* dirs.isAcp(run.id),
         })
       })
 

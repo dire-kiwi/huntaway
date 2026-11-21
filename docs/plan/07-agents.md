@@ -1103,10 +1103,14 @@ was the reference for the protocol and Antigravity's dialect.
   older Codex session: `in_process` false) and the others of `mcp.json`. An agent that doesn't take http MCP servers
   (Antigravity doesn't) gets each through `huntaway mcp-stdio <url>`, a stdio-to-HTTP MCP bridge (`apps/server/src/mcp-stdio.ts`),
   with the run's bearer secret in its environment.
-- **Permissions**: the board's permission mode picks one of the agent's session modes when it has a match
-  (`bypassPermissions` → `yolo`, `acceptEdits` → `auto_edit`, `plan` → `plan`, else `default`); every
-  `session/request_permission` is asked in the thread as a Codex approval is. `dontAsk` is the agent's `default` mode,
-  so the board denies what isn't allowed already: ACP has no sandbox like the one that makes Codex's `dontAsk` safe.
+- **Permissions**: the board's permission mode picks one of the agent's session modes, every run
+  (`bypassPermissions` → `yolo`, `acceptEdits` → `auto_edit`, `plan` → `plan`, else `default`). Every mode but
+  `bypassPermissions` falls back to `default`, so a resumed session left in `yolo` by an earlier run is taken out of it
+  (Antigravity offers only `default` and `yolo`); an agent with modes but none of these is a warning in the thread.
+  Every `session/request_permission` is asked in the thread as a Codex approval is, its request's metadata
+  `agent: "acp"` (the run has `acp.json`) so the card says "The agent" and not "Codex". `dontAsk` is the agent's
+  `default` mode, so the board denies what isn't allowed already: ACP has no sandbox like the one that makes Codex's
+  `dontAsk` safe.
 - **Sign-in** is the agent's own: the adapter never calls `authenticate` interactively. A `session/new` refused with
   `-32000` (Antigravity signed out) fails the run with "sign in by running `agy` once".
 - **Tests**: `packages/testing/bin/fake-acp` (an ACP agent with fake-codex's markers), the adapter's tests against it,
