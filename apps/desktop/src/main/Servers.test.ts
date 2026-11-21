@@ -136,6 +136,54 @@ describe("Servers", () => {
     }),
   )
 
+  it.live("a start begun before any window (prestart) is the one the first window takes, and says this app is starting a server", () =>
+    Effect.gen(function* () {
+      const dir = temp()
+      const port = yield* freePort()
+      const bin = launcher(join(dir, "bin", "huntaway"), "ready", "early-token")
+      yield* Effect.gen(function* () {
+        const servers = yield* Servers
+        const seen = yield* Ref.make<ReadonlyArray<boolean>>([])
+        const listening = yield* Deferred.make<void>()
+        const started = yield* Deferred.make<void>()
+        yield* SubscriptionRef.changes(servers.starting).pipe(
+          Stream.runForEach((now) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(listening, undefined)
+              const all = yield* Ref.updateAndGet(seen, (values) => [...values, now])
+              if (!now && all.includes(true)) yield* Deferred.succeed(started, undefined)
+            }),
+          ),
+          Effect.forkScoped,
+        )
+        yield* Deferred.await(listening)
+        yield* servers.prestart
+        // The server is started with no window asking for it, and its start ends.
+        yield* Deferred.await(started)
+        assert.strictEqual((yield* servers.resolve).token, "early-token")
+        assert.strictEqual(readFileSync(`${bin}.starts`, "utf8"), "x\n")
+        assert.deepStrictEqual(yield* Ref.get(seen), [false, true, false])
+      }).pipe(Effect.scoped, Effect.provide(serversLayer({ dataDir: join(dir, "data"), port, serverBin: bin })))
+    }),
+  )
+
+  it.live("a packaged app starts the server with its login shell's PATH in front of its own", () =>
+    Effect.gen(function* () {
+      const dir = temp()
+      const port = yield* freePort()
+      const bin = launcher(join(dir, "bin", "huntaway"), "ready")
+      // A stand-in login shell: `-ilc <command>` runs the command with the PATH a terminal would have.
+      const loginShell = join(dir, "login-shell")
+      writeFileSync(loginShell, `#!/bin/sh\nPATH=${join(dir, "login-bin")}:/usr/bin:/bin\nexport PATH\nexec /bin/sh -c "$2"\n`)
+      chmodSync(loginShell, 0o755)
+      yield* resolve.pipe(
+        Effect.provide(serversLayer({ dataDir: join(dir, "data"), port, serverBin: bin, isPackaged: true, loginShell, path: "/usr/bin:/bin" })),
+      )
+      const env = readFileSync(`${bin}.env`, "utf8").split("\n")
+      assert.include(env, `PATH=${join(dir, "login-bin")}:/usr/bin:/bin`)
+    }),
+  )
+
   it.live("uses a server already answering on the port, with the data folder's token, and starts nothing", () =>
     Effect.gen(function* () {
       const dir = temp()
@@ -179,8 +227,13 @@ describe("Servers", () => {
       install("0.2.0", "ready")
       launcher(join(resources, "huntaway"), "ready", "tok-bundled")
       writeFileSync(join(appDir, "state.json"), '{"current": "0.3.0", "previous": "0.2.0", "bad": [], "extra": 42}')
-      const target = yield* resolve.pipe(Effect.provide(serversLayer({ dataDir: data, port, resourcesDir: resources, appVersion: "0.1.0" })))
+      const { target, installed } = yield* Effect.gen(function* () {
+        const servers = yield* Servers
+        return { target: yield* servers.resolve, installed: yield* servers.installKind }
+      }).pipe(Effect.provide(serversLayer({ dataDir: data, port, resourcesDir: resources, appVersion: "0.1.0" })))
       assert.strictEqual(target.token, "tok-0.2.0")
+      // The windows read how it was installed from the same work as the server's environment.
+      assert.strictEqual(installed, "other")
       assert.deepStrictEqual(yield* Schema.decodeEffect(Json)(readFileSync(join(appDir, "state.json"), "utf8")), {
         current: "0.3.0",
         previous: "0.2.0",

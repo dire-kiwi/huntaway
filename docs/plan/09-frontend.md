@@ -900,12 +900,22 @@ apps/desktop/
   `apps/server/bin/huntaway` once `apps/server/node_modules` is installed), run as a child that is not in a process
   group of its own, so that stopping it is SIGTERM to the launcher alone (SIGKILL after 10 seconds). Its PATH is the
   login shell's for a packaged app; the old shell changed its own `process.env.PATH` instead.
+- **The order of a start** (HE-71): the single-instance lock first (main.ts's `early`), then the layers, then
+  `Servers.prestart` begins finding or starting the server before `app.whenReady()` (it needs nothing of Electron's;
+  the first window's `resolve` takes that result, and a window counts as open until the first one is, so a server lost
+  meanwhile is still started again). How a release build was installed (`pacman -Qqo`) is one cached effect in
+  `Servers`, begun as its layer is built, for the started server's environment and for the windows' package update
+  (the preload's synchronous `shellUpdateKind` reply waits for it if it must). Once no server answers on the port, the
+  login shell's PATH and the release variables (frame stamp, install kind) are begun and then awaited together just
+  before the spawn; a server already up costs no login shell. The window is created without waiting for any of it:
+  the shell stamp `checkShell` compares against is hashed beside it.
 - **What the shell reads of the server**: `HUNTAWAY_READY {"port","token"}`, `HUNTAWAY_PROGRESS {step, done, total,
   file}` as it starts (06-server.md, Startup, step 2), and `HUNTAWAY_BACKUP_FAILED {reason, why, dir}` for the error
   page's "Start without a backup". The server does not print the last yet (its `Backup` fails the start with a
   `StartupError`); until it does, a failed backup shows as a server that exited.
-- **The progress page** (HE-44): a window with no board to show yet shows it rather than a black window: while
-  `Servers.resolve` takes more than 300 ms (a server starting, or another launch's being waited for), and in every window
+- **The progress page** (HE-44): a window with no board to show yet shows it rather than a black window: at once when
+  this app is starting the server (`Servers.starting`, HE-71), else while `Servers.resolve` takes more than 300 ms
+  (another launch's server being waited for; one already up loads the board with no flash of it), and in every window
   as the app quits to relaunch (a new shell after an Update, or its own package update, after which the next instance
   says "Starting Huntaway 0.0.5": `relaunch-windows.json` is `{windows, heading}` now, and a plain list is still read).
   Like the error page it is a `data:` URL in the board's theme: the app's heading, the step (`Servers.startup`: looking
@@ -929,8 +939,8 @@ apps/desktop/
   has no streaming hash), still before the rename.
 - **Tests**: the old `desktop-versions`, `desktop-boot` and `desktop-shell-update` cases, and `Servers.test.ts`, which
   runs stand-in launchers (shell scripts) on a free port: the ready line, an installed version that exits and is
-  blamed once the next is up, a failed backup, attaching to a server already there, remote mode, and windows sharing
-  one start.
+  blamed once the next is up, a failed backup, attaching to a server already there, remote mode, windows sharing
+  one start, a start begun before any window (`prestart`, HE-71), and a packaged app's login-shell PATH.
 
 ## The phone app
 
