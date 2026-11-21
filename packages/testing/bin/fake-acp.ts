@@ -43,6 +43,9 @@
 //   FAKE_ACP_IGNORE_CANCEL "1": `session/cancel` is ignored (a turn going on until it's interrupted never ends)
 //   FAKE_ACP_CANCEL_ERROR "1": a cancelled prompt is answered with an error, not `{stopReason: "cancelled"}`
 //   FAKE_ACP_RESUME_ERROR "1": `session/resume` and `session/load` fail, the error naming the MCP servers given
+//   FAKE_ACP_RESUME_MODE  the mode a continued session is in (default "default"), e.g. "yolo" from an earlier run
+//   FAKE_ACP_NO_MODES     "1": sessions report no modes (`session/set_mode` still works)
+//   FAKE_ACP_SET_MODE_ERROR "1": `session/set_mode` fails with -32603
 // It logs {"closed": true} when its stdin ends, before it exits.
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -99,14 +102,18 @@ const configOptions = () => [
 ]
 const sessionAnswer = (sessionId: string) => ({
   sessionId,
-  modes: {
-    currentModeId: config.mode,
-    availableModes: [
-      { id: "default", name: "Default" },
-      { id: "auto_edit", name: "Auto edit" },
-      { id: "yolo", name: "YOLO" },
-    ],
-  },
+  ...(env.FAKE_ACP_NO_MODES === "1"
+    ? {}
+    : {
+        modes: {
+          currentModeId: config.mode,
+          availableModes: [
+            { id: "default", name: "Default" },
+            { id: "auto_edit", name: "Auto edit" },
+            { id: "yolo", name: "YOLO" },
+          ],
+        },
+      }),
   configOptions: configOptions(),
 })
 
@@ -363,6 +370,7 @@ const handle = (m: Json) => {
       if (env.FAKE_ACP_RESUME_ERROR === "1") return error(-32603, `can't continue it with ${JSON.stringify(field(params, "mcpServers"))}`)
       session = str(field(params, "sessionId"))
       mcpServers = list(field(params, "mcpServers"))
+      config.mode = env.FAKE_ACP_RESUME_MODE ?? "default"
       if (method === "session/load") {
         update({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "earlier" } })
         update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "history" } })
@@ -377,6 +385,7 @@ const handle = (m: Json) => {
       return result({ configOptions: configOptions() })
     }
     case "session/set_mode":
+      if (env.FAKE_ACP_SET_MODE_ERROR === "1") return error(-32603, "can't change the mode now")
       config.mode = str(field(params, "modeId"))
       return result({})
     case "session/set_model":

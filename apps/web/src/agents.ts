@@ -3,6 +3,8 @@
 import { useAtomValue } from "@effect/atom-react"
 import { AsyncResult } from "effect/reactivity"
 import { agentOf, configModelsAtom, EFFORTS, listsModels, MODEL_ALIASES, type HostAgentConfig as ClaudeConfig } from "@huntaway/client"
+import { Effort } from "@huntaway/contracts"
+import { Schema } from "effect"
 
 /** A model a Codex or ACP config offers (the old wire's `AgentModel`). */
 export interface AgentModel {
@@ -70,11 +72,17 @@ export function modelPlaceholder(config: ClaudeConfig | undefined): string | und
   return agent === "codex" ? "model id, e.g. gpt-6.1-sol" : agent === "acp" ? "model id, as the agent lists it" : undefined
 }
 
-/** Efforts to offer: Claude's, or those the Codex or ACP model (or its default) supports. */
+const isEffort = Schema.is(Effort)
+
+/**
+ * Efforts to offer: Claude's, or those the Codex or ACP model (or its default) supports, in its order. Only the board's
+ * own (`Effort`) are kept, as a task can't carry another (an ACP agent's `thought_level` may be "none" or
+ * "extra-high"); a model that lists only others offers none, its default effort.
+ */
 export function effortOptions(config: ClaudeConfig | undefined, models: ReadonlyArray<AgentModel> | null, model: string): Array<string> {
   if (!listed(config) || !models?.length) return [...EFFORTS]
   const m = models.find((x) => x.id === model) ?? models.find((x) => x.is_default) ?? models[0]
-  return m?.efforts.length ? [...m.efforts] : [...EFFORTS]
+  return m?.efforts.length ? m.efforts.filter(isEffort) : [...EFFORTS]
 }
 
 /** The model a thread inherits, as its agent sees it (Codex and ACP agents skip Claude's). */

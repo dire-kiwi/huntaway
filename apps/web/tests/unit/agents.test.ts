@@ -27,6 +27,11 @@ const GEMINI: ReadonlyArray<AgentModel> = [
   { id: "gemini-flash", name: "", is_default: true, efforts: ["low", "high"], default_effort: "low" },
 ]
 
+// A Cursor-style agent's one model, with its own `thought_level` values.
+const listing = (efforts: ReadonlyArray<string>): ReadonlyArray<AgentModel> => [
+  { id: "cursor", name: "Cursor", is_default: true, efforts, default_effort: null },
+]
+
 describe("agents' models", () => {
   it("an ACP config offers the models it lists, not Claude's aliases", () => {
     expect(modelOptions(config("acp"), GEMINI)).toEqual([
@@ -51,6 +56,11 @@ describe("agents' models", () => {
   it("an ACP model's efforts are its own, or Claude's when it lists none", () => {
     expect(effortOptions(config("acp"), GEMINI, "gemini-flash")).toEqual(["low", "high"])
     expect(effortOptions(config("acp"), GEMINI, "gemini-pro")).toEqual(["low", "medium", "high", "xhigh", "max"])
+  })
+
+  it("an ACP model's efforts the board can't carry are left out, and one with only those offers none", () => {
+    expect(effortOptions(config("acp"), listing(["none", "low", "extra-high", "high"]), "cursor")).toEqual(["low", "high"])
+    expect(effortOptions(config("acp"), listing(["none", "extra-high"]), "cursor")).toEqual([])
   })
 
   it("the specific model field's placeholder is the agent's", () => {

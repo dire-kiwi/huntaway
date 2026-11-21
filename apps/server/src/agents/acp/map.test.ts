@@ -413,6 +413,29 @@ describe("ACP to Codex lines", () => {
     // A title that isn't a bare `mcp__server__tool` names no MCP call.
     r.acp({ sessionUpdate: "tool_call", toolCallId: "t1", title: "mcp__huntaway__x; rm -rf /", kind: "other", rawInput: {} })
     r.ask(5, { toolCall: { toolCallId: "t1" }, options: OPTIONS })
+    // A project's server named `huntaway__x` (the name is allowed) isn't the board's, named in rawInput or in a title.
+    r.acp({
+      sessionUpdate: "tool_call",
+      toolCallId: "x1",
+      title: "Run run?",
+      kind: "other",
+      rawInput: { server: "huntaway__x", tool: "run", arguments: {} },
+      _meta: { is_mcp_tool_call: true },
+    })
+    r.ask(6, { toolCall: { toolCallId: "x1" }, options: OPTIONS })
+    for (const [n, kind] of [
+      [7, "other"],
+      [8, "read"],
+      [9, "fetch"],
+    ] as const) {
+      r.acp({ sessionUpdate: "tool_call", toolCallId: `x${n}`, title: "mcp__huntaway__x__run", kind, rawInput: {} })
+      r.ask(n, { toolCall: { toolCallId: `x${n}` }, options: OPTIONS })
+    }
+    const xs = r
+      .requests()
+      .slice(5)
+      .map((l) => [field(l.request.params, "server"), field(l.request.params, "server_tool"), field(l.request.params, "server_named")])
+    assert.deepStrictEqual(xs, [["huntaway__x", "run", true], ...Array.from({ length: 3 }, () => ["huntaway", "x__run", false])])
     const classified = r.requests().map((l) => {
       const c = classify(l.request)
       return c._tag === "Prompt" ? `ask ${c.tool_name}` : c._tag === "Answer" ? `answer ${jsonText(c.answer)}` : c._tag
@@ -423,6 +446,10 @@ describe("ACP to Codex lines", () => {
       "ask Bash",
       "ask Bash",
       "ask mcp__acp__mcp__huntaway__x; rm -rf /",
+      "ask mcp__huntaway__x__run",
+      "ask mcp__huntaway__x__run",
+      "ask mcp__huntaway__x__run",
+      "ask mcp__huntaway__x__run",
     ])
   })
 

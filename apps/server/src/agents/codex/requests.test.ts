@@ -110,12 +110,17 @@ describe("Codex's requests", () => {
     ])
     // The board's own server's tools are allowed at once.
     // Only when the agent named the board's server: a guessed one may be a project server's tool of the same name.
-    assert.strictEqual(acp({ itemId: "b", tool: "mcp__huntaway__delete_task", title: "t", input: {}, server_named: false })._tag, "Prompt")
-    assert.strictEqual(acp({ itemId: "b", tool: "mcp__huntaway__delete_task", title: "t", input: {} })._tag, "Prompt")
-    assert.deepStrictEqual(acp({ itemId: "b", tool: "mcp__huntaway__list_projects", title: "t", input: {}, server_named: true }), {
-      _tag: "Answer",
-      answer: { result: { decision: "accept" } },
-    })
+    const call = (server: string, serverTool: string, named?: boolean) =>
+      acp({ itemId: "b", tool: `mcp__${server}__${serverTool}`, title: "t", input: {}, server, server_tool: serverTool, server_named: named })
+    assert.strictEqual(call("huntaway", "delete_task", false)._tag, "Prompt")
+    assert.strictEqual(call("huntaway", "delete_task")._tag, "Prompt")
+    assert.deepStrictEqual(call("huntaway", "list_projects", true), { _tag: "Answer", answer: { result: { decision: "accept" } } })
+    // Decided on the server and the tool each: a project's server `huntaway__x`, a tool that isn't the board's, or a
+    // joined name alone, is asked about.
+    assert.strictEqual(call("huntaway__x", "run", true)._tag, "Prompt")
+    assert.strictEqual(call("huntaway", "x__run", true)._tag, "Prompt")
+    assert.strictEqual(call("huntaway", "run", true)._tag, "Prompt")
+    assert.strictEqual(acp({ itemId: "b", tool: "mcp__huntaway__list_projects", title: "t", input: {}, server_named: true })._tag, "Prompt")
     // A command without one in its input is its title; what isn't an object is kept as it is; its own description stays.
     const run = acp({ itemId: "c", tool: "execute", title: "ls -la", input: null })
     assert.deepStrictEqual(run._tag === "Prompt" ? run.input : null, { command: "ls -la", description: "ls -la" })

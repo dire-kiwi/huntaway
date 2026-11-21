@@ -322,6 +322,43 @@ describe("acp-run", () => {
   )
 
   it.live(
+    "a continued session left in yolo is taken out of it, or the run fails before a turn",
+    () =>
+      Effect.gen(function* () {
+        const yolo = { FAKE_ACP_RESUME_MODE: "yolo" }
+        for (const mode of ["plan", "acceptEdits", "default", "dontAsk"]) {
+          const left = yield* drive({ fields: { session_id: "sess-old", mode }, env: yolo, stdin: "Again" })
+          assert.strictEqual(left.code, 0, left.err)
+          assert.strictEqual(at(byMethod(left.sent, "session/set_mode")[0], "params", "modeId"), mode === "acceptEdits" ? "auto_edit" : "default", mode)
+        }
+
+        const stuck = yield* drive({ fields: { session_id: "sess-old", mode: "plan" }, env: { ...yolo, FAKE_ACP_SET_MODE_ERROR: "1" }, stdin: "Again" })
+        assert.strictEqual(stuck.code, 1)
+        assert.include(stuck.err, "the agent's session is in its yolo mode and can't be taken out of it for the board's plan")
+        assert.deepStrictEqual(prompts(stuck.sent), [])
+
+        // A continued session that reports no modes is set to default all the same; if that fails, so does the run.
+        const unsaid = yield* drive({ fields: { session_id: "sess-old" }, env: { ...yolo, FAKE_ACP_NO_MODES: "1" }, stdin: "Again" })
+        assert.strictEqual(unsaid.code, 0, unsaid.err)
+        assert.strictEqual(at(byMethod(unsaid.sent, "session/set_mode")[0], "params", "modeId"), "default")
+        const refused = yield* drive({
+          fields: { session_id: "sess-old" },
+          env: { ...yolo, FAKE_ACP_NO_MODES: "1", FAKE_ACP_SET_MODE_ERROR: "1" },
+          stdin: "Again",
+        })
+        assert.strictEqual(refused.code, 1)
+        assert.include(refused.err, "couldn't set the continued session's mode to default for the board's default")
+        assert.deepStrictEqual(prompts(refused.sent), [])
+
+        // Bypassing, a failed mode change is a warning: the run goes on.
+        const bypass = yield* drive({ fields: { mode: "bypassPermissions" }, env: { FAKE_ACP_SET_MODE_ERROR: "1" }, stdin: "Hello" })
+        assert.strictEqual(bypass.code, 0, bypass.err)
+        assert.match(String(at(byMethod(bypass.out, "warning")[0], "params", "message")), /Couldn't set the agent's mode to yolo/)
+      }),
+    60_000,
+  )
+
+  it.live(
     "a signed-out agent fails the run with how to sign in",
     () =>
       Effect.gen(function* () {

@@ -1102,11 +1102,18 @@ was the reference for the protocol and Antigravity's dialect.
 - **The board's tools** reach the agent as MCP servers in `session/new`: the board's own server over HTTP (as for an
   older Codex session: `in_process` false) and the others of `mcp.json`. An agent that doesn't take http MCP servers
   (Antigravity doesn't) gets each through `huntaway mcp-stdio <url>`, a stdio-to-HTTP MCP bridge (`apps/server/src/mcp-stdio.ts`),
-  with the run's bearer secret in its environment.
+  with the run's bearer secret in its environment. The board's tools run unasked only when the agent named the board's
+  server: `acp/requestPermission` carries the call's `server` and `server_tool` each, and the board accepts only an
+  exact board server name with one of `BOARD_TOOLS` (a project's server may be named `huntaway__x`; a title
+  `mcp__a__b__c`, which splits two ways, names no server).
 - **Permissions**: the board's permission mode picks one of the agent's session modes, every run
   (`bypassPermissions` → `yolo`, `acceptEdits` → `auto_edit`, `plan` → `plan`, else `default`). Every mode but
   `bypassPermissions` falls back to `default`, so a resumed session left in `yolo` by an earlier run is taken out of it
   (Antigravity offers only `default` and `yolo`); an agent with modes but none of these is a warning in the thread.
+  Out of `bypassPermissions` the run fails, before a turn, when the session is in a mode that asks nothing (one of
+  `bypassPermissions`' candidates) and can't be taken out of it, or was resumed and its mode change failed; a resumed
+  session that reports no modes is sent `session/set_mode default` all the same (only `-32601` is let pass). Nothing
+  sandboxes an ACP agent, so a mode that asks nothing would run its commands and edits without the board.
   Every `session/request_permission` is asked in the thread as a Codex approval is, its request's metadata
   `agent: "acp"` (the run has `acp.json`) so the card says "The agent" and not "Codex". `dontAsk` is the agent's
   `default` mode, so the board denies what isn't allowed already: ACP has no sandbox like the one that makes Codex's
@@ -1165,7 +1172,9 @@ was the reference for the protocol and Antigravity's dialect.
   no Claude skills (`AgentTools.taskSkills` gives none); its prompts are the non-Claude texts (`codex: true` and `acp`:
   no Codex `wait` or apps notes); `host.info`'s `agent_clis` has `acp` when `agy` is on the PATH.
 - **Web**: `AGENTS` has `acp` ("ACP agent (Antigravity)", short "ACP", `~/.gemini`, `GEMINI_HOME`); helpers
-  `listsModels`, `agentSuffix`, `askerName`, `modelPlaceholder`. The config form has a Command field for ACP (help
+  `listsModels`, `agentSuffix`, `askerName`, `modelPlaceholder`. The effort pickers (`effortOptions`) offer the
+  model's `thought_level` values that are `Effort`s, in its order (a task carries no other, so "none" or "extra-high"
+  is left out), and only the default effort when none are. The config form has a Command field for ACP (help
   behind its `?`), the list an ACP badge with the command; usage, the 5-hour window, copying the login and `/compact`
   are hidden for ACP; its skills are `/` commands. Its mark (`ui/AgentIcon.tsx`) is the board's own drawing of two
   four-pointed sparkles.

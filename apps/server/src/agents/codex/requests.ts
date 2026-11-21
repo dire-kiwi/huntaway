@@ -1,4 +1,4 @@
-import { BOARD_SERVER_NAMES } from "@huntaway/shared"
+import { BOARD_SERVER_NAMES, BOARD_TOOLS } from "@huntaway/shared"
 import { Effect, Predicate } from "effect"
 import { toJson } from "../../platform/columns.ts"
 import type { BoardManifest } from "../claude/launch.ts"
@@ -206,9 +206,12 @@ export const classify = (r: CodexRequest): Classified => {
     // HE-69: an ACP agent's tool call: what it is called with, and its title as what it's for. A command is shown as one.
     case "acp/requestPermission": {
       const tool = acpTool(strField(p, "tool") ?? "")
-      // The board's own tools run without asking only when the agent named the board's server: a guessed server (a bare
-      // tool name the board has too) may be a project's MCP server's tool of the same name.
-      const board = BOARD_SERVER_NAMES.some((n) => tool.startsWith(`mcp__${n}__`))
+      // The board's own tools run without asking only when the agent named the board's server, decided on the server
+      // and the tool each, not a prefix of `tool`: a project's MCP server can be `huntaway__x`, and a guessed server
+      // (a bare tool name the board has too) may be a project's server's tool of the same name.
+      const server = strField(p, "server")
+      const serverTool = strField(p, "server_tool")
+      const board = server !== null && isBoardServer(server) && serverTool !== null && BOARD_TOOLS.includes(serverTool)
       if (board && field(p, "server_named") === true) return { _tag: "Answer", answer: { result: { decision: "accept" } } }
       const title = strField(p, "title")
       const given = field(p, "input")

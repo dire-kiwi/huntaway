@@ -84,6 +84,15 @@ export const modeCandidates = (mode: string): ReadonlyArray<string> => {
 /** Whether the board's mode is one in which the agent asks nothing (its requests are allowed without the board). */
 export const fullAccess = (mode: string): boolean => mode === "bypassPermissions"
 
+/** The agent's mode the session reports it's in (its mode config option's value, else the older `modes`'), if any. */
+export const currentMode = (session: SessionResponse): string | null => current(modeOption(session)) ?? session.modes?.currentModeId ?? null
+
+/** Whether the agent's mode `id` is one that asks nothing (one of "Bypass permissions"' candidates). */
+export const asksNothing = (id: string | null): boolean => id !== null && modeCandidates("bypassPermissions").includes(id)
+
+/** Whether the session reports any modes (a mode config option, or the older `modes` with some available). */
+export const reportsModes = (session: SessionResponse): boolean => modeOption(session) !== undefined || (session.modes?.availableModes ?? []).length > 0
+
 /**
  * The agent's mode for the board's `mode`: the first of its candidates the agent offers. An agent with modes but none of
  * the candidates is a warning (it stays in the mode it's in); one with no modes has none to set.

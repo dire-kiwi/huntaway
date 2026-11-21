@@ -231,9 +231,13 @@ const mcpOf = (f: ToolCallFields): Mcp | null => {
     .replace(/^(?:Running|Run|Calling|Call)\s+/u, "")
     .replace(/\?$/u, "")
     .trim()
-  // Only a bare `mcp__<server>__<tool>` names an MCP call: a title can be a command's text.
+  // Only a bare `mcp__<server>__<tool>` names an MCP call: a title can be a command's text. It names the server only
+  // when it splits one way (one `__` after `mcp__`): `mcp__huntaway__x__run` may be server `huntaway__x`'s `run`.
   const prefixed = /^mcp__([\w-]+?)__([\w-]+)$/u.exec(title)
-  if (prefixed !== null) return { server: prefixed[1] ?? "", tool: prefixed[2] ?? "", args: raw ?? {}, named: true }
+  if (prefixed !== null) {
+    const [server = "", tool = ""] = [prefixed[1], prefixed[2]]
+    return { server, tool, args: raw ?? {}, named: !tool.includes("__") }
+  }
   const m = meta(f)
   if (!isRecord(m) || m["is_mcp_tool_call"] !== true) return null
   const rawServer = firstStr(raw, ["server", "server_name", "serverName"])
@@ -249,6 +253,9 @@ const mcpOf = (f: ToolCallFields): Mcp | null => {
   const server = named ?? (BOARD_TOOLS.includes(tool) ? BOARD : "mcp")
   return { server: server.trim(), tool: tool.trim(), args, named: named !== null }
 }
+
+/** `acp/requestPermission`'s fields for an MCP call: its `server` and `server_tool`, and `server_named`. */
+const mcpFields = (mcp: Mcp | null) => (mcp === null ? { server_named: false } : { server: mcp.server, server_tool: mcp.tool, server_named: mcp.named })
 
 /** What a call is. A command or an edit by its kind (or content) first, whatever its title says. */
 const typeOf = (f: ToolCallFields): ItemType => {
@@ -571,8 +578,9 @@ export const askPermission = (state: AcpState, acpId: unknown, req: PermissionRe
           tool: use?.[0] ?? "tool",
           title: title === "" ? (use?.[0] ?? "tool") : title,
           input: use?.[1] ?? {},
-          // Whether the agent itself named the MCP server it calls (the board allows its own server's tools at once).
-          server_named: tool.type === "mcpToolCall" && mcpOf(tool.fields)?.named === true,
+          // The MCP server and tool it calls, each on its own, and whether the agent itself named the server (the board
+          // allows its own server's tools at once).
+          ...mcpFields(tool.type === "mcpToolCall" ? mcpOf(tool.fields) : null),
         }),
         item,
       }

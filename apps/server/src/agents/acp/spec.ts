@@ -20,7 +20,7 @@ import { Option, Schema } from "effect"
 //   `turn/plan/updated`; `usage_update` and the prompt's `usage` → `thread/tokenUsage/updated`.
 // - `session/request_permission` → `item/commandExecution/requestApproval` (kind `execute`),
 //   `item/fileChange/requestApproval` (edits), `item/tool/requestUserInput` (Antigravity's `interaction_` questions),
-//   else `acp/requestPermission {itemId, tool, title, input}`; the board's `{decision: "accept" | "decline"}` (or
+//   else `acp/requestPermission {itemId, tool, title, input, server?, server_tool?, server_named}`; the board's `{decision: "accept" | "decline"}` (or
 //   `{answers}`) picks the agent's `allow_once`/`reject_once` option (or the chosen answer's).
 // - A user message during a turn is held and starts the next turn (ACP has no steer); it is echoed when it does.
 // - An interrupt is `session/cancel`; the turn then ends `interrupted`.

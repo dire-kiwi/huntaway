@@ -6,7 +6,18 @@ import { AUTH_REQUIRED, decodeInitialize, decodeSession } from "../protocol.ts"
 import type { InitializeResponse, SessionResponse } from "../protocol.ts"
 import { AcpError, METHOD_NOT_FOUND } from "../rpc.ts"
 import type { AcpAgent, AgentMessage } from "../rpc.ts"
-import { effortChoice, modeChoice, modelChoice, withConfigOptions, withModel, withValue } from "../session.ts"
+import {
+  asksNothing,
+  currentMode,
+  effortChoice,
+  fullAccess,
+  modeChoice,
+  modelChoice,
+  reportsModes,
+  withConfigOptions,
+  withModel,
+  withValue,
+} from "../session.ts"
 import type { Choice } from "../session.ts"
 import type { AcpMcpServer, AcpSpec } from "../spec.ts"
 
@@ -211,17 +222,43 @@ const apply = (agent: AcpAgent, sessionId: string, session: SessionResponse, cho
       : done(session.modes === undefined || session.modes === null ? session : { ...session, modes: { ...session.modes, currentModeId: choice.modeId } })
   })
 
+/**
+ * The board's mode set on the session. Out of "Bypass permissions" a session must not stay in a mode that asks nothing
+ * (a resumed one can be in `yolo` from an earlier run): the agent would run commands and edits without the board
+ * asking, and nothing sandboxes it. So when the session is in such a mode, or was resumed, and its mode couldn't be
+ * changed, the run fails; and a resumed session that reports no modes is set to the agent's `default` all the same (an
+ * agent without `session/set_mode` has none).
+ */
+const applyMode = (agent: AcpAgent, opened: Opened, session: SessionResponse, mode: string) =>
+  Effect.gen(function* () {
+    const choice = modeChoice(session, mode)
+    if (fullAccess(mode)) return yield* apply(agent, opened.sessionId, session, choice)
+    if (!opened.fresh && !reportsModes(session)) {
+      const r = yield* Effect.result(call(agent, "session/set_mode", { sessionId: opened.sessionId, modeId: "default" }))
+      if (r._tag === "Failure" && r.failure.code !== METHOD_NOT_FOUND)
+        return yield* fail(`couldn't set the continued session's mode to default for the board's ${mode}: ${errorText(r.failure)}`)
+      return done(session)
+    }
+    const r = yield* apply(agent, opened.sessionId, session, choice)
+    const changing = choice._tag === "Config" || choice._tag === "SetMode"
+    if (r.warning !== null && (asksNothing(currentMode(r.session)) || (!opened.fresh && changing)))
+      return yield* fail(
+        `the agent's session is in its ${currentMode(r.session) ?? "own"} mode and can't be taken out of it for the board's ${mode}: ${r.warning}`,
+      )
+    return r
+  })
+
 /** The spec's model, effort and mode set on the session; the session after them, and the warnings to say. */
 export const applySettings = (agent: AcpAgent, opened: Opened, spec: AcpSpec) =>
   Effect.gen(function* () {
     let session = opened.session
     const warnings: Array<Line> = []
-    for (const choose of [
-      (s: SessionResponse) => modelChoice(s, spec.model),
-      (s: SessionResponse) => effortChoice(s, spec.effort),
-      (s: SessionResponse) => modeChoice(s, spec.mode),
+    for (const set of [
+      (s: SessionResponse) => apply(agent, opened.sessionId, s, modelChoice(s, spec.model)),
+      (s: SessionResponse) => apply(agent, opened.sessionId, s, effortChoice(s, spec.effort)),
+      (s: SessionResponse) => applyMode(agent, opened, s, spec.mode),
     ]) {
-      const r = yield* apply(agent, opened.sessionId, session, choose(session))
+      const r = yield* set(session)
       session = r.session
       if (r.warning !== null) warnings.push(warning(r.warning))
     }
