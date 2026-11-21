@@ -856,7 +856,7 @@ export const RoutesLive = Layer.mergeAll(
 export const serverLayer = (config: ServerConfig["Service"]) =>
   // Once it listens, this host dials the hubs it is a host of and discovery answers on the port it got (step 6).
   Layer.mergeAll(HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }), Hubs.dialIn, Discovery.responder).pipe(
-    Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),
+    Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host, websocket: { perMessageDeflate: { threshold: 1024 } } })),
     Layer.provideMerge(AreasLive),
     Layer.provideMerge(PlatformLive),
     Layer.provideMerge(NodeServices.layer),

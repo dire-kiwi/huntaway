@@ -852,6 +852,40 @@ the client" are replaced (inventory 10, section 14):
 - A terminal is created after its font has loaded and one frame later; it is reset before re-attaching.
 - An open tab detects a new build and offers a reload. There is no service-worker cache.
 
+### The bundle (HE-71)
+
+A board opened over a network (a linked host's, a phone's) waits mostly on bytes, not on the server: before HE-71 the
+first load was 1.99 MB uncompressed and took about 1.0 s to the first card at 20 Mbit/s and 40 ms, 3.6 s at 5 Mbit/s
+and 100 ms (on localhost, under 0.1 s either way). Three changes:
+
+- **Precompressed.** `apps/web/vite.config.ts`'s `precompress` plugin writes `<file>.br` (brotli 11) and `<file>.gz`
+  (gzip 9) beside each text file of the build over 1 KiB (js, css, html, svg, json, webmanifest, ttf…), when that saves
+  a tenth or more. The server's `StaticUi` (`apps/server/src/http/routes.ts`) sends `.br`, else `.gz`, to a browser
+  whose `Accept-Encoding` takes it (q-values and `*` read), with the file's own type, `Content-Encoding` and
+  `Vary: Accept-Encoding`; the variant is served by the same `HttpStaticServer` under its own name, so its ETag (size
+  and time), 304s and ranges are its own. No variant on disk (a file too small, a UI folder from before), the file as
+  it is. Nothing is compressed per request. `scripts/package-server.sh` copies `dist` whole, so a release's `ui/` and
+  the desktop app carry the variants. The build takes about 5 s longer for it.
+- **Split.** Every page but the boards is a chunk loaded the first time it is opened (`App.tsx`: Settings, a project's
+  settings, Analytics, the Guide, a host's page, onboarding, the assistant, a plugin's page), as are the task's views
+  (`TaskView`, `TaskPanel`, `TaskModal`). A page shows `PageLoading` (a word after a moment, as `BoardLoading`) while
+  its chunk comes; the panel and the dialog show nothing. The Markdown renderer (react-markdown, GFM) is a chunk of its
+  own behind `thread/Markdown.tsx` (`MarkdownView.tsx`), which shows the text plain in the same box meanwhile; the
+  Guide's links other pages use are in `settings/GuideLink.tsx`, so the Guide (with its own Markdown) leaves the entry.
+  The entry went from 1,443 KB to 742 KB (the first load from 1,892 KiB in 8 files to 1,270 KiB in 24, 455 to 330 KiB
+  as brotli). What is left in it: the board, the layout, the New task dialog, `mdast-util-from-markdown` (the
+  composer's tokens, `layout/taskTokens.ts`) and react-dom.
+- **The RPC socket is compressed.** Both listeners (`Main.ts`, `ReadOnlyMain.ts`) turn on `ws`'s permessage-deflate
+  for messages of 1 KiB or more: the first `board.watch` message is about 1.8 KB a task as JSON and deflates about 7
+  times smaller. It applies to every websocket the server accepts (the terminal, the task's browser, links).
+
+After: 0.41 s to the first card at 20 Mbit/s and 40 ms, 1.0 s at 5 Mbit/s and 100 ms (Chromium's network emulation,
+the demo board, an empty cache). Not done: `board.watch` still waits for `public.health`'s answer (one round trip on
+the open socket) to learn the page's own host id, which keys every host's atoms (`hostRuntime`, `hostBoardAtom`,
+`boardHostIdsAtom`); the board stream's `hello` carries it only once the watch has started, so starting it sooner
+would mean putting the id in `index.html` (served as a static, precompressed file) or guessing it from the last visit
+and re-keying when wrong.
+
 ## The desktop shell: `apps/desktop`
 
 The Electron shell (six CommonJS files, 1,687 lines) becomes TypeScript, with its main process an Effect program

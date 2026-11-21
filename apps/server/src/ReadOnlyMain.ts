@@ -414,7 +414,7 @@ export const ReadOnlyRoutes = Layer.mergeAll(ReadOnlyRpc, HealthRoute, ApiNotFou
  */
 export const readOnlyServerLayer = (config: ServerConfig["Service"]) =>
   HttpRouter.serve(ReadOnlyRoutes, { disableListenLog: true, disableLogger: true }).pipe(
-    Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),
+    Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host, websocket: { perMessageDeflate: { threshold: 1024 } } })),
     Layer.provideMerge(ReadOnlyAreas),
     Layer.provideMerge(NodeServices.layer),
   )

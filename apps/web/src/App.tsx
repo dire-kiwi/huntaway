@@ -8,25 +8,29 @@ import { profileNames, useProfileName } from "./components/boardHelpers"
 import { Sidebar } from "./components/layout/Sidebar"
 import { RehearsalBanner } from "./components/layout/RehearsalBanner"
 import { UnhandledErrors } from "./components/layout/UnhandledErrors"
-import { Analytics } from "./components/settings/Analytics"
-import { Guide } from "./components/settings/Guide"
-import { HostPage } from "./components/settings/HostPage"
-import { Onboarding } from "./components/settings/Onboarding"
-import { ProjectSettings } from "./components/settings/project/ProjectSettings"
-import { Settings } from "./components/settings/Settings"
 import { TokenScreen } from "./components/settings/TokenScreen"
-import { AssistantPage } from "./components/task/AssistantPage"
-import { TaskModal, TaskPanel, TaskView } from "./components/task/TaskView"
 // 6.1
 import { startToolKeepalive } from "./components/task/terminalTools"
 import { useDrawer, useNarrow } from "./narrow"
 import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl } from "./router"
 import { useBoard } from "./state/board"
 import { navigate, usePanel, useRoute, useTaskModal } from "./state/route"
-import { PluginPage } from "./components/plugins/PluginPage"
 
 // 6.11: the compare view of the tasks made from one prompt, in a chunk of its own.
 const CompareView = lazy(() => import("./components/changes/Compare").then((m) => ({ default: m.CompareView })))
+// Every page but the boards, and the task's own views, are chunks of their own too, loaded when first opened, so the
+// board's first load fetches only the board (HE-71, docs/plan/09-frontend.md, The bundle).
+const Settings = lazy(() => import("./components/settings/Settings").then((m) => ({ default: m.Settings })))
+const ProjectSettings = lazy(() => import("./components/settings/project/ProjectSettings").then((m) => ({ default: m.ProjectSettings })))
+const Analytics = lazy(() => import("./components/settings/Analytics").then((m) => ({ default: m.Analytics })))
+const Guide = lazy(() => import("./components/settings/Guide").then((m) => ({ default: m.Guide })))
+const HostPage = lazy(() => import("./components/settings/HostPage").then((m) => ({ default: m.HostPage })))
+const Onboarding = lazy(() => import("./components/settings/Onboarding").then((m) => ({ default: m.Onboarding })))
+const AssistantPage = lazy(() => import("./components/task/AssistantPage").then((m) => ({ default: m.AssistantPage })))
+const PluginPage = lazy(() => import("./components/plugins/PluginPage").then((m) => ({ default: m.PluginPage })))
+const TaskView = lazy(() => import("./components/task/TaskView").then((m) => ({ default: m.TaskView })))
+const TaskPanel = lazy(() => import("./components/task/TaskView").then((m) => ({ default: m.TaskPanel })))
+const TaskModal = lazy(() => import("./components/task/TaskView").then((m) => ({ default: m.TaskModal })))
 
 export function App() {
   const authed = useBoard((s) => s.authed)
@@ -88,7 +92,7 @@ export function App() {
   // A board with none of its own can still link hosts that have some (Settings → Hosts, M7).
   if (profiles.length === 0) {
     if (!loaded) return <BoardLoading />
-    return route.name === "settings" ? <Settings tab={route.tab} /> : <Onboarding />
+    return <Suspense fallback={<PageLoading />}>{route.name === "settings" ? <Settings tab={route.tab} /> : <Onboarding />}</Suspense>
   }
 
   return (
@@ -116,26 +120,36 @@ export function App() {
         {/* The task panel slides in over the content below its top bar, rather than squeezing it. */}
         <div className="relative min-w-0 flex-1">
           <div className="h-full min-w-0">
-            {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
-            {route.name === "board" && <Board projectId={route.projectId} />}
-            {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
-            {route.name === "task" && <TaskView taskId={route.taskId} />}
-            {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
-            {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
-            {route.name === "settings" && <Settings tab={route.tab} />}
-            {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}
-            {route.name === "guide" && <Guide page={route.page} />}
-            {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
-            {route.name === "plugin" && <PluginPage key={route.plugin} route={route} />}
+            <Suspense fallback={<PageLoading />}>
+              {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
+              {route.name === "board" && <Board projectId={route.projectId} />}
+              {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
+              {route.name === "task" && <TaskView taskId={route.taskId} />}
+              {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
+              {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
+              {route.name === "settings" && <Settings tab={route.tab} />}
+              {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}
+              {route.name === "guide" && <Guide page={route.page} />}
+              {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
+              {route.name === "plugin" && <PluginPage key={route.plugin} route={route} />}
+            </Suspense>
           </div>
-          {panel && hasPanel(route) && <TaskPanel panel={panel} />}
+          {panel && hasPanel(route) && (
+            <Suspense fallback={null}>
+              <TaskPanel panel={panel} />
+            </Suspense>
+          )}
         </div>
         {panel?.compare === true && hasPanel(route) && (
           <Suspense fallback={null}>
             <CompareView taskId={panel.taskId} />
           </Suspense>
         )}
-        {modal !== null && <TaskModal key={modal} taskId={modal} />}
+        {modal !== null && (
+          <Suspense fallback={null}>
+            <TaskModal key={modal} taskId={modal} />
+          </Suspense>
+        )}
         <UnhandledErrors />
       </div>
     </div>
@@ -147,6 +161,15 @@ function BoardLoading() {
   return (
     <div className="animate-fade-in-late flex h-full items-center justify-center gap-2 text-[13px] text-muted" role="status">
       <Loader2 size={14} className="animate-spin text-accent" /> Loading the board…
+    </div>
+  )
+}
+
+/** While a page's chunk loads the first time it is opened: nothing, then a word if it takes a moment. */
+function PageLoading() {
+  return (
+    <div className="animate-fade-in-late flex h-full items-center justify-center gap-2 text-[13px] text-muted" role="status">
+      <Loader2 size={14} className="animate-spin text-accent" /> Loading…
     </div>
   )
 }
