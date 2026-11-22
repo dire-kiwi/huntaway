@@ -5,7 +5,7 @@ import { useNarrow } from "../../../narrow"
 import { IconButton } from "../../ui"
 
 /**
- * "thread", "changes", "review", "terminal", "details", `tool:<id>` for a terminal tool, or for a plan,
+ * "thread", "changes", "code", "review", "terminal", "details", `tool:<id>` for a terminal tool, or for a plan,
  * artifact or diagram task its type, for its document.
  */
 export type Tab = string

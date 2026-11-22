@@ -65,6 +65,9 @@ const C_LIKE = new Set(["c", "h", "cc", "cpp", "cxx", "hpp", "hh", "hxx", "m", "
 /** Lines that bring a name in from elsewhere rather than define it. */
 const IMPORT = /^\s*(?:import|from|use|using|#\s*include|require|package|export\s*\{|export\s+\*|export\s+type\s*\{)(?![\p{L}\p{N}_$])/u
 
+/** Lines that are comments (but C's `#define`, `#if`…): what they name isn't defined there. */
+const COMMENT = /^\s*(?:\/\/|\/\*|\*|--|;|#(?!\s*define\b))/u
+
 interface Pattern {
   /** `@N` stands for the name. */
   readonly re: string
@@ -106,7 +109,7 @@ const forFile = (path: string) => {
 
 /** Whether `line` (of the file at `path`) defines `name`, a symbol name. */
 export function definesName(line: string, name: string, path: string): boolean {
-  if (IMPORT.test(line)) return false
+  if (IMPORT.test(line) || COMMENT.test(line)) return false
   const n = escape(name)
   return forFile(path).some((p) => new RegExp(p.re.replace("@N", n), "u").test(line))
 }
@@ -128,7 +131,7 @@ export function outline(text: string, path: string): Array<OutlineEntry> {
   const patterns = forFile(path).map((p) => ({ outlineTop: p.outlineTop === true, regex: new RegExp(p.re.replace("@N", `(${NAME})`), "u") }))
   const out: Array<OutlineEntry> = []
   lines.forEach((line, i) => {
-    if (line.length > 1000 || IMPORT.test(line)) return
+    if (line.length > 1000 || IMPORT.test(line) || COMMENT.test(line)) return
     const depth = line.length - line.trimStart().length
     for (const p of patterns) {
       if (p.outlineTop && depth > 0) continue

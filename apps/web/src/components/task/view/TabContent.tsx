@@ -43,11 +43,13 @@ const PEN_EMPTY = (
 // The tabs kept in chunks of their own (4.2: Changes; 6.7: Memory, Brief, Routines; the review's patch comes with its
 // milestone), loaded once the task view is open so the first open of the tab doesn't wait for them.
 const ChangesView = preloadable(() => import("../../changes/Changes").then((m) => m.ChangesView))
+// HE-79: the Code tab, a file tree and viewer.
+const CodeView = preloadable(() => import("../../code/Code").then((m) => m.CodeView))
 const MemoryView = preloadable(() => import("../Memory").then((m) => m.MemoryView))
 const BriefView = preloadable(() => import("../Brief").then((m) => m.BriefView))
 const Routines = preloadable(() => import("../Routines").then((m) => m.Routines))
 export function preloadTabs() {
-  for (const c of [ChangesView, MemoryView, BriefView, Routines]) c.preload()
+  for (const c of [ChangesView, CodeView, MemoryView, BriefView, Routines]) c.preload()
 }
 
 /**
@@ -115,6 +117,7 @@ export function TabContent({
 
 /**
  * What a tab other than the thread or a document shows above the composer: the Changes tab (changes/Changes.tsx), the
+ * Code tab (code/Code.tsx, HE-79), the
  * review (task/Review.tsx), a workflow's tabs (task/Workflows.tsx, 6.6), the assistant's memory,
  * brief, routines and action log (6.7), and the task's details (HE-31).
  */
@@ -126,6 +129,10 @@ function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, wide: boolean, on
   ) : tab === "changes" ? (
     <Suspense fallback={null}>
       <ChangesView task={task} />
+    </Suspense>
+  ) : tab === "code" ? (
+    <Suspense fallback={null}>
+      <CodeView task={task} />
     </Suspense>
   ) : shown === "review" ? (
     <div className="h-full overflow-y-auto p-4">

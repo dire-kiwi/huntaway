@@ -274,7 +274,10 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const profileScratch = scratch && !task.project_id
   const labels = taskLabels(task)
   const docsOnly = documentsOnly(task)
-  const tabs: Tab[] = [...labels, ...(group !== undefined || scratch || assistant || routine || pensThread || docsOnly ? ["thread"] : ["thread", "changes"])]
+  const tabs: Tab[] = [
+    ...labels,
+    ...(group !== undefined || scratch || assistant || routine || pensThread || docsOnly ? ["thread"] : ["thread", "changes", "code"]),
+  ]
   // 6.7: the assistant's morning brief, its memory files and routines.
   if (assistant) tabs.push("brief", "memory", "routines")
   // A project that uses workflows has no reviews of the board's (HA-277): a workflow's steps add their own tabs (a
@@ -565,12 +568,13 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             </div>
           </>
         )}
-        {/* A document, the changes' panels and the terminals get the room; so do the desktop, the browser, the memory and the brief. */}
+        {/* A document, the changes' panels, the code and the terminals get the room; so do the desktop, the browser, the memory and the brief. */}
         {wide &&
           !desktop &&
           !browser &&
           !docShown &&
           shown !== "changes" &&
+          shown !== "code" &&
           shown !== "memory" &&
           shown !== "brief" &&
           !isTerminalTab(tab) &&

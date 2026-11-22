@@ -71,6 +71,9 @@ describe("symbols", () => {
       ["a.c", "int parse(const char *text);", "parse"],
       ["a.c", '#include "parse.h"', "parse"],
       ["a.ts", "int parse(text)", "parse"],
+      ["a.ts", "// export function parse(text) {", "parse"],
+      ["a.ts", " * class Parser {", "Parser"],
+      ["a.py", "# def parse(text):", "parse"],
     ]
     for (const [path, line, name] of uses) assert.isFalse(definesName(line, name, path), `${path}: ${line}`)
   })
@@ -78,6 +81,7 @@ describe("symbols", () => {
   it("a file's outline: its definitions, but not a function's locals", () => {
     const text = [
       'import { x } from "y"',
+      "// const notThis = 1",
       "export const LIMIT = 5",
       "export class Parser {",
       "  private readonly depth = 0",
@@ -93,11 +97,11 @@ describe("symbols", () => {
     assert.deepStrictEqual(
       outline(text, "a.ts").map((e) => [e.name, e.line, e.depth]),
       [
-        ["LIMIT", 2, 0],
-        ["Parser", 3, 0],
-        ["depth", 4, 2],
-        ["parse", 5, 2],
-        ["helper", 12, 0],
+        ["LIMIT", 3, 0],
+        ["Parser", 4, 0],
+        ["depth", 5, 2],
+        ["parse", 6, 2],
+        ["helper", 13, 0],
       ],
     )
     assert.deepStrictEqual(
