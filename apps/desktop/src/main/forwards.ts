@@ -2,6 +2,7 @@ import { Config, Deferred, Effect, FiberMap, Option, Ref, Semaphore, Stream } fr
 import type { Scope } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { Desktop } from "./Desktop.ts"
+import { serverPath } from "./install.ts"
 
 // HE-81: a task's dev server on the board's host, forwarded to this computer with tailcat (https://tailscale.com/tailcat).
 // The board asks its host to share the server (`tasks.forwardServer`, which runs `tailcat serve` there) and gives the
@@ -40,6 +41,9 @@ export const makeForwards: Effect.Effect<
     Option.filter(given, (b) => b !== ""),
     () => "tailcat",
   )
+  // The login shell's PATH in front of the app's, as the server is started with: an app started from the Dock or a
+  // desktop launcher has a minimal one, without ~/go/bin, Homebrew's or ~/.local/bin, where tailcat may be.
+  const path = yield* Effect.cached(Effect.provideService(serverPath(desktop), ChildProcessSpawner.ChildProcessSpawner, spawner))
   const urls = yield* Ref.make<ReadonlyMap<string, string>>(new Map())
   const running = yield* FiberMap.make<string>()
   const starting = yield* Semaphore.make(1)
@@ -48,8 +52,9 @@ export const makeForwards: Effect.Effect<
   const run = (key: string, address: string, port: number, ready: (answer: ForwardAnswer) => Effect.Effect<void>) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const PATH = yield* path
         const child = yield* spawner.spawn(
-          ChildProcess.make(bin, ["forward", address, `0:${port}`], { env: { PATH: desktop.path }, extendEnv: true, stdin: { stream: Stream.never } }),
+          ChildProcess.make(bin, ["forward", address, `0:${port}`], { env: { PATH }, extendEnv: true, stdin: { stream: Stream.never } }),
         )
         const stderr = yield* Ref.make("")
         const at = yield* child.stderr.pipe(
@@ -73,7 +78,7 @@ export const makeForwards: Effect.Effect<
     ).pipe(
       Effect.catch((e) =>
         ready({
-          error: e.message.includes("ENOENT") ? `tailcat isn't installed on this computer (looked for ${bin}): see https://tailscale.com/tailcat` : e.message,
+          error: e.reason._tag === "NotFound" ? `tailcat isn't installed on this computer (looked for ${bin}): see https://tailscale.com/tailcat` : e.message,
         }),
       ),
       Effect.ensuring(Ref.update(urls, (m) => new Map([...m].filter(([k]) => k !== key)))),
