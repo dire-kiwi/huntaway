@@ -73,3 +73,24 @@ describe("Choice (HE-77 review)", () => {
     expect(new Set(sent).size).toBe(2)
   })
 })
+
+describe("a Choice drawn again (HE-77 review)", () => {
+  it("starts with no pick, though an earlier Choice at the same id had one", () => {
+    const t = new ThreadSurfaces({ render: [basicCatalog()], inference: boardCatalogs(), transform: boardTransform() })
+    const first = { kind: "block" as const, key: "m1@0", source: 'surface("c")\nroot = Choice("First?", [{label: "Small", value: "small"}], event="approach")' }
+    t.sync([first])
+    t.surface("c")?.dataModel.set("/choice/root", ["small"])
+    const again = {
+      kind: "block" as const,
+      key: "m3@0",
+      source: 'surface("c", update=true)\nroot = Choice("Second?", [{label: "Yes", value: "yes"}, {label: "No", value: "no"}], event="second")',
+    }
+    t.sync([first, { kind: "action", key: "m2#0", surfaceId: "c" }, again])
+    expect(t.block("m3@0")).toMatchObject({ ok: true, surfaces: [{ id: "c" }] })
+    expect(t.surface("c")?.dataModel.get("/choice/root")).toBeUndefined()
+    // A pick in the new one is kept when an older page rebuilds the surfaces.
+    t.surface("c")?.dataModel.set("/choice/root", ["yes"])
+    t.sync([{ kind: "block", key: "m0@0", source: 'root = Text("older")' }, first, { kind: "action", key: "m2#0", surfaceId: "c" }, again])
+    expect(t.surface("c")?.dataModel.get("/choice/root")).toEqual(["yes"])
+  })
+})

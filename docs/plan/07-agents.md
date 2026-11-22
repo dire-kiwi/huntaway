@@ -1033,7 +1033,9 @@ agent is told and two board tools.
 - **The board's macros** (`packages/a2ui/src/boardMacros.ts`): `Choice(question, options, event="choose",
   button="Choose", multiple=false)` (a ChoicePicker and a button sending `{choice: [values]}`, disabled by a
   `required` check until there's a pick; its pick is kept at `/choice/<its component id>`, so several on a surface keep
-  theirs apart: the port gives `render` the instance, `{ id }`, which Python's macros don't have) and `Confirm(title,
+  theirs apart: the port gives `render` the instance, `{ id }`, which Python's macros don't have; a block that draws a
+  `Choice` on a surface already there clears `/choice` first, as the update keeps the surface's data and the new
+  `Choice` usually has the old one's id) and `Confirm(title,
   detail?, confirm="Go ahead", cancel="Cancel", event="confirm")` (two buttons sending `{confirmed: true|false}`): the
   two things agents ask most, as one line of Express each. `boardCatalogs()` is the basic catalog and the macros'
   sidecar catalog (`MacroExpander.transformCatalogs`), so the rules list them and the parser takes them;
