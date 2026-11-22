@@ -11,8 +11,8 @@ export const Choice = macro({
   name: "Choice",
   description:
     "A question with options to pick from and a button that sends the pick: you get the event `event` with context {choice: [the values picked]}. " +
-    "The button stays disabled until something is picked. Four or fewer short options show as chips, more as a list. Several on one surface " +
-    "keep their picks apart; give each its own `event` so you can tell their answers apart.",
+    "The button stays disabled until something is picked. Four or fewer short options show as chips, more as a list. " +
+    "A click locks its whole surface, so put one Choice on a surface: for several questions, give each a surface of its own.",
   params: {
     question: param.dynamicString("The question, as a line of text (simple Markdown)."),
     options: param.array(param.choicePickerOption(), "The options, each {label, value}."),
@@ -21,7 +21,8 @@ export const Choice = macro({
     multiple: param.boolean("Whether the user may pick more than one.", { default: false }),
   },
   render: ({ question, options, event, button, multiple }, instance) => {
-    // A data path of the instance's own (its component id), so two Choices on a surface keep their picks apart.
+    // A data path of the instance's own (its component id), so two Choices on a surface (which agents are told not to
+    // draw: a click locks the surface) still keep their picks apart.
     const picked = new DataBinding(`/choice/${(instance.id ?? event).replace(/[^A-Za-z0-9_]/g, "_")}`)
     const short = options.length <= 4 && options.every((o) => typeof o.label !== "string" || o.label.length <= 24)
     return Card({

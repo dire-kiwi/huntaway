@@ -886,7 +886,8 @@ What the agent is told and the tools are in [07-agents.md](07-agents.md#interact
   task while a block of it is shown): the thread's closed blocks and the user's clicks, in order (`entriesOf` over the
   thread model's rows), parsed against the board's catalogs, lowered by the macro expander, and applied to one
   `MessageProcessor`, so a later reply's `update=true` changes the surface an earlier one drew. Each block shows the
-  surfaces it was the last to draw; an earlier copy says "Interactive reply updated below". A block that doesn't parse
+  surfaces it was the last to draw; an earlier copy says "Interactive reply updated below", or "Interactive reply
+  removed" once a later block deletes the surface (`deleteSurface`), and a block that only deletes shows nothing. A block that doesn't parse
   or draw shows why, with its source behind a click; nothing of it is drawn. When the start of the list changes (an
   older page loaded, a rewind) it is rebuilt from the start, keeping each surface's data (what the user typed or
   picked and hasn't sent) where the same block still draws it, and a click on its way: only an entry the thread
@@ -895,11 +896,14 @@ What the agent is told and the tools are in [07-agents.md](07-agents.md#interact
   the thread's context), rather than that it's wrong. A block in a subagent's rows isn't one of the main
   conversation's entries and shows as code. A surface is locked (`inert`, dimmed) while a click on it is on its way
   and once the thread has that click, until the agent draws it again (which also ends a click still marked as on
-  its way).
+  its way). The whole surface: the rules (`BOARD_RULES`) tell agents so, and to give a surface one question or one
+  submit button.
 - **The board's look** (`task/thread/a2ui/catalog.tsx`): every component of A2UI's basic catalog v1.0 drawn with the
   board's controls (`Button`, `Input`, `Textarea`, `Modal`, lucide icons), under the catalog's own id and schemas
   (`basicCatalogOf`), so what the server checks is what draws. Media from an agent's URL isn't loaded, as in the
-  thread's Markdown: an image, video or sound is a link to it, unless the block carries it (a `data:` URL).
+  thread's Markdown: an image, video or sound is a link to it, unless the block carries it (a `data:` URL). A `Modal`'s
+  trigger only opens it (a trigger Button's own action isn't sent), and the dialog is portalled to the page's body,
+  outside the surface's `inert` lock, closing when the surface locks (`SurfaceLocked`, a context A2uiView provides).
 - **A click** sends `tasks.send` with `actionMessage` (`runExit(mutate(…))`); the user's row (`UserMessage`,
   `ActionText`) shows each click in it (`clicksOf`), what it sent when opened, and the message's other text.
 - **The phone** (`apps/mobile`) shows a block as a note ("open the task on the board in a browser to use it") and a

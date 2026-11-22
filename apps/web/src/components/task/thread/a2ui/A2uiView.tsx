@@ -14,7 +14,7 @@ import { runExit } from "../../../../state/mutation"
 import { useThread } from "../context"
 import type { Item } from "../threadModel"
 import { CodeBlock } from "../tools"
-import { boardCatalog } from "./catalog"
+import { boardCatalog, SurfaceLocked } from "./catalog"
 
 // An `<a2ui>` block of an agent's reply, drawn (HE-77, docs/plan/09-frontend.md, Interactive replies). The chunk of its
 // own that A2ui.tsx loads the first time a thread has one: it holds `@a2ui/agent`'s Express parser and the renderer.
@@ -109,6 +109,9 @@ export const A2uiBlock = memo(function A2uiBlock({ row, offset, source, closed }
     )
   if (!view.ok) return <Blocked error={view.error} source={source} />
   if (view.superseded) return <p className="my-1 text-xs text-faint italic">Interactive reply updated below</p>
+  if (view.removed) return <p className="my-1 text-xs text-faint italic">Interactive reply removed</p>
+  // A block that only deletes surfaces shows nothing of its own.
+  if (view.surfaces.length === 0) return null
   return (
     <div data-a2ui className="my-2 flex flex-col gap-2">
       {view.surfaces.map((s) => {
@@ -118,7 +121,9 @@ export const A2uiBlock = memo(function A2uiBlock({ row, offset, source, closed }
           <div key={s.id} data-a2ui-surface={s.id} className="space-y-1">
             {/* `inert` locks every control in it, the board's and the browser's own. */}
             <div inert={locked} aria-busy={s.sending || undefined} className={clsx("transition-opacity", locked && "opacity-55")}>
-              <A2uiSurface surface={model} />
+              <SurfaceLocked.Provider value={locked}>
+                <A2uiSurface surface={model} />
+              </SurfaceLocked.Provider>
             </div>
             {s.sending ? (
               <p className="flex items-center gap-1 text-[11.5px] text-faint">

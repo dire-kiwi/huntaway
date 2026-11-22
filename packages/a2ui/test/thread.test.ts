@@ -5,7 +5,8 @@ import type { ThreadEntry } from "../src/express.ts"
 const make = () => new ThreadSurfaces({ render: [basicCatalog()], inference: [basicCatalog()] })
 const block = (key: string, source: string): ThreadEntry => ({ kind: "block", key, source })
 
-const pick = block("m1@0", 'surface("pick")\nroot = Button(Text("A"), action=Event("a", {n: 1}))')
+const PICK = 'surface("pick")\nroot = Button(Text("A"), action=Event("a", {n: 1}))'
+const pick = block("m1@0", PICK)
 const update = block("m3@0", 'surface("pick", update=true)\nroot = Text("Picked A")')
 
 describe("ThreadSurfaces", () => {
@@ -16,7 +17,7 @@ describe("ThreadSurfaces", () => {
     expect(t.sync([pick])).toBe(true)
     expect(t.sync([pick])).toBe(false)
     expect(told).toBe(1)
-    expect(t.block("m1@0")).toEqual({ ok: true, surfaces: [{ id: "pick", answered: false, sending: false }], superseded: false })
+    expect(t.block("m1@0")).toEqual({ ok: true, surfaces: [{ id: "pick", answered: false, sending: false }], superseded: false, removed: false })
     expect(t.surface("pick")).toBeDefined()
   })
 
@@ -31,8 +32,22 @@ describe("ThreadSurfaces", () => {
     expect(t.block("m1@0")).toMatchObject({ surfaces: [{ id: "pick", answered: true, sending: false }] })
     t.sync([pick, { kind: "action", key: "m2#0", surfaceId: "pick" }, update])
     // The earlier copy was updated below; the update is live.
-    expect(t.block("m1@0")).toEqual({ ok: true, surfaces: [], superseded: true })
+    expect(t.block("m1@0")).toEqual({ ok: true, surfaces: [], superseded: true, removed: false })
     expect(t.block("m3@0")).toMatchObject({ ok: true, surfaces: [{ id: "pick", answered: false }] })
+  })
+
+  it("a surface deleted by a later block shows as removed, and the deleting block shows nothing (HE-77 review)", () => {
+    const t = make()
+    const gone = block("m3@0", 'deleteSurface("pick")')
+    t.sync([pick, { kind: "action", key: "m2#0", surfaceId: "pick" }, gone])
+    expect(t.surface("pick")).toBeUndefined()
+    expect(t.block("m1@0")).toEqual({ ok: true, surfaces: [], superseded: false, removed: true })
+    expect(t.block("m3@0")).toEqual({ ok: true, surfaces: [], superseded: false, removed: false })
+    // Drawn again from scratch later: the first copy now says it was updated below, and the new one is live and open.
+    t.sync([pick, { kind: "action", key: "m2#0", surfaceId: "pick" }, gone, block("m4@0", PICK)])
+    expect(t.block("m1@0")).toMatchObject({ superseded: true, removed: false })
+    expect(t.block("m3@0")).toMatchObject({ superseded: false, removed: false })
+    expect(t.block("m4@0")).toMatchObject({ surfaces: [{ id: "pick", answered: false }] })
   })
 
   it("gives a block that doesn't draw its error, and the rest still draw", () => {

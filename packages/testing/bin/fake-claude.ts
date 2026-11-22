@@ -59,7 +59,8 @@
 //
 // Interactive replies (HE-77). A prompt containing "fake-a2ui" is answered with an A2UI Express block, a form on the
 // surface "fake-form" (a title field and two buttons), one containing "fake-a2ui-choice" with the board's `Choice`
-// macro (surface "fake-choice"), and a prompt that is a click on a surface (the user's message a click sends, with its
+// macro (surface "fake-choice"), one containing "fake-a2ui-modal" with a Modal holding a field and a Save button
+// (surface "fake-modal"), and a prompt that is a click on a surface (the user's message a click sends, with its
 // `a2ui-action` fence) with that surface updated to say what was chosen.
 //
 // Reviews (plan task 4.6). A reviewer's run (its prompt starts "Review the work on task", and it quotes the task's
@@ -86,7 +87,7 @@ import { spawn, spawnSync } from "node:child_process"
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
-import { FAKE_A2UI_CHOICE, FAKE_A2UI_FORM, fakeA2uiDone } from "./fake-a2ui.ts"
+import { fakeA2uiDone, fakeA2uiReply } from "./fake-a2ui.ts"
 
 type Json = Record<string, unknown>
 
@@ -893,7 +894,7 @@ const turn = async (text: string) => {
     await exit(0)
   }
   let reply = env.HUNTAWAY_FAKE_CLAUDE_TEXT || `Fake reply to: ${text.trim().slice(0, 200)}`
-  if (text.includes("fake-a2ui")) reply = text.includes("fake-a2ui-choice") ? FAKE_A2UI_CHOICE : FAKE_A2UI_FORM
+  if (text.includes("fake-a2ui")) reply = fakeA2uiReply(text)
   const clicked = /```a2ui-action\n(.*)\n```/.exec(text)?.[1]
   if (clicked !== undefined) reply = fakeA2uiDone(clicked)
   if (steered.length > 0) reply += ` (and to: ${steered.join("; ").slice(0, 200)})`

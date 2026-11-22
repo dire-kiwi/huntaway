@@ -1,6 +1,7 @@
 // Interactive replies (HE-77): an agent's `<a2ui>` block is drawn in the thread with the board's controls, a click goes
 // back to the agent as the user's message, and the agent's update of the surface replaces the earlier copy. The fake
-// agent answers "fake-a2ui" with a form (surface "fake-form") and a click with that surface updated.
+// agent answers "fake-a2ui" with a form (surface "fake-form"), "fake-a2ui-modal" with a Modal (surface "fake-modal"),
+// and a click with that surface updated.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
 import { seedAgentBoard, startServer, withBrowser } from "./harness.mjs"
@@ -49,5 +50,29 @@ test("an interactive reply is drawn, a click reaches the agent, and its update r
     await page.getByText("also rename it").waitFor()
     assert.equal(await page.getByText('"sourceComponentId":"x"').count(), 0)
     await ui.run([`shot ${process.env.TMPDIR ?? "/tmp"}/a2ui-form.png`])
+  })
+})
+
+test("a Modal's trigger only opens it, and its fields and button work (HE-77 review)", async () => {
+  const task = await server.rpc("tasks.create", { task: { project_id: board.project.id, title: "A2UI: modal", status: "in_review" } })
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "wait No agent has worked on this yet"])
+    await ui.run(["click css=textarea", "type Show me a dialog fake-a2ui-modal", "press Enter"])
+
+    const surface = page.locator("[data-a2ui-surface='fake-modal']")
+    await surface.getByRole("button", { name: "Details" }).click()
+    const dialog = page.getByRole("dialog")
+    await dialog.locator("[data-a2ui-modal]").waitFor()
+    // Opening sent nothing: the surface isn't locked and no click is in the thread.
+    assert.equal(await page.locator("[data-a2ui-action]").count(), 0)
+    assert.equal(await surface.locator("[inert]").count(), 0)
+
+    await dialog.getByRole("textbox", { name: "Note" }).fill("Looks good")
+    await dialog.getByRole("button", { name: "Save note" }).click()
+    // The click went, the dialog closed with the surface's lock, and the agent's update came.
+    await page.locator("[data-a2ui-action='fake-modal']").getByText("Clicked “Save note”").waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    await page.getByText('Got {"name":"note","context":{"note":"Looks good"}}').waitFor()
   })
 })

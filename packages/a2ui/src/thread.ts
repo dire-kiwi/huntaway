@@ -4,9 +4,9 @@
 // inference catalogs (the board's, with its macros), lowered by `transform` (the macro expander) and applied to the
 // renderer's processor. When the thread's start changes (an older page loaded, a rewind), it is rebuilt from scratch.
 //
-// What each block shows: the surfaces it was the last to draw (an earlier copy says it was updated below), or why it
-// drew nothing. A surface is answered when the user's action message for it comes after the last block that drew it:
-// it stays drawn, locked, until the agent draws it again.
+// What each block shows: the surfaces it was the last to draw (an earlier copy says it was updated below, or removed
+// when a later block deletes it), or why it drew nothing. A surface is answered when the user's action message for it
+// comes after the last block that drew it: it stays drawn, locked, until the agent draws it again.
 import { ExpressFormat, RendererState } from "@a2ui/agent"
 import type { ActionPayload, Catalog, CatalogApi, ComponentApi, SurfaceModel } from "@a2ui/web_core"
 import { MessageProcessor } from "@a2ui/web_core"
@@ -28,7 +28,14 @@ export type BlockView =
        */
       readonly missing?: string | undefined
     }
-  | { readonly ok: true; readonly surfaces: ReadonlyArray<SurfaceView>; readonly superseded: boolean }
+  | {
+      readonly ok: true
+      readonly surfaces: ReadonlyArray<SurfaceView>
+      /** What it drew is drawn again by a later block. */
+      readonly superseded: boolean
+      /** What it drew was deleted by a later block (`deleteSurface`) and not drawn again. */
+      readonly removed: boolean
+    }
 
 /** A surface a block drew, and where it stands. */
 export interface SurfaceView {
@@ -48,7 +55,8 @@ export interface ThreadSurfacesOptions<T extends ComponentApi> {
   readonly transform?: ((messages: ReadonlyArray<unknown>) => ReadonlyArray<unknown>) | undefined
 }
 
-type Applied = { readonly entry: ThreadEntry; readonly view: BlockView | null }
+/** An entry applied: what it shows, and (a block) the surfaces it drew, in the end (not one it deleted after). */
+type Applied = { readonly entry: ThreadEntry; readonly view: BlockView | null; readonly drew: ReadonlyArray<string> }
 
 export class ThreadSurfaces<T extends ComponentApi> {
   private processor!: MessageProcessor<T>
@@ -98,7 +106,7 @@ export class ThreadSurfaces<T extends ComponentApi> {
     const kept = same ? null : this.surfaceData()
     if (!same) this.reset()
     for (const entry of entries.slice(this.applied.length)) {
-      this.applied.push({ entry, view: this.apply(entry) })
+      this.applied.push({ entry, ...this.apply(entry) })
       this.seen.add(entryKey(entry))
     }
     if (kept !== null) this.restore(kept)
@@ -129,36 +137,47 @@ export class ThreadSurfaces<T extends ComponentApi> {
     }
   }
 
-  private apply(entry: ThreadEntry): BlockView | null {
+  private apply(entry: ThreadEntry): { readonly view: BlockView | null; readonly drew: ReadonlyArray<string> } {
     const fresh = !this.seen.has(entryKey(entry))
     if (entry.kind === "action") {
       this.answered.add(entry.surfaceId)
       if (fresh) this.sending.delete(entry.surfaceId)
-      return null
+      return { view: null, drew: [] }
     }
     // A block that names no surface gets its own, so two such blocks never collide.
     const parser = new ExpressFormat([...this.options.inference], { surfaceId: `reply-${entry.key}` }).createParser()
     const transform = this.options.transform ?? ((m: ReadonlyArray<unknown>) => m)
     try {
       const ids: Array<string> = []
+      let deleted = false
       for (const part of parser.parseResponse(entry.source, { state: this.state, wrapped: false })) {
         if (part.type !== "a2ui") continue
         const errors = this.processor.processMessagesWithErrors([...transform(part.a2ui)])
         const first = errors[0]
-        if (first !== undefined) return { ok: false, error: errorText(first.error?.message ?? "The block didn't draw.") }
-        for (const id of surfaceIdsOf(part.a2ui)) if (!ids.includes(id)) ids.push(id)
+        if (first !== undefined) return { view: { ok: false, error: errorText(first.error?.message ?? "The block didn't draw.") }, drew: [] }
+        for (const m of part.a2ui) {
+          // A surface it deletes isn't its to show, nor any block's (the one that drew it says it was removed).
+          const gone = deletedId(m)
+          if (gone !== undefined) {
+            deleted = true
+            if (ids.includes(gone)) ids.splice(ids.indexOf(gone), 1)
+            this.owner.delete(gone)
+            this.answered.delete(gone)
+            if (fresh) this.sending.delete(gone)
+          } else for (const id of surfaceIdsOf([m])) if (!ids.includes(id)) ids.push(id)
+        }
       }
-      if (ids.length === 0) return { ok: false, error: "The block draws no surface." }
+      if (ids.length === 0 && !deleted) return { view: { ok: false, error: "The block draws no surface." }, drew: [] }
       for (const id of ids) {
         this.owner.set(id, entry.key)
         this.answered.delete(id)
         // The agent drew it again: a click still marked as on its way (one that never reached the thread) is moot.
         if (fresh) this.sending.delete(id)
       }
-      return { ok: true, surfaces: [], superseded: false }
+      return { view: { ok: true, surfaces: [], superseded: false, removed: false }, drew: ids }
     } catch (e) {
       const missing = updatedIds(entry.source).find((id) => !this.processor.model.surfacesMap.has(id))
-      return { ok: false, error: errorText(e), missing }
+      return { view: { ok: false, error: errorText(e), missing }, drew: [] }
     }
   }
 
@@ -168,10 +187,13 @@ export class ThreadSurfaces<T extends ComponentApi> {
     if (at?.view === undefined || at.view === null) return undefined
     if (!at.view.ok) return at.view
     const ids = [...this.owner].flatMap(([id, owner]) => (owner === key && this.processor.model.surfacesMap.has(id) ? [id] : []))
+    // Nothing of it left: a later block drew it again, or deleted it (or it only deleted surfaces: it shows nothing).
+    const superseded = ids.length === 0 && at.drew.some((id) => this.owner.has(id))
     return {
       ok: true,
       surfaces: ids.map((id) => ({ id, answered: this.answered.has(id), sending: this.sending.has(id) })),
-      superseded: ids.length === 0,
+      superseded,
+      removed: ids.length === 0 && !superseded && at.drew.length > 0,
     }
   }
 
@@ -211,6 +233,12 @@ const sameEntry = (a: ThreadEntry, b: ThreadEntry | undefined): boolean =>
 
 /** An entry as `seen` keeps it: a block's key and source (an edited block is new), a click's key. */
 const entryKey = (e: ThreadEntry): string => (e.kind === "block" ? `block\u0000${e.key}\u0000${e.source}` : `action\u0000${e.key}`)
+
+/** The surface a message deletes (`deleteSurface("<id>")`), if it's a deletion. */
+function deletedId(m: unknown): string | undefined {
+  const body = typeof m === "object" && m !== null && "deleteSurface" in m ? m.deleteSurface : undefined
+  return typeof body === "object" && body !== null && "surfaceId" in body && typeof body.surfaceId === "string" ? body.surfaceId : undefined
+}
 
 /** The surfaces a block's `surface("<id>", update=true)` lines name. */
 const updatedIds = (source: string): ReadonlyArray<string> =>

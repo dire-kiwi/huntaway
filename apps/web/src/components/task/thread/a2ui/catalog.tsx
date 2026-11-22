@@ -1,6 +1,7 @@
 import { clsx } from "clsx"
 import * as Icons from "lucide-react"
-import { useState, type ReactNode } from "react"
+import { createContext, useContext, useState, type ReactNode } from "react"
+import { createPortal } from "react-dom"
 import { createComponentImplementation, type ReactCatalogComponent } from "@a2ui/react"
 import type { ResolvedChildRef } from "@a2ui/web_core"
 import { basicCatalogOf, basicComponent } from "@huntaway/a2ui/express"
@@ -13,6 +14,9 @@ import { forInput } from "./dates"
 // only the look is the board's. Media isn't loaded from an agent's URL, as in the thread's Markdown (MarkdownView.tsx):
 // a URL can carry a secret out as soon as it's shown, so an image, a video or a sound from the web is a link to it, and
 // one written into the block (a data: URL) is shown.
+
+/** Whether the surface being drawn is locked (a click on it sent, A2uiView.tsx): what draws outside it (a Modal) obeys it. */
+export const SurfaceLocked = createContext(false)
 
 /** The props as the binder resolves them: typed by the catalog's schema at runtime, so read here with care. */
 type Props = Readonly<Record<string, unknown>> & {
@@ -176,16 +180,34 @@ function Tabs({ props, build }: { props: Props; build: Build }) {
   )
 }
 
+/**
+ * A trigger that opens a dialog. The trigger only opens it: a trigger Button's own action (the catalog requires one)
+ * isn't sent, as it would start the agent's turn and lock the surface with the dialog open. The dialog is drawn on the
+ * page's body, outside the surface's lock (`inert`, which would leave it open and unusable over the board), and closes
+ * once the surface locks: a click in it was sent.
+ */
 function ModalOf({ props, build }: { props: Props; build: Build }) {
+  const locked = useContext(SurfaceLocked)
   const [open, setOpen] = useState(false)
+  if (open && locked) setOpen(false)
   return (
     <div style={grow(props)}>
-      <div onClickCapture={() => setOpen(true)}>{one(props, "trigger", build)}</div>
-      {open && (
-        <Modal title="" onClose={() => setOpen(false)}>
-          {one(props, "content", build)}
-        </Modal>
-      )}
+      <div
+        onClickCapture={(e) => {
+          e.stopPropagation()
+          if (!locked) setOpen(true)
+        }}
+      >
+        {one(props, "trigger", build)}
+      </div>
+      {open &&
+        !locked &&
+        createPortal(
+          <Modal title="" onClose={() => setOpen(false)}>
+            <div data-a2ui-modal>{one(props, "content", build)}</div>
+          </Modal>,
+          document.body,
+        )}
     </div>
   )
 }

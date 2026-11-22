@@ -110,7 +110,8 @@ your message (shown in the thread as what you clicked: open it to see what it se
 - **Switch it on** in Settings → Experiments, _Interactive replies (A2UI)_: new runs are then told they can use it
   (and when not to), and read the rules with the `a2ui_rules` tool before their first block. A block an agent writes
   anyway is drawn either way.
-- **After you click**, the surface is locked ("Sent to the agent") until the agent answers. An agent that changes a
+- **After you click**, the whole surface is locked ("Sent to the agent") until the agent answers, so agents give each
+  question a surface of its own. An agent that changes a
   surface (to show what it did with your choice) draws the new version where the reply it's in is, and the earlier
   copy says it was updated below.
 - **Shortcuts**: besides A2UI's own components, agents have the board's `Choice` (a question, options and a Choose
