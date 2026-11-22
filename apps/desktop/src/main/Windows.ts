@@ -8,6 +8,7 @@ import { assetPlatform, RELEASE_REPO, shellChange, updateKind } from "../shared/
 import type { UpdateKind } from "../shared/versions.ts"
 import { Desktop, releaseUpdatesOff } from "./Desktop.ts"
 import { errorPage } from "./errorPage.ts"
+import { makeForwards } from "./forwards.ts"
 import { registerPaneDebugger } from "./paneDebugger.ts"
 import { progressPage, progressScript } from "./progressPage.ts"
 import type { ProgressState } from "./progressPage.ts"
@@ -418,6 +419,13 @@ export const runWindows = Effect.gen(function* () {
     )
   })
   ipcMain.handle("huntaway:update-shell", (event) => runPromise(updateOwnPackage(event)))
+  // HE-81: a task's dev server, shared by the board's host with tailcat, forwarded to a port on this computer.
+  const forwards = yield* makeForwards
+  ipcMain.handle("huntaway:forward-port", (event, address: unknown, port: unknown) => {
+    const board = origin()
+    if (board === null || senderOrigin(event) !== board) return { error: "Only the board can forward a port." }
+    return runPromise(forwards.forward(address, port))
+  })
   // HE-62: the browser pane's <webview>, given to the server to drive for the task's agent.
   const unregisterPane = registerPaneDebugger(origin, senderOrigin, runPromise, paneIsLocal(desktop.file))
   yield* Effect.addFinalizer(() =>
@@ -426,6 +434,7 @@ export const runWindows = Effect.gen(function* () {
       for (const channel of ["huntaway:badge", "huntaway:focus", "huntaway:open-window", "huntaway:shell-update-kind"]) ipcMain.removeAllListeners(channel)
       ipcMain.removeHandler("huntaway:update-shell")
       ipcMain.removeHandler("huntaway:browser-proxy")
+      ipcMain.removeHandler("huntaway:forward-port")
     }),
   )
 

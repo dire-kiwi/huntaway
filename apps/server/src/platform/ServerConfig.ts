@@ -307,6 +307,8 @@ export interface ServerConfigShape {
   readonly cuaRelease: CuaReleaseConfig | null
   /** HE-35: `HUNTAWAY_DOCKER`, the Docker CLI Spaces run (default `docker` on PATH; tests give none). */
   readonly dockerBin: string
+  /** HE-81: `HUNTAWAY_TAILCAT`, the tailcat that shares the tasks' dev servers (default `tailcat` on PATH; tests give none). */
+  readonly tailcatBin: string
   /** HE-35: `HUNTAWAY_SPACES_IMAGE`, the image Spaces are built on (default Cua's Linux image with spacesd). */
   readonly spacesImage: string
   /** HE-62: `HUNTAWAY_CHROME`, a Chrome or Chromium for the tasks' browser instead of the chrome-headless-shell it downloads. */
@@ -484,6 +486,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         // HE-35
         const dockerBin = yield* Config.String("HUNTAWAY_DOCKER").pipe(Config.withDefault(""))
         const spacesImage = yield* Config.String("HUNTAWAY_SPACES_IMAGE").pipe(Config.withDefault(""))
+        // HE-81
+        const tailcatBin = yield* Config.String("HUNTAWAY_TAILCAT").pipe(Config.withDefault(""))
         // HE-62
         const chromeBin = yield* Config.String("HUNTAWAY_CHROME").pipe(Config.withDefault(""))
         const chromeRelease = yield* Config.schema(Schema.fromJsonString(ChromeReleaseConfig), "HUNTAWAY_CHROME_RELEASE").pipe(Config.option)
@@ -537,6 +541,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
             ),
           ),
           dockerBin: dockerBin === "" ? "docker" : expand(dockerBin),
+          tailcatBin: tailcatBin === "" ? "tailcat" : expand(tailcatBin),
           spacesImage: spacesImage === "" ? SPACES_IMAGE : spacesImage,
           chromeBin: chromeBin === "" ? null : expand(chromeBin),
           chromeRelease: Option.getOrNull(chromeRelease),
@@ -604,6 +609,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         desktopLocked: false,
         // HE-35: never this machine's Docker: a test gives its own `Docker` layer.
         dockerBin: `${config.dataDir}/no-docker-in-tests`,
+        // HE-81: never this machine's tailcat, which would reach tailcat's relays: a test gives a fake.
+        tailcatBin: `${config.dataDir}/no-tailcat-in-tests`,
         spacesImage: SPACES_IMAGE,
         // HE-62: never a download, nor this machine's Chrome: a test that drives a browser gives one.
         chromeBin: `${config.dataDir}/no-chrome-in-tests`,

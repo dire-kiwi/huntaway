@@ -7,8 +7,8 @@ import type { IpcRendererEvent } from "electron"
 // (RTCPeerConnection, which Chromium doesn't hold to their Content-Security-Policy), so that a page can't send data to a
 // STUN or TURN server of its choosing (HA-269). Taken away in each frame, including the srcdoc frames a page makes
 // itself, it can't be got back from another. The main process checks the sender's origin for the members that act on
-// the board (openWindow, updateShell, paneDebugger, setBrowserProxy). The six members are the old shell's, unchanged;
-// `onServerProgress` is new (HE-44), `paneDebugger` (HE-62), and `setBrowserProxy` (HE-67).
+// the board (openWindow, updateShell, paneDebugger, setBrowserProxy, forwardPort). The six members are the old shell's, unchanged;
+// `onServerProgress` is new (HE-44), `paneDebugger` (HE-62), `setBrowserProxy` (HE-67), and `forwardPort` (HE-81).
 
 /** What `updateShell` reports as it goes. */
 interface Progress {
@@ -64,6 +64,11 @@ if (process.isMainFrame) {
      * host's, when that host is this machine. Resolves whether it was taken.
      */
     ...(paneLocal ? { setBrowserProxy: (proxy: unknown): Promise<unknown> => ipcRenderer.invoke("huntaway:browser-proxy", proxy) } : {}),
+    /**
+     * HE-81: forwards the dev server a task's host shares with tailcat (its tailcat `address`, the server's `port`) to a
+     * free port on this computer. Resolves `{url}` (`http://127.0.0.1:<port>/`) or `{error}`.
+     */
+    forwardPort: (address: unknown, port: unknown): Promise<unknown> => ipcRenderer.invoke("huntaway:forward-port", address, port),
     /** Opens page `path` of the board (`/profile/work`) in a new window of the app (HA-298). */
     openWindow: (path: unknown) => ipcRenderer.send("huntaway:open-window", String(path)),
     /** Brings the window to the front, as clicking a notification does. */

@@ -170,6 +170,7 @@ import { BackgroundWork } from "./runs/BackgroundWork.ts"
 import { ClaudeOutput } from "./runs/claude/output.ts"
 import { CodexOutput } from "./runs/codex/output.ts"
 import { DevServers } from "./runs/DevServers.ts"
+import { PortForwards } from "./runs/PortForwards.ts"
 import { LaunchFacts } from "./runs/LaunchFacts.ts"
 import { RunDir } from "./runs/RunDir.ts"
 import { RunFollower } from "./runs/RunFollower.ts"
@@ -304,7 +305,7 @@ const ActingAreas = InReview.layer.pipe(
     ),
   ),
   Layer.provideMerge(UserMessages.layer.pipe(Layer.provideMerge(Layer.mergeAll(Permissions.layer, Questions.layer)), Layer.provideMerge(PermissionRepo.layer))),
-  Layer.provideMerge(DevServers.layer),
+  Layer.provideMerge(Layer.mergeAll(DevServers.layer, PortForwards.layer)),
   Layer.provideMerge(Layer.mergeAll(TaskDeletion.layer, SetupThread.layer)),
   Layer.provideMerge(RunsArea),
 )

@@ -10,6 +10,7 @@ import { MergeTargets } from "../merge/MergeTargets.ts"
 import { InReview } from "../review/InReview.ts"
 import type { FixChecksRefused } from "../review/InReview.ts"
 import { DevServers } from "../runs/DevServers.ts"
+import { PortForwards } from "../runs/PortForwards.ts"
 import { UserMessages } from "../permissions/UserMessages.ts"
 import { Push } from "../push/Push.ts"
 import { Reviews } from "../review/Reviews.ts"
@@ -76,6 +77,7 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const deletion = yield* TaskDeletion
     const userMessages = yield* UserMessages
     const devServers = yield* DevServers
+    const portForwards = yield* PortForwards
     const meter = yield* ContextMeter
     const stackTitles = yield* StackTitles
     const targets = yield* MergeTargets
@@ -122,6 +124,7 @@ export const TaskHandlers = TaskRpcs.toLayer(
       "tasks.summarize": ({ id }) => summaries.start(id, true).pipe(Effect.flatMap(orTask(id)), Effect.catchTags(reviewErrors)),
       "tasks.dropQueued": ({ id }) => runs.dropQueued(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       "tasks.stopServer": ({ id, port }) => devServers.stop(id, port).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      "tasks.forwardServer": ({ id, port }) => portForwards.forward(id, port).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       "tasks.stopBackground": ({ id, background_id }) =>
         Effect.gen(function* () {
           yield* tasks.get(id)

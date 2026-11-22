@@ -208,6 +208,7 @@ import { Fanout } from "./review/Fanout.ts"
 import { FanoutRepo } from "./review/FanoutRepo.ts"
 import { Summaries } from "./review/Summaries.ts"
 import { DevServers } from "./runs/DevServers.ts"
+import { PortForwards } from "./runs/PortForwards.ts"
 import { AgentRequests } from "./runs/AgentRequests.ts"
 import { ClaudeOutput } from "./runs/claude/output.ts"
 import { CodexOutput } from "./runs/codex/output.ts"
@@ -588,6 +589,8 @@ const runAreasLayer = <T, E1, R1, E2, R2, C, E3, R3, A, E4, R4>(models: ModelCal
     Layer.provideMerge(RunEnds.layer),
     // DevServers reads tasks, which the runs area's own tests (`TestRuns`) don't build: it goes on top of the area.
     Layer.provideMerge(DevServers.layer),
+    // HE-81: the tasks' dev servers shared with tailcat.
+    Layer.provideMerge(PortForwards.layer),
     // What deleting a task and a project's setup thread are made of: runs, tasks and worktrees (4.1).
     Layer.provideMerge(Layer.mergeAll(TaskDeletion.layer, SetupThread.layer)),
     Layer.provideMerge(RunsArea),

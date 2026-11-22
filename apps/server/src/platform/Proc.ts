@@ -3,6 +3,12 @@ import type { PlatformError, Scope } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { isReadingGit, refusedCommand } from "./ReadOnly.ts"
 
+/**
+ * `bash -c WATCHDOG <name> <command> <args…>` runs the command with its stdin taken from the server's pipe: when that
+ * closes (the server is gone), its process group (spawn it `detached`) dies. SSH links' tunnels, tailcat's shares.
+ */
+export const WATCHDOG = `exec 3<&0 </dev/null; (read -r _ <&3; kill -KILL 0) & exec 3<&-; exec "$@"`
+
 /** What is kept of a command's output, per stream. */
 export const MAX_OUTPUT = 16 * 1024 * 1024
 

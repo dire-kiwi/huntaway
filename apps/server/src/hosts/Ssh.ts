@@ -5,7 +5,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { HostId, Invalid, Unavailable } from "@huntaway/contracts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Identity } from "../platform/Identity.ts"
-import { Proc } from "../platform/Proc.ts"
+import { Proc, WATCHDOG } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import type { SshTarget } from "./LinkRepo.ts"
 import type { Scope } from "effect"
@@ -27,9 +27,6 @@ export const SshHostDetails = Schema.Struct({
 export interface SshHostDetails extends Schema.Schema.Type<typeof SshHostDetails> {}
 
 const DetailsJson = Schema.fromJsonString(SshHostDetails)
-
-/** Runs `ssh "$@"` with its stdin taken from the server's pipe: when that closes (the server is gone), the group dies. */
-const WATCHDOG = `exec 3<&0 </dev/null; (read -r _ <&3; kill -KILL 0) & exec 3<&-; exec "$@"`
 
 /** `user@host`, checked as the old `Target_from_json` and `add_ssh_host` did. */
 export const checkTarget = (given: string): string | Invalid => {
