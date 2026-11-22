@@ -100,6 +100,25 @@ your next message at once.
   that outlives its run (started with `nohup` or `setsid`) is still listed, as "outlives its run", until it stops. On
   macOS and Windows no servers are listed.
 
+## Interactive replies
+
+An agent can answer with UI as well as text: a card, a choice to pick from, a short form, buttons. The board draws it
+in the thread where it is in the reply, in the board's own look, and what you pick or fill in goes back to the agent as
+your message (shown in the thread as what you clicked: open it to see what it sent). It's
+[A2UI](https://a2ui.org): the agent writes a block of A2UI Express between `<a2ui>` and `</a2ui>` lines.
+
+- **Switch it on** in Settings → Experiments, _Interactive replies (A2UI)_: new runs are then told they can use it
+  (and when not to), and read the rules with the `a2ui_rules` tool before their first block. A block an agent writes
+  anyway is drawn either way.
+- **After you click**, the surface is locked ("Sent to the agent") until the agent answers. An agent that changes a
+  surface (to show what it did with your choice) draws the new version where the reply it's in is, and the earlier
+  copy says it was updated below.
+- **A block that's wrong** isn't drawn: the thread says why, with its source behind a click. Agents can check one with
+  the `a2ui_check` tool before sending it.
+- **Images, video and sound** from the web aren't loaded, as in the thread's text: they're links, so a URL can't
+  carry anything out just by being shown.
+- **On the phone** a block is a note to open the task on the board in a browser.
+
 ## Agent tools (MCP)
 
 Each run gets the `huntaway` MCP server, which the board serves itself, in process for Claude runs,

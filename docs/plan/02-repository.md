@@ -53,6 +53,7 @@ packages/
   contracts/              @huntaway/contracts: schemas, errors, RPC groups, HTTP endpoints, events, the thread protocol
   client/                 @huntaway/client: host sessions, atoms, queries and mutations, for the web app
   shared/                 @huntaway/shared: plain functions with no effect import, used by hooks, server and clients
+  a2ui/                   @huntaway/a2ui (HE-77): interactive replies, and A2UI's macros ported to TypeScript
   plugin/                 @huntaway/plugin (HE-34): the plugin API, and the example notes plugin (15-plugins.md)
   testing/                @huntaway/testing: fake agent CLIs, fake gh and GitHub, git and board fixtures, test layers
 rust/
@@ -71,6 +72,7 @@ docs/
 | `@huntaway/shared`   | Approval-rule matching, the shell-command reader the gh hook uses, task-key and slug helpers, text limits                           | nothing                                 | import `effect` (the hooks load it per tool call) |
 | `@huntaway/contracts`| Branded ids, domain structs, tagged errors, the RPC groups, the HTTP endpoints, `BoardEvent`, the thread protocol and its pure reducer | `effect`, `@huntaway/shared`            | Node or DOM APIs; anything that runs at import    |
 | `@huntaway/client`   | `HostSession` (one RPC connection), the session directory, board and thread atoms, queries, mutations, optimistic updates           | `effect`, `@effect/atom-react`, contracts, shared | Node, DOM or React Native APIs (the apps provide storage and sockets as layers) |
+| `@huntaway/a2ui`     | HE-77: interactive replies. `.`: splitting a reply into Markdown and `<a2ui>` blocks, the message a click sends (imports nothing). `./express`: the board's A2UI catalogs, the rules and check agents get, a thread's surfaces, and A2UI's macros and builder ported from the Python SDK | `@a2ui/agent`, `@a2ui/web_core` | import `effect` or Node modules (plain code the server, the web app and the phone share) |
 | `@huntaway/plugin`   | The plugin API (`definePlugin`, `PluginHost`, `pluginTool`, `pluginCall`, `Page`) and the example plugin (15-plugins.md) | `effect`                                | import the board's packages: a plugin depends on it and `effect` alone |
 | `@huntaway/testing`  | Fakes and fixtures, including the recorded Claude and Codex sessions                                                                | anything                                | be imported by non-test code                      |
 
@@ -95,6 +97,7 @@ Exact versions go in the pnpm catalog. These are the ones checked by the spike.
 | `react`, `react-dom`            | ^19.3    | web                | As now                                                                                |
 | the web app's other dependencies | as now  | web                | `@xterm/*`, `shiki`, `mermaid`, `react-markdown`, `remark-gfm`, `lucide-react`, `clsx`, `qrcode-generator`, Tailwind 4 |
 | `electron`                      | ^45      | desktop            | As now                                                                                |
+| `@a2ui/agent`, `@a2ui/web_core`, `@a2ui/react` | 0.1.0, 0.15.0, 0.15.0 | a2ui, web | HE-77: A2UI Express (parser, prompt generator, renderer state), the catalogs and processor, the React renderer. `zod` 3.25 is their peer |
 
 Leaving: `zustand` (atoms replace the store) and the server's direct dependency on `ws` (it comes with
 `@effect/platform-node`). `effect` has no dependencies of its own.

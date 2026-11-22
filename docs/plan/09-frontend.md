@@ -842,6 +842,36 @@ its name, and what it does behind the ? beside that (HE-39). All are off at firs
     `Automations.test.ts` and `schedule.test.ts` (several times, `{{last_run}}`, `{{quiet_runs}}`);
     `tests/ui/checkIns.test.mjs` (nothing while off; Add check-ins; the editor's times).
 
+### Interactive replies (HE-77)<a id="interactive-replies"></a>
+
+What the agent is told and the tools are in [07-agents.md](07-agents.md#interactive-replies). In the web app:
+
+- **Splitting a reply** (`segments` in `packages/a2ui/src/message.ts`, the package's light entry `@huntaway/a2ui`,
+  which imports nothing): Markdown and `<a2ui>` blocks, a block being a line starting `<a2ui>` up to `</a2ui>` outside
+  an Express string or comment. A tag in fenced or inline code stays Markdown, so an agent can show how one is
+  written; an unclosed block is the rest of the text (`closed: false`, still streaming), drawn as a placeholder, never
+  as source. `ItemList`'s `text` row hands a reply that has `<a2ui>` to `Reply` (`task/thread/a2ui/A2ui.tsx`), the
+  rest to `Markdown` as before.
+- **A chunk of its own**: `A2uiView.tsx`, loaded by an atom the first time a block is shown (as the Markdown renderer
+  is, The bundle): the Express parser (`@a2ui/agent`, ANTLR) and the renderer (`@a2ui/react`, `@a2ui/web_core`) are
+  about 220 KB gzipped, and most threads never need them. The first chunk only gets the splitter.
+- **One renderer state per thread** (`ThreadSurfaces` in `packages/a2ui/src/thread.ts`, in `surfacesAtom` by host and
+  task while a block of it is shown): the thread's closed blocks and the user's clicks, in order (`entriesOf` over the
+  thread model's rows), parsed against the board's catalogs, lowered by the macro expander, and applied to one
+  `MessageProcessor`, so a later reply's `update=true` changes the surface an earlier one drew. Each block shows the
+  surfaces it was the last to draw; an earlier copy says "Interactive reply updated below". A block that doesn't parse
+  or draw shows why, with its source behind a click; nothing of it is drawn. When the start of the list changes (an
+  older page loaded, a rewind) it is rebuilt from the start. A surface is locked (`inert`, dimmed) while a click on it
+  is on its way and once the thread has that click, until the agent draws it again.
+- **The board's look** (`task/thread/a2ui/catalog.tsx`): every component of A2UI's basic catalog v1.0 drawn with the
+  board's controls (`Button`, `Input`, `Textarea`, `Modal`, lucide icons), under the catalog's own id and schemas
+  (`basicCatalogOf`), so what the server checks is what draws. Media from an agent's URL isn't loaded, as in the
+  thread's Markdown: an image, video or sound is a link to it, unless the block carries it (a `data:` URL).
+- **A click** sends `tasks.send` with `actionMessage` (`runExit(mutate(…))`); the user's row for it (`ActionText`)
+  shows the line, and what it sent when opened.
+- **The phone** (`apps/mobile`) shows a block as a note ("open the task on the board in a browser to use it") and a
+  click as its line.
+
 ### The page's own selects (HE-70)
 
 The browser's `<select>` drew its list in the system's colours and font (a white list on the dark board), so every

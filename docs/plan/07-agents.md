@@ -997,6 +997,36 @@ assistant's and its routines' (`trackedList.owner`, as for tracked work; a proje
   message to send, a button per action (the first highlighted; Delete asks again; a move asks as above) and Leave it; settled, what was
   done. Browser check: `apps/web/tests/ui/suggestionsCard.test.mjs`.
 
+### As built in HE-77: interactive replies (A2UI)<a id="interactive-replies"></a>
+
+An agent can put UI in a reply: an [A2UI](https://a2ui.org) v1.0 **Express** block between `<a2ui>` and `</a2ui>` lines
+(the contract `@a2ui/agent`'s prompt generator teaches). The board draws it in the thread with its own controls
+([09-frontend.md](09-frontend.md#interactive-replies)), and a click comes back to the agent as the user's message. The
+plain parts are in `packages/a2ui` (`@huntaway/a2ui`, [02-repository.md](02-repository.md)); the server adds what the
+agent is told and two board tools.
+
+- **Told only while the `a2ui` experiment is on** (`prompts/a2uiNote.ts`, `PromptContext.a2ui` from
+  `HostSettings.experiments`): one paragraph saying what a block is, when to use one (a choice, a short form, a
+  confirmation, a card; not an ordinary answer, and not in place of `request_user_input` when the turn must stop), and
+  to read the rules first. Threads under a task (reviewers, summaries, workflow steps) aren't told. Blocks are drawn
+  whether it's on or not: an agent may write one anyway, or a thread may hold one from when it was on.
+- **`a2ui_rules`** (`mcp/tools/a2ui.ts`; rerunnable, for plan mode, not for reviewers): the board's rules
+  (`BOARD_RULES` in `packages/a2ui/src/rules.ts`: where a block goes, `surface("<id>")` first, how a click comes back,
+  `surface("<id>", update=true)` to change a surface after it, the check tool) and then `ExpressPromptGenerator`'s
+  contract for the board's catalogs (`boardCatalogs()`: A2UI's basic catalog and the board's macros). It's some 20 KB,
+  which is why the system prompt only points at it.
+- **`a2ui_check { text }`**: checks a reply's blocks as the board will draw them (`check` in `rules.ts`: Express
+  parsed against the board's catalogs with a `RendererState`), after the closed blocks of the caller's thread's
+  replies (`Threads.stored`), so an `update=true` of an earlier surface checks and a second `surface("<id>")` of one is
+  refused. Says `{ ok, blocks, surfaces }` or `{ ok: false, block, error }`. An agent on another host is checked
+  without its thread.
+- **A click** is the user's message (`tasks.send`, so it starts, steers or queues a run as any message does): a line
+  the user reads (`Clicked “Save”`, the button's text when it has one) and the action as JSON in an ```` ```a2ui-action ````
+  fence: `{ surfaceId, name, sourceComponentId, context }`, the context being what the `Event` named, resolved from
+  the surface's data (`actionMessage`/`actionOf` in `packages/a2ui/src/message.ts`).
+- **The fake agent** (`packages/testing/bin/fake-claude.ts`) answers a prompt containing `fake-a2ui` with a form, and a
+  click with that surface updated to say what was sent, for trying it on a test server.
+
 ## Codex<a id="codex"></a>
 
 ### As built in 5.1–5.3 (HE-5)
