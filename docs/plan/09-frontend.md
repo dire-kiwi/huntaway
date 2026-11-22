@@ -849,8 +849,9 @@ What the agent is told and the tools are in [07-agents.md](07-agents.md#interact
 - **Splitting a reply** (`segments` in `packages/a2ui/src/message.ts`, the package's light entry `@huntaway/a2ui`,
   which imports nothing): Markdown and `<a2ui>` blocks, a block being a line starting `<a2ui>` up to `</a2ui>` outside
   an Express string or comment. A tag in fenced or inline code stays Markdown, so an agent can show how one is
-  written; an unclosed block is the rest of the text (`closed: false`, still streaming), drawn as a placeholder, never
-  as source. `ItemList`'s `text` row hands a reply that has `<a2ui>` to `Reply` (`task/thread/a2ui/A2ui.tsx`), the
+  written. A block whose Express leaves a string or comment open (`#`, `//`, `--`, `/* */`) still ends at a later line
+  that is `</a2ui>` alone; one with no closing line is the rest of the text (`closed: false`). A row is a finished
+  message (the reply being written is Thread.tsx's), so an unclosed block there is drawn as one that doesn't draw. `ItemList`'s `text` row hands a reply that has `<a2ui>` to `Reply` (`task/thread/a2ui/A2ui.tsx`), the
   rest to `Markdown` as before.
 - **A chunk of its own**: `A2uiView.tsx`, loaded by an atom the first time a block is shown (as the Markdown renderer
   is, The bundle): the Express parser (`@a2ui/agent`, ANTLR) and the renderer (`@a2ui/react`, `@a2ui/web_core`) are
@@ -861,14 +862,18 @@ What the agent is told and the tools are in [07-agents.md](07-agents.md#interact
   `MessageProcessor`, so a later reply's `update=true` changes the surface an earlier one drew. Each block shows the
   surfaces it was the last to draw; an earlier copy says "Interactive reply updated below". A block that doesn't parse
   or draw shows why, with its source behind a click; nothing of it is drawn. When the start of the list changes (an
-  older page loaded, a rewind) it is rebuilt from the start. A surface is locked (`inert`, dimmed) while a click on it
-  is on its way and once the thread has that click, until the agent draws it again.
+  older page loaded, a rewind) it is rebuilt from the start. The rows are the loaded window of the thread, so a block
+  that updates a surface drawn before it (`missing`) says so, with Load earlier messages (`more` and `loadEarlier` on
+  the thread's context), rather than that it's wrong. A block in a subagent's rows isn't one of the main
+  conversation's entries and shows as code. A surface is locked (`inert`, dimmed) while a click on it is on its way
+  and once the thread has that click, until the agent draws it again (which also ends a click still marked as on
+  its way).
 - **The board's look** (`task/thread/a2ui/catalog.tsx`): every component of A2UI's basic catalog v1.0 drawn with the
   board's controls (`Button`, `Input`, `Textarea`, `Modal`, lucide icons), under the catalog's own id and schemas
   (`basicCatalogOf`), so what the server checks is what draws. Media from an agent's URL isn't loaded, as in the
   thread's Markdown: an image, video or sound is a link to it, unless the block carries it (a `data:` URL).
-- **A click** sends `tasks.send` with `actionMessage` (`runExit(mutate(…))`); the user's row for it (`ActionText`)
-  shows the line, and what it sent when opened.
+- **A click** sends `tasks.send` with `actionMessage` (`runExit(mutate(…))`); the user's row (`UserMessage`,
+  `ActionText`) shows each click in it (`clicksOf`), what it sent when opened, and the message's other text.
 - **The phone** (`apps/mobile`) shows a block as a note ("open the task on the board in a browser to use it") and a
   click as its line.
 

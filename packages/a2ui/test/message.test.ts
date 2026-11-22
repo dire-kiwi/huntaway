@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
-import { actionMessage, actionOf, closeOf, hasBlock, segments } from "../src/index.ts"
+import { actionMessage, actionOf, clicksOf, closeOf, hasBlock, segments } from "../src/index.ts"
 
 describe("segments", () => {
   it("leaves a reply without a block as Markdown", () => {
@@ -69,5 +69,38 @@ describe("actions", () => {
     expect(actionOf("hello")).toBeNull()
     expect(actionOf("x\n\n```a2ui-action\nnot json\n```")).toBeNull()
     expect(actionOf('x\n\n```a2ui-action\n{"name":"a"}\n```')).toBeNull()
+  })
+})
+
+describe("review fixes", () => {
+  const a = { surfaceId: "s", name: "save", sourceComponentId: "b", context: { x: 1 } }
+  const b = { surfaceId: "t", name: "skip", sourceComponentId: "c", context: {} }
+
+  it("ends a block whose Express leaves a string open at a later </a2ui> line, and the text after it stays", () => {
+    const parts = segments('<a2ui>\nsurface("c")\nroot = Text("5" tall")\n</a2ui>\nAfter text')
+    expect(parts.map((p) => p.kind)).toEqual(["a2ui", "markdown"])
+    expect(parts[0]).toMatchObject({ closed: true })
+    expect(parts[1]).toMatchObject({ text: "\nAfter text" })
+  })
+
+  it("knows -- line comments", () => {
+    const parts = segments('<a2ui>\nsurface("c")\n-- say "hi\nroot = Text("x")\n</a2ui>\nAfter')
+    expect(parts[0]).toMatchObject({ kind: "a2ui", closed: true, source: 'surface("c")\n-- say "hi\nroot = Text("x")' })
+  })
+
+  it("reads a click followed by text, and two clicks joined", () => {
+    expect(clicksOf(`${actionMessage(a, "Clicked “Save”")}\n\nalso rename it`)).toEqual({
+      clicks: [{ label: "Clicked “Save”", action: a }],
+      rest: "also rename it",
+    })
+    const two = clicksOf(`${actionMessage(a)}\n\n${actionMessage(b)}`)
+    expect(two?.clicks.map((c) => c.action.surfaceId)).toEqual(["s", "t"])
+    expect(two?.rest).toBe("")
+    expect(actionOf(`${actionMessage(a)}\n\nalso`)).toBeNull()
+    expect(clicksOf("no clicks here")).toBeNull()
+  })
+
+  it("keeps a label on one line", () => {
+    expect(clicksOf(actionMessage(a, "Two\nlines"))?.clicks[0]?.label).toBe("Two lines")
   })
 })

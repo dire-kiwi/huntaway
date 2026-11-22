@@ -1015,15 +1015,21 @@ agent is told and two board tools.
   `surface("<id>", update=true)` to change a surface after it, the check tool) and then `ExpressPromptGenerator`'s
   contract for the board's catalogs (`boardCatalogs()`: A2UI's basic catalog and the board's macros). It's some 20 KB,
   which is why the system prompt only points at it.
-- **`a2ui_check { text }`**: checks a reply's blocks as the board will draw them (`check` in `rules.ts`: Express
-  parsed against the board's catalogs with a `RendererState`), after the closed blocks of the caller's thread's
-  replies (`Threads.stored`), so an `update=true` of an earlier surface checks and a second `surface("<id>")` of one is
-  refused. Says `{ ok, blocks, surfaces }` or `{ ok: false, block, error }`. An agent on another host is checked
-  without its thread.
+- **`a2ui_check { text }`**: checks a reply's blocks as the board will draw them: `check` (`packages/a2ui/src/check.ts`)
+  runs the same `ThreadSurfaces` the web app draws a thread with, over the basic catalog, so each block that names no
+  surface gets one of its own and the macros are lowered and checked as drawn. The caller's thread's earlier blocks
+  (its main conversation's replies from `Threads.stored`; a subagent's, an item with a `parent_id`, the board doesn't
+  draw as blocks) come first, so an `update=true` of an earlier surface checks and a second `surface("<id>")` of one is
+  refused. A reply with `<a2ui>` in it and no block the board draws (the tag mid-line or in a code fence) fails, as
+  does one whose block doesn't close. Says `{ ok, blocks, surfaces }` or `{ ok: false, block, error }`. An agent on
+  another host is checked without its thread. The server loads `@huntaway/a2ui/express` on the first call of either
+  tool (it takes some 150 ms); a release packages `@huntaway/a2ui` compiled, as it does the other workspace packages
+  (`scripts/package-server.sh`).
 - **A click** is the user's message (`tasks.send`, so it starts, steers or queues a run as any message does): a line
   the user reads (`Clicked “Save”`, the button's text when it has one) and the action as JSON in an ```` ```a2ui-action ````
   fence: `{ surfaceId, name, sourceComponentId, context }`, the context being what the `Event` named, resolved from
-  the surface's data (`actionMessage`/`actionOf` in `packages/a2ui/src/message.ts`).
+  the surface's data (`actionMessage` in `packages/a2ui/src/message.ts`). Messages sent while a run is busy are
+  joined into one, so a user's message can hold several clicks and other text: `clicksOf` finds every fence in it.
 - **The board's macros** (`packages/a2ui/src/boardMacros.ts`): `Choice(question, options, event="choose",
   button="Choose", multiple=false)` (a ChoicePicker and a button sending `{choice: [values]}`) and `Confirm(title,
   detail?, confirm="Go ahead", cancel="Cancel", event="confirm")` (two buttons sending `{confirmed: true|false}`): the

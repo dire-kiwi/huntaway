@@ -17,7 +17,15 @@ export type ThreadEntry = { readonly kind: "block"; readonly key: string; readon
 
 /** What one block shows. */
 export type BlockView =
-  | { readonly ok: false; readonly error: string }
+  | {
+      readonly ok: false
+      readonly error: string
+      /**
+       * The surface it updates that the thread hasn't drawn, when that's why: one drawn before the part of the thread
+       * that's loaded, if there's more before it.
+       */
+      readonly missing?: string | undefined
+    }
   | { readonly ok: true; readonly surfaces: ReadonlyArray<SurfaceView>; readonly superseded: boolean }
 
 /** A surface a block drew, and where it stands. */
@@ -108,10 +116,13 @@ export class ThreadSurfaces<T extends ComponentApi> {
       for (const id of ids) {
         this.owner.set(id, entry.key)
         this.answered.delete(id)
+        // The agent drew it again: a click still marked as on its way (one that never reached the thread) is moot.
+        this.sending.delete(id)
       }
       return { ok: true, surfaces: [], superseded: false }
     } catch (e) {
-      return { ok: false, error: errorText(e) }
+      const missing = updatedIds(entry.source).find((id) => !this.processor.model.surfacesMap.has(id))
+      return { ok: false, error: errorText(e), missing }
     }
   }
 
@@ -161,3 +172,7 @@ export class ThreadSurfaces<T extends ComponentApi> {
 
 const sameEntry = (a: ThreadEntry, b: ThreadEntry | undefined): boolean =>
   b !== undefined && (a.kind === "block" ? b.kind === "block" && a.key === b.key && a.source === b.source : b.kind === "action" && a.surfaceId === b.surfaceId)
+
+/** The surfaces a block's `surface("<id>", update=true)` lines name. */
+const updatedIds = (source: string): ReadonlyArray<string> =>
+  [...source.matchAll(/surface\(\s*"([^"\\]+)"\s*,\s*update\s*=\s*true\s*\)/g)].flatMap((m) => (m[1] === undefined ? [] : [m[1]]))

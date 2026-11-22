@@ -2,8 +2,8 @@ import { useAtomValue } from "@effect/atom-react"
 import { Effect } from "effect"
 import { AsyncResult, Atom } from "effect/reactivity"
 import { MousePointerClick } from "lucide-react"
-import { memo, useMemo, useState } from "react"
-import { actionOf, segments } from "@huntaway/a2ui"
+import { memo, useMemo, useState, type ReactNode } from "react"
+import { segments, type Click } from "@huntaway/a2ui"
 import { toJson } from "../../../ui"
 import { Markdown } from "../Markdown"
 import { CodeBlock } from "../tools"
@@ -41,22 +41,34 @@ function Block(props: { row: string; offset: number; source: string; closed: boo
   return <div className="my-2 h-16 rounded-lg border border-line bg-panel/40" aria-hidden />
 }
 
-/** The user's message a click on a surface sent, if `text` is one: the click, and what it sent when opened. */
-export function ActionText({ text }: { text: string }) {
-  const clicked = useMemo(() => actionOf(text), [text])
-  const [open, setOpen] = useState(false)
-  if (clicked === null) return null
-  const context = Object.entries(clicked.action.context)
+/**
+ * The clicks on surfaces in a user's message (`clicksOf`), each with what it sent when opened, then `children`: the
+ * message's other text, if it has any (messages sent while a run was busy are joined into one).
+ */
+export function ActionText({ clicks, children }: { clicks: ReadonlyArray<Click>; children?: ReactNode }) {
   return (
-    <div data-a2ui-action={clicked.action.surfaceId}>
+    <div className="space-y-1.5">
+      {clicks.map((c) => (
+        <ClickLine key={`${c.action.surfaceId}:${c.action.sourceComponentId}:${c.action.name}:${toJson(c.action.context)}`} click={c} />
+      ))}
+      {children}
+    </div>
+  )
+}
+
+function ClickLine({ click }: { click: Click }) {
+  const [open, setOpen] = useState(false)
+  const context = Object.entries(click.action.context)
+  return (
+    <div data-a2ui-action={click.action.surfaceId}>
       <button type="button" onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-left" title="What it sent the agent">
         <MousePointerClick size={13} className="shrink-0 text-faint" />
-        {clicked.label || clicked.action.name}
+        {click.label || click.action.name}
       </button>
       {open && (
         <div className="mt-1.5 text-[12px] text-muted">
           {context.length === 0 ? (
-            <span className="font-mono">{clicked.action.name}</span>
+            <span className="font-mono">{click.action.name}</span>
           ) : (
             <CodeBlock text={context.map(([k, v]) => `${k}: ${typeof v === "string" ? v : toJson(v)}`).join("\n")} />
           )}
@@ -65,6 +77,3 @@ export function ActionText({ text }: { text: string }) {
     </div>
   )
 }
-
-/** Whether a user's message is a click on a surface (drawn as `ActionText`). */
-export const isAction = (text: string): boolean => text.includes("```a2ui-action") && actionOf(text) !== null

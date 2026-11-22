@@ -1,5 +1,5 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react"
-import { actionOf, segments } from "@huntaway/a2ui"
+import { clicksOf, segments } from "@huntaway/a2ui"
 import { olderPage, threadAtom, threadPreviewAtom } from "@huntaway/client"
 import type { Task } from "@huntaway/contracts"
 import { useMemo } from "react"
@@ -28,7 +28,7 @@ function RowView({ row, host, taskId }: { readonly row: Row; readonly host: stri
     case "user":
       return (
         <View style={[s.card, { alignSelf: "flex-end", maxWidth: "88%", backgroundColor: colors.raised }]}>
-          <Text style={s.body}>{actionOf(row.text)?.label ?? row.text}</Text>
+          <Text style={s.body}>{userText(row.text)}</Text>
         </View>
       )
     case "text":
@@ -125,4 +125,10 @@ export function ThreadView({ host, task, emptyTitle }: { readonly host: string; 
       }
     />
   )
+}
+
+/** A user's message as the phone shows it: a click on an interactive reply (HE-77) as its line, with any other text. */
+function userText(text: string): string {
+  const found = clicksOf(text)
+  return found === null ? text : [...found.clicks.map((c) => c.label || c.action.name), found.rest].filter((t) => t !== "").join("\n\n")
 }

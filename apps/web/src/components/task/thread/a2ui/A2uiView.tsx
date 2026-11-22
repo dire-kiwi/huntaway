@@ -8,7 +8,7 @@ import { A2uiSurface, type ReactCatalogComponent } from "@a2ui/react"
 import type { ActionPayload } from "@a2ui/web_core"
 import { mutate } from "@huntaway/client"
 import { TaskId } from "@huntaway/contracts"
-import { actionMessage, actionOf, segments } from "@huntaway/a2ui"
+import { actionMessage, clicksOf, segments } from "@huntaway/a2ui"
 import { boardCatalogs, boardTransform, ThreadSurfaces, type ThreadEntry } from "@huntaway/a2ui/express"
 import { runExit } from "../../../../state/mutation"
 import { useThread } from "../context"
@@ -65,8 +65,8 @@ function entriesOf(items: ReadonlyArray<Item>): ReadonlyArray<ThreadEntry> {
     if (it.type === "text") {
       for (const s of segments(it.text)) if (s.kind === "a2ui" && s.closed) entries.push({ kind: "block", key: blockKey(it.key, s.offset), source: s.source })
     } else if (it.type === "user") {
-      const clicked = actionOf(it.text)
-      if (clicked !== null) entries.push({ kind: "action", surfaceId: clicked.action.surfaceId })
+      // Messages sent while a run was busy are joined into one: it can hold several clicks.
+      for (const click of clicksOf(it.text)?.clicks ?? []) entries.push({ kind: "action", surfaceId: click.action.surfaceId })
     }
   }
   made.set(items, entries)
@@ -76,18 +76,36 @@ function entriesOf(items: ReadonlyArray<Item>): ReadonlyArray<ThreadEntry> {
 /** A block's key: its row's and where it starts in the text. */
 export const blockKey = (row: string, offset: number) => `${row}@${offset}`
 
-/** One block of a reply. `closed` false while it's still streaming in. */
+/**
+ * One block of a reply (a row: a finished message, whose streaming text Thread.tsx draws apart). `closed` false: the
+ * reply ended without its `</a2ui>` (cut off by Stop or a limit, or the agent forgot it).
+ */
 export const A2uiBlock = memo(function A2uiBlock({ row, offset, source, closed }: { row: string; offset: number; source: string; closed: boolean }) {
   const host = useThread((t) => t.hostId)
   const task = useThread((t) => t.taskId)
   const items = useThread((t) => t.items)
+  const more = useThread((t) => t.more)
+  const loadEarlier = useThread((t) => t.loadEarlier)
   const surfaces = useAtomValue(surfacesAtom(`${host}\u0000${task}`))
   const entries = entriesOf(items)
   // Before the paint, so a block never shows its loading look once the thread has it.
   useLayoutEffect(() => void surfaces.sync(entries), [surfaces, entries])
   useSyncExternalStore(surfaces.subscribe, surfaces.getVersion)
-  const view = closed ? surfaces.block(blockKey(row, offset)) : undefined
+  const key = blockKey(row, offset)
+  if (!closed) return <Blocked error="The block has no closing </a2ui> line: the reply ended before it." source={source} />
+  // A block that isn't one of the main conversation's (a subagent's reply): its surfaces would be nobody's to answer.
+  if (!entries.some((e) => e.kind === "block" && e.key === key)) return <CodeBlock text={source} />
+  const view = surfaces.block(key)
   if (view === undefined) return <Pending />
+  if (!view.ok && view.missing !== undefined && more)
+    return (
+      <p data-a2ui-earlier className="my-1 text-xs text-faint italic">
+        This changes an interactive reply from earlier in the thread.{" "}
+        <button type="button" onClick={loadEarlier} className="text-muted not-italic underline hover:text-fg">
+          Load earlier messages
+        </button>
+      </p>
+    )
   if (!view.ok) return <Blocked error={view.error} source={source} />
   if (view.superseded) return <p className="my-1 text-xs text-faint italic">Interactive reply updated below</p>
   return (
@@ -117,7 +135,7 @@ export const A2uiBlock = memo(function A2uiBlock({ row, offset, source, closed }
   )
 })
 
-/** A block still streaming in, or its thread not yet read: its room, without the source. */
+/** A block its thread hasn't read yet: its room, without the source. */
 function Pending() {
   return <div data-a2ui-pending className="my-2 h-16 animate-pulse rounded-lg border border-line bg-panel/40" aria-label="Interactive reply loading" />
 }

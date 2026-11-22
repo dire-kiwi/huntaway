@@ -19,6 +19,12 @@ describe("a2ui tools", () => {
       const update = '<a2ui>\nsurface("pick", update=true)\nroot = Text("Done")\n</a2ui>'
       // No surface "pick" in the thread yet: an update of it fails.
       assert.strictEqual(ok(yield* call(me, "a2ui_check", { text: update }))["ok"], false)
+      // A subagent's reply that draws it doesn't count: the board draws the main conversation's blocks.
+      const sub = 'Sub:\n<a2ui>\nsurface("pick")\nroot = Text("sub")\n</a2ui>'
+      yield* (yield* Threads).appendFromAgent(me.run.task_id, [
+        { type: "item.added", item: { id: "s1", type: "assistant_message", text: sub, parent_id: "call-1", created_at: Timestamp.make(AT) } },
+      ])
+      assert.strictEqual(ok(yield* call(me, "a2ui_check", { text: update }))["ok"], false)
       const first = 'Pick one:\n<a2ui>\nsurface("pick")\nroot = Button(Text("A"), action=Event("a"))\n</a2ui>'
       yield* (yield* Threads).appendFromAgent(me.run.task_id, [
         { type: "item.added", item: { id: "m1", type: "assistant_message", text: first, created_at: Timestamp.make(AT) } },

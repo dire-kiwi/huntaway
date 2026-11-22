@@ -6,6 +6,7 @@ import type { ResolvedChildRef } from "@a2ui/web_core"
 import { basicCatalogOf, basicComponent } from "@huntaway/a2ui/express"
 import { Button, Input, Modal, Textarea } from "../../../ui"
 import { Markdown } from "../Markdown"
+import { forInput } from "./dates"
 
 // A2UI's basic catalog (v1.0) drawn with the board's own controls (HE-77): the components' names, props and checks are
 // the published catalog's (`@huntaway/a2ui/express`'s `basicComponent`), so what the server checks is what draws here;
@@ -378,15 +379,15 @@ const components: ReadonlyArray<ReactCatalogComponent> = [
     const type = date && time ? "datetime-local" : time ? "time" : "date"
     const value = str(props["value"])
     // The input shows local time without a zone; the value keeps what the agent gave until the user changes it.
-    const shown = type === "date" ? value.slice(0, 10) : type === "time" ? value.slice(11, 16) : value.slice(0, 16)
+    const shown = forInput(type, value)
     return (
       <label className="block min-w-0 space-y-1.5" style={grow(props)}>
         <Label text={str(props["label"])} />
         <Input
           type={type}
           value={shown}
-          min={str(props["min"]).slice(0, 16) || undefined}
-          max={str(props["max"]).slice(0, 16) || undefined}
+          min={forInput(type, str(props["min"])) || undefined}
+          max={forInput(type, str(props["max"])) || undefined}
           onChange={(e) => props.setValue?.(e.target.value)}
         />
         <FieldError props={props} />

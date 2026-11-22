@@ -61,7 +61,10 @@ export const a2uiTools = Effect.gen(function* () {
     if (!isLocal(caller)) return []
     const stored = yield* threads.stored(caller.task.id).pipe(Effect.orElseSucceed(() => ({ entries: [] })))
     return stored.entries.flatMap((e) =>
-      e.item.type === "assistant_message" ? segments(e.item.text).flatMap((s) => (s.kind === "a2ui" && s.closed ? [s.source] : [])) : [],
+      // A subagent's replies (an item with a parent) aren't drawn as blocks: the board draws the main conversation's.
+      e.item.type === "assistant_message" && e.item.parent_id === undefined
+        ? segments(e.item.text).flatMap((s) => (s.kind === "a2ui" && s.closed ? [s.source] : []))
+        : [],
     )
   })
 

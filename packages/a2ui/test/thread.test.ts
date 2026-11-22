@@ -64,4 +64,20 @@ describe("ThreadSurfaces", () => {
     t.sync([pick])
     expect(seen).toEqual([1])
   })
+
+  it("unlocks a surface the agent draws again even when the click never reached the thread (HE-77 review)", () => {
+    const t = make()
+    t.sync([pick])
+    t.setSending("pick", true)
+    t.sync([pick, update])
+    expect(t.block("m3@0")).toMatchObject({ surfaces: [{ id: "pick", sending: false, answered: false }] })
+  })
+
+  it("names the surface an update can't find, for a thread whose start isn't loaded", () => {
+    const t = make()
+    t.sync([update])
+    expect(t.block("m3@0")).toMatchObject({ ok: false, missing: "pick" })
+    t.sync([block("m4@0", 'root = Nope("x")')])
+    expect(t.block("m4@0")).toMatchObject({ ok: false, missing: undefined })
+  })
 })

@@ -17,7 +17,7 @@ export type Segment =
 /**
  * Where the `</a2ui>` that ends a block whose source starts at `from` is, or -1 while it hasn't come. As in the Express
  * lexer, the tag counts only outside strings (`"…"`, `"""…"""`, raw ones with no escapes) and comments (`#`, `//`,
- * `/* … *\/`), so `Text("</a2ui>")` stays source.
+ * `--`, `/* … *\/`), so `Text("</a2ui>")` stays source.
  */
 export function closeOf(text: string, from: number): number {
   let i = from
@@ -37,7 +37,7 @@ export function closeOf(text: string, from: number): number {
       }
       if (j >= text.length) return -1
       i = j + quote.length
-    } else if (c === "#" || (c === "/" && text[i + 1] === "/")) {
+    } else if (c === "#" || (c === "/" && text[i + 1] === "/") || (c === "-" && text[i + 1] === "-")) {
       const eol = text.indexOf("\n", i)
       // A comment runs to the end of its line, which hasn't come yet.
       if (eol === -1) return -1
@@ -58,8 +58,10 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/
 
 /**
  * A reply split into Markdown and `<a2ui>` blocks. A tag in fenced code or in inline code stays Markdown (an agent
- * showing how a block is written), and so does one that isn't at the start of a line. An unclosed block is the rest
- * of the text, `closed: false`: it is still streaming in, or the agent forgot to close it.
+ * showing how a block is written), and so does one that isn't at the start of a line. A block whose Express leaves a
+ * string or a comment open still ends at a later line that is `</a2ui>` alone (its Express is wrong, which drawing it
+ * says, but the text after it is the reply's). An unclosed block is the rest of the text, `closed: false`: it is still
+ * streaming in, or the agent forgot to close it.
  */
 export function segments(text: string): ReadonlyArray<Segment> {
   if (!text.includes(OPEN)) return [{ kind: "markdown", text, offset: 0 }]
@@ -79,7 +81,8 @@ export function segments(text: string): ReadonlyArray<Segment> {
     } else if (line.trimStart().startsWith(OPEN)) {
       const open = lineStart + line.indexOf(OPEN)
       const sourceFrom = open + OPEN.length
-      const close = closeOf(text, sourceFrom)
+      const tag = closeOf(text, sourceFrom)
+      const close = tag === -1 ? closeLine(text, sourceFrom) : tag
       pushMarkdown(out, text, markdownFrom, open)
       const source = text.slice(sourceFrom, close === -1 ? text.length : close)
       out.push({ kind: "a2ui", source: trimNewlines(source), closed: close !== -1, offset: open })
@@ -95,6 +98,12 @@ export function segments(text: string): ReadonlyArray<Segment> {
   }
   pushMarkdown(out, text, markdownFrom, text.length)
   return out
+}
+
+/** Where a later line that is `</a2ui>` alone starts its tag, or -1. */
+function closeLine(text: string, from: number): number {
+  const m = /^[ \t]*<\/a2ui>[ \t]*$/m.exec(text.slice(from))
+  return m === null ? -1 : from + m.index + m[0].indexOf(CLOSE)
 }
 
 function pushMarkdown(out: Array<Segment>, text: string, from: number, to: number) {
@@ -121,17 +130,44 @@ export interface Action {
  */
 export function actionMessage(action: Action, label?: string): string {
   const body = { surfaceId: action.surfaceId, name: action.name, sourceComponentId: action.sourceComponentId, context: action.context }
-  const line = label !== undefined && label.trim() !== "" ? label.trim() : `Chose “${action.name}”`
+  const given = label?.replace(/\s+/g, " ").trim() ?? ""
+  const line = given !== "" ? given : `Chose “${action.name}”`
   return `${line}\n\n\`\`\`${ACTION_FENCE}\n${JSON.stringify(body)}\n\`\`\``
 }
 
-const ACTION_BLOCK = new RegExp(`^([\\s\\S]*?)\\n*\`\`\`${ACTION_FENCE}\\n([\\s\\S]*?)\\n\`\`\`\\s*$`)
+/** A click in a user's message: the line before its fence, and its action. */
+export interface Click {
+  readonly label: string
+  readonly action: Action
+}
 
-/** A message `actionMessage` wrote: its line and its action, or null for any other message. */
-export function actionOf(text: string): { readonly label: string; readonly action: Action } | null {
-  const m = ACTION_BLOCK.exec(text)
-  if (m === null) return null
-  const json = m[2] ?? ""
+/** An `a2ui-action` fence, with the line before it (the label `actionMessage` writes). */
+const CLICK = new RegExp(`(?:^|\\n)(?:([^\\n]*)\\n\\n)?\`\`\`${ACTION_FENCE}\\n([^\\n]*)\\n\`\`\`(?=\\n|$)`, "g")
+
+/**
+ * The clicks in a user's message, and the rest of its text, or null when it has none. A message can hold more than one,
+ * and other text: what was sent while a run was busy is joined into one message (two clicks, or a click and a line the
+ * user typed).
+ */
+export function clicksOf(text: string): { readonly clicks: ReadonlyArray<Click>; readonly rest: string } | null {
+  if (!text.includes(ACTION_FENCE)) return null
+  const clicks: Array<Click> = []
+  const rest = text.replace(CLICK, (whole, label: string | undefined, json: string) => {
+    const action = actionFrom(json)
+    if (action === null) return whole
+    clicks.push({ label: (label ?? "").trim(), action })
+    return ""
+  })
+  return clicks.length === 0 ? null : { clicks, rest: rest.trim() }
+}
+
+/** A message `actionMessage` wrote, and nothing else: its line and its action, or null. */
+export function actionOf(text: string): Click | null {
+  const found = clicksOf(text)
+  return found !== null && found.clicks.length === 1 && found.rest === "" ? (found.clicks[0] ?? null) : null
+}
+
+function actionFrom(json: string): Action | null {
   let value: unknown
   try {
     value = JSON.parse(json)
@@ -141,15 +177,7 @@ export function actionOf(text: string): { readonly label: string; readonly actio
   if (!isRecord(value)) return null
   const { surfaceId, name, sourceComponentId, context } = value
   if (typeof surfaceId !== "string" || typeof name !== "string") return null
-  return {
-    label: (m[1] ?? "").trim(),
-    action: {
-      surfaceId,
-      name,
-      sourceComponentId: typeof sourceComponentId === "string" ? sourceComponentId : "",
-      context: isRecord(context) ? context : {},
-    },
-  }
+  return { surfaceId, name, sourceComponentId: typeof sourceComponentId === "string" ? sourceComponentId : "", context: isRecord(context) ? context : {} }
 }
 
 const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> => typeof v === "object" && v !== null && !Array.isArray(v)

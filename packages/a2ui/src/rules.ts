@@ -3,9 +3,9 @@
 // contract and the components, as `@a2ui/agent`'s prompt generator writes them for the board's catalogs. They are ~20 KB,
 // so a run's system prompt says only that they exist (the server's `a2uiNote`), and the `a2ui_rules` board tool gives
 // them when the agent wants to make one.
-import { ExpressFormat, RendererState } from "@a2ui/agent"
+import { ExpressFormat } from "@a2ui/agent"
 import type { CatalogApi } from "@a2ui/web_core"
-import { ACTION_FENCE, segments } from "./message.ts"
+import { ACTION_FENCE } from "./message.ts"
 
 /** The surface a block that names none is drawn on: its own, so two such blocks never collide. */
 export const FALLBACK_SURFACE = "reply"
@@ -26,46 +26,6 @@ The board draws an A2UI Express block in your reply as UI, right where the block
 /** The rules for `catalogs` (the board's), as `a2ui_rules` gives them. */
 export const rules = (catalogs: ReadonlyArray<CatalogApi>): string =>
   `${BOARD_RULES}\n${new ExpressFormat([...catalogs], { surfaceId: FALLBACK_SURFACE }).promptGenerator.generate()}`
-
-/** What checking a reply found: the surfaces its blocks draw, or the first error. */
-export type CheckResult =
-  | { readonly ok: true; readonly blocks: number; readonly surfaces: ReadonlyArray<string> }
-  | { readonly ok: false; readonly block: number; readonly error: string }
-
-/** Lowers a block's messages for the renderer (the macro expander's `transformToTransport`). */
-export type Transform = (messages: ReadonlyArray<unknown>) => ReadonlyArray<unknown>
-
-/**
- * Checks a reply's `<a2ui>` blocks as the board would draw them, in order, against `catalogs`, lowering each with
- * `transform` (the macros). `before` is the thread's earlier blocks (their sources, in order), so an `update=true` of a
- * surface one of them made checks too. A reply with no block at all is checked as one block's Express.
- */
-export function check(text: string, catalogs: ReadonlyArray<CatalogApi>, before: ReadonlyArray<string> = [], transform: Transform = (m) => m): CheckResult {
-  const state = new RendererState([...catalogs])
-  const parser = new ExpressFormat([...catalogs], { surfaceId: FALLBACK_SURFACE }).createParser()
-  for (const source of before) {
-    try {
-      for (const part of parser.parseResponse(source, { state, wrapped: false })) if (part.type === "a2ui") transform(part.a2ui)
-    } catch {
-      // An earlier block that failed drew nothing.
-    }
-  }
-  const blocks = text.includes("<a2ui>") ? segments(text).flatMap((s) => (s.kind === "a2ui" ? [s] : [])) : [{ source: text, closed: true }]
-  const surfaces = new Set<string>()
-  for (const [i, block] of blocks.entries()) {
-    if (!block.closed) return { ok: false, block: i + 1, error: "The block has no closing </a2ui> line." }
-    try {
-      for (const part of parser.parseResponse(block.source, { state, wrapped: false })) {
-        if (part.type !== "a2ui") continue
-        transform(part.a2ui)
-        for (const id of surfaceIdsOf(part.a2ui)) surfaces.add(id)
-      }
-    } catch (e) {
-      return { ok: false, block: i + 1, error: errorText(e) }
-    }
-  }
-  return { ok: true, blocks: blocks.length, surfaces: [...surfaces] }
-}
 
 /** The surfaces a block's messages create, change or delete. */
 export function surfaceIdsOf(messages: ReadonlyArray<unknown>): ReadonlyArray<string> {

@@ -9,7 +9,8 @@ import { AttachmentList } from "../Attachments"
 import { lineage, ThreadCtx, usePendingFocus } from "./context"
 import { CompactLine, ConnectionRow, EventLine, FoldedTurnRow, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
 import { Markdown } from "./Markdown"
-import { ActionText, isAction, Reply } from "./a2ui/A2ui"
+import { clicksOf } from "@huntaway/a2ui"
+import { ActionText, Reply } from "./a2ui/A2ui"
 import { AutomationChangeCard, isWorkflowApproval, ProjectChangeCard, TaskDeletionCard, WorkflowChangeCard } from "./requestCards"
 import { SuggestionsCard } from "./SuggestionsCard"
 import type { Item, ReportData } from "./threadModel"
@@ -111,7 +112,7 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
               it.auto ? "border-line bg-transparent text-muted italic" : "border-line-strong bg-raised",
             )}
           >
-            {isAction(it.text) ? <ActionText text={it.text} /> : <UserText text={it.text} hostId={hostId} />}
+            <UserMessage text={it.text} hostId={hostId} />
           </div>
         </div>
       )
@@ -148,6 +149,13 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
 })
 
 /** A user message: its text, and the files attached to it. */
+/** A user's message: its text, or the clicks on interactive replies in it (HE-77) and any other text. */
+function UserMessage({ text, hostId }: { text: string; hostId: string }) {
+  const found = useMemo(() => (text.includes("```a2ui-action") ? clicksOf(text) : null), [text])
+  if (found === null) return <UserText text={text} hostId={hostId} />
+  return <ActionText clicks={found.clicks}>{found.rest !== "" && <UserText text={found.rest} hostId={hostId} />}</ActionText>
+}
+
 function UserText({ text, hostId }: { text: string; hostId: string }) {
   const { text: body, files } = useMemo(() => splitAttachments(text), [text])
   return (

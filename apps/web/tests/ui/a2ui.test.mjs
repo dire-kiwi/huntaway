@@ -40,6 +40,14 @@ test("an interactive reply is drawn, a click reaches the agent, and its update r
     await page.getByText('Got {"name":"save","context":{"title":"Ship it"}}').waitFor()
     await page.getByText("Interactive reply updated below").waitFor()
     assert.equal(await page.locator("[data-a2ui-surface='fake-form']").count(), 1)
+
+    // A click joined with typed text in one message (as messages queued while a run is busy are): both show, and the
+    // fence doesn't.
+    const joined = 'Clicked “Skip”\n\n```a2ui-action\n{"surfaceId":"fake-form","name":"skip","sourceComponentId":"x","context":{}}\n```\n\nalso rename it'
+    await server.rpc("tasks.send", { id: task.id, text: joined })
+    await page.locator("[data-a2ui-action='fake-form']", { hasText: "Clicked “Skip”" }).waitFor()
+    await page.getByText("also rename it").waitFor()
+    assert.equal(await page.getByText('"sourceComponentId":"x"').count(), 0)
     await ui.run([`shot ${process.env.TMPDIR ?? "/tmp"}/a2ui-form.png`])
   })
 })
