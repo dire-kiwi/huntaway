@@ -115,6 +115,8 @@ export type Item =
   | { type: "text"; key: string; text: string }
   | { type: "thinking"; key: string; text: string }
   | { type: "tools"; key: string; calls: Call[] }
+  /** An agent's HTML page (HE-78): its `html_render` call, shown as the page rather than among the tool calls. */
+  | { type: "html"; key: string; call: Call }
   | { type: "result"; key: string; data: ResultData }
   | { type: "compact"; key: string; meta: CompactMeta; summary?: string | undefined; result?: ResultData | undefined }
   /** A routine's report, posted in the assistant's thread (API 110). */

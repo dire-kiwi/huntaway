@@ -997,6 +997,44 @@ assistant's and its routines' (`trackedList.owner`, as for tracked work; a proje
   message to send, a button per action (the first highlighted; Delete asks again; a move asks as above) and Leave it; settled, what was
   done. Browser check: `apps/web/tests/ui/suggestionsCard.test.mjs`.
 
+### As built in HE-78: HTML pages in the thread<a id="html-pages"></a>
+
+After T3 Code's html_render and html_preview: an agent shows a self-contained HTML page in its thread, and checks it
+first in the host's headless Chrome. Both are board tools (`huntaway` server) registered with the browser area
+(`browser/renderTools.ts` the definitions, `browser/HtmlRender.ts` the handlers, `HtmlTools` merged with `BrowserTools`
+in `Main.ts`), since the previews use its Chrome and the browser area is above `mcp/`; `BOARD_TOOLS` lists them last.
+Thread tools (`THREAD_TOOLS`: the page is the caller's thread's, the files are its host's), `ForPlanning`, not for
+reviewers; `html_preview` is rerunnable, `html_render` not (a second page would show).
+
+- **What they share** (`packages/shared/src/htmlRender.ts`): the theme a page gets (`HTML_RENDER_THEME`, the board's
+  colours under the names an `<ia-html>` has, plus `--chart-1..6`, `--radius`), its base style (`htmlRenderStyle`: no
+  background, the board's type, body margin 0 and `display: flow-root` so the body's extent is the page's), the page as
+  a frame loads it (`htmlRenderPage`), the check that refuses a viewport height unit (`viewportHeightUnit`: a frame that
+  fits its page would grow forever), the local images a page names by absolute path (`localImages`, `inlineImages`,
+  `isImageBytes`), the file name from the title, and `htmlRenderAttachment`, which finds the kept page in the call's
+  answer. The tools' shared description is `HTML_RENDER_PAGE_RULES`. `FRAME_CSP` moved to `frameCsp.ts` beside it, so a
+  preview loads under the policy the board shows the page with.
+- **Preparing a page** (`preparePage`): a viewport unit is refused; each absolute image path is read (at most 5 MiB, one
+  byte past it at most, after a `stat`), kept only if its bytes are an image (so a renamed key can't go into a page), and
+  put in as a data: URI; the page with them must fit an attachment (10 MiB). `html_render` refuses a page with an image
+  it couldn't read; `html_preview` loads it and says which.
+- **`html_render { title, html, height? }`** keeps the page with `Attachments.save` (a new method: `upload` without the
+  base64) as `attachments/<id>/<title>.html`, and answers `SHOWN` with that path. The path in the thread's tool result is
+  both how the web finds the page and what keeps it (`Attachments.referenced` scans thread items): it goes when the
+  task does. No table, no new RPC (`attachments.get` reads it).
+- **`html_preview { html, width? }`** loads the page in `Browsers.scratch` (a new method: a page of its own in the
+  headless Chrome, closed after; `reap` keeps Chrome up while one is open) with `Page.setDocumentContent` at `width`
+  (240 to 1600, 760 unless given), the board's background as Chrome's default, waits for load, fonts and two frames (10 s
+  at most), measures the body as the web's `fitFrame` does, and answers a PNG of up to 4000 px with its height, the
+  console (`Runtime.consoleAPICalled`, `Runtime.exceptionThrown`, and `Log.entryAdded` warnings and errors, which carry
+  CSP refusals), and the images it left out. Trusted Types aren't required in a preview: the board's default policy lets
+  every string through, so a page behaves the same.
+- **Content results on the board's server**: a board tool's result is JSON text, so these two return MCP content marked
+  `_meta: { "huntaway/content": true }` (`BoardContent`, `boardContent` in `mcp/tool.ts`), which `callResult` gives as it
+  is (without the mark); no other board tool's JSON can be taken for content. Refusals are error results with the reason.
+- **Tests**: `browser/HtmlRender.test.ts` (the attachment and its inlined image, the refusals, a preview in this
+  machine's Chromium with its height, console and a CSP refusal), `packages/shared/test/htmlRender.test.ts`.
+
 ## Codex<a id="codex"></a>
 
 ### As built in 5.1–5.3 (HE-5)

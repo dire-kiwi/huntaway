@@ -27,8 +27,9 @@ describe("localImages", () => {
   })
 })
 
+const bytes = (s: string) => Uint8Array.from(s, (c) => c.charCodeAt(0))
+
 describe("isImageBytes", () => {
-  const bytes = (s: string) => Uint8Array.from(s, (c) => c.charCodeAt(0))
   it("knows images by their bytes, not their names", () => {
     expect(isImageBytes(bytes("\x89PNG\r\n\x1a\n...."))).toBe(true)
     expect(isImageBytes(bytes("\xff\xd8\xff\xe0...."))).toBe(true)

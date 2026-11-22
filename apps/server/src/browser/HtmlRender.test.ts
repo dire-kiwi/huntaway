@@ -34,16 +34,18 @@ const call = (agent: FakeAgent, tool: string, args: unknown) =>
     return { text, error: result.isError === true, images: result.content.filter(Schema.is(ImagePart)) }
   })
 
+/** Bytes of base64 that is known to be good. */
+const bytesOf = (b64: string) => Base64.decode(b64).pipe((r) => (r._tag === "Success" ? r.success : new Uint8Array()))
+
 /** A 1×1 PNG. */
-const PNG = Base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+const PNG = bytesOf("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
 
 describe("html_render", () => {
   it.live("keeps the page as an attachment with its local images put in, and its answer names it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const dir = yield* fs.makeTempDirectoryScoped()
-      if (PNG._tag === "Failure") return assert.fail("the PNG")
-      yield* fs.writeFile(`${dir}/shot.png`, PNG.success)
+      yield* fs.writeFile(`${dir}/shot.png`, PNG)
       const agent = yield* fakeAgent()
       const listed = (yield* (yield* McpServers).tools("huntaway", false)).map((t) => t.name)
       assert.includeMembers(listed, ["html_preview", "html_render"])
@@ -54,7 +56,7 @@ describe("html_render", () => {
       const kept = htmlRenderAttachment(said.text) ?? assert.fail(`no attachment in: ${said.text}`)
       assert.strictEqual(kept.name, "Shots.html")
       const file = yield* (yield* Attachments).get(kept.id, kept.name)
-      const page = new TextDecoder().decode(Base64.decode(file.data).pipe((r) => (r._tag === "Success" ? r.success : new Uint8Array())))
+      const page = new TextDecoder().decode(bytesOf(file.data))
       assert.include(page, '<img src="data:image/png;base64,iVBORw0KGgo')
       assert.notInclude(page, dir)
     }).pipe(Effect.scoped, Effect.provide(board())),

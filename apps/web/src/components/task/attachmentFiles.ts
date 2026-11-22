@@ -74,3 +74,15 @@ const urlAtom = Atom.family((key: FileKey) =>
 
 /** An object URL for an attachment on a host: read while something shows it. */
 export const attachmentUrlAtom = (hostId: string, f: Pick<AttachmentRef, "id" | "name">) => urlAtom({ host: hostId, id: f.id, name: f.name })
+
+/** An attachment's text (UTF-8), fetched once: an agent's HTML page in the thread (HE-78), kept while something shows it. */
+const textAtom = Atom.family((key: FileKey) =>
+  Atom.make(
+    callRpc(key.host, "attachments.get", { id: AttachmentId.make(key.id), name: key.name }).pipe(
+      Effect.map((a) => new TextDecoder().decode(Uint8Array.from(atob(a.data), (c) => c.charCodeAt(0)))),
+    ),
+  ).pipe(Atom.setIdleTTL("5 minutes")),
+)
+
+/** An attachment's text on a host: read while something shows it. */
+export const attachmentTextAtom = (hostId: string, f: { readonly id: string; readonly name: string }) => textAtom({ host: hostId, id: f.id, name: f.name })
