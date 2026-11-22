@@ -1024,8 +1024,26 @@ agent is told and two board tools.
   the user reads (`Clicked “Save”`, the button's text when it has one) and the action as JSON in an ```` ```a2ui-action ````
   fence: `{ surfaceId, name, sourceComponentId, context }`, the context being what the `Event` named, resolved from
   the surface's data (`actionMessage`/`actionOf` in `packages/a2ui/src/message.ts`).
-- **The fake agent** (`packages/testing/bin/fake-claude.ts`) answers a prompt containing `fake-a2ui` with a form, and a
-  click with that surface updated to say what was sent, for trying it on a test server.
+- **The board's macros** (`packages/a2ui/src/boardMacros.ts`): `Choice(question, options, event="choose",
+  button="Choose", multiple=false)` (a ChoicePicker and a button sending `{choice: [values]}`) and `Confirm(title,
+  detail?, confirm="Go ahead", cancel="Cancel", event="confirm")` (two buttons sending `{confirmed: true|false}`): the
+  two things agents ask most, as one line of Express each. `boardCatalogs()` is the basic catalog and the macros'
+  sidecar catalog (`MacroExpander.transformCatalogs`), so the rules list them and the parser takes them;
+  `boardTransform()` lowers them to basic components (`transformToTransport`) before a block is checked or drawn, so
+  the renderer only knows the basic catalog. The expander writes the envelope keys bare (`catalogId`): the published
+  `@a2ui/web_core` 0.15 refuses the `@catalogId` that A2UI's main (and the Python SDK the port follows) has moved to.
+  A call that doesn't lower is an error on its block (`onError: "raise"`).
+- **The macros port** (`packages/a2ui/src/macros/`, `src/builder/`): A2UI's `MacroExpander`, `@macro` and v1.0
+  builder from the Python agent SDK (a2ui-project/a2ui `5ff1b05f`, `python/a2ui_agent/src/a2ui/transformers/macros`,
+  `builder/{core,v1_0}`), which upstream has only in Python. TypeScript has no runtime annotations, so a macro names
+  its parameters' types (`macro({ name, description, params: { title: param.dynamicString("…") }, render })`) and the
+  JSON Schema, the coercion of the model's arguments and `render`'s argument type come from them. The upstream
+  conformance suite (`conformance/agent/macros/macros.yaml`, copied to `test/conformance/fixtures/`) runs: its 46 v1.0
+  cases pass; the 24 v0.9 cases are skipped, each listed with its reason (the v0.9 builder and macros aren't ported:
+  Express targets v1.0).
+- **The fake agent** (`packages/testing/bin/fake-claude.ts`) answers a prompt containing `fake-a2ui` with a form,
+  `fake-a2ui-choice` with the `Choice` macro, and a click with that surface updated to say what was sent, for trying it
+  on a test server.
 
 ## Codex<a id="codex"></a>
 

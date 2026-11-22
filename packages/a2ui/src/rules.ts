@@ -32,17 +32,20 @@ export type CheckResult =
   | { readonly ok: true; readonly blocks: number; readonly surfaces: ReadonlyArray<string> }
   | { readonly ok: false; readonly block: number; readonly error: string }
 
+/** Lowers a block's messages for the renderer (the macro expander's `transformToTransport`). */
+export type Transform = (messages: ReadonlyArray<unknown>) => ReadonlyArray<unknown>
+
 /**
- * Checks a reply's `<a2ui>` blocks as the board would draw them, in order, against `catalogs`. `before` is the thread's
- * earlier blocks (their sources, in order), so an `update=true` of a surface one of them made checks too. A reply with
- * no block at all is checked as one block's Express.
+ * Checks a reply's `<a2ui>` blocks as the board would draw them, in order, against `catalogs`, lowering each with
+ * `transform` (the macros). `before` is the thread's earlier blocks (their sources, in order), so an `update=true` of a
+ * surface one of them made checks too. A reply with no block at all is checked as one block's Express.
  */
-export function check(text: string, catalogs: ReadonlyArray<CatalogApi>, before: ReadonlyArray<string> = []): CheckResult {
+export function check(text: string, catalogs: ReadonlyArray<CatalogApi>, before: ReadonlyArray<string> = [], transform: Transform = (m) => m): CheckResult {
   const state = new RendererState([...catalogs])
   const parser = new ExpressFormat([...catalogs], { surfaceId: FALLBACK_SURFACE }).createParser()
   for (const source of before) {
     try {
-      parser.parseResponse(source, { state, wrapped: false })
+      for (const part of parser.parseResponse(source, { state, wrapped: false })) if (part.type === "a2ui") transform(part.a2ui)
     } catch {
       // An earlier block that failed drew nothing.
     }
@@ -54,6 +57,7 @@ export function check(text: string, catalogs: ReadonlyArray<CatalogApi>, before:
     try {
       for (const part of parser.parseResponse(block.source, { state, wrapped: false })) {
         if (part.type !== "a2ui") continue
+        transform(part.a2ui)
         for (const id of surfaceIdsOf(part.a2ui)) surfaces.add(id)
       }
     } catch (e) {

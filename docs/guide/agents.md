@@ -113,6 +113,8 @@ your message (shown in the thread as what you clicked: open it to see what it se
 - **After you click**, the surface is locked ("Sent to the agent") until the agent answers. An agent that changes a
   surface (to show what it did with your choice) draws the new version where the reply it's in is, and the earlier
   copy says it was updated below.
+- **Shortcuts**: besides A2UI's own components, agents have the board's `Choice` (a question, options and a Choose
+  button) and `Confirm` (two buttons), so the most common asks cost them one line.
 - **A block that's wrong** isn't drawn: the thread says why, with its source behind a click. Agents can check one with
   the `a2ui_check` tool before sending it.
 - **Images, video and sound** from the web aren't loaded, as in the thread's text: they're links, so a URL can't

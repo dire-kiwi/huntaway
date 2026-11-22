@@ -58,8 +58,9 @@
 // all before it exits (HE-56).
 //
 // Interactive replies (HE-77). A prompt containing "fake-a2ui" is answered with an A2UI Express block, a form on the
-// surface "fake-form" (a title field and two buttons), and a prompt that is a click on a surface (the user's message a
-// click sends, with its `a2ui-action` fence) with that surface updated to say what was chosen.
+// surface "fake-form" (a title field and two buttons), one containing "fake-a2ui-choice" with the board's `Choice`
+// macro (surface "fake-choice"), and a prompt that is a click on a surface (the user's message a click sends, with its
+// `a2ui-action` fence) with that surface updated to say what was chosen.
 //
 // Reviews (plan task 4.6). A reviewer's run (its prompt starts "Review the work on task", and it quotes the task's
 // description) calls `submit_review` through the in-process server before it replies: `pass`, unless the description
@@ -85,32 +86,7 @@ import { spawn, spawnSync } from "node:child_process"
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
-
-/** HE-77: the form a "fake-a2ui" prompt is answered with. */
-const FAKE_A2UI_FORM = [
-  "Here's a form:",
-  "<a2ui>",
-  'surface("fake-form")',
-  '$/form/title = "A title"',
-  'save = Button(Text("Save"), variant="primary", action=Event("save", {title: $/form/title}))',
-  'skip = Button(Text("Skip"), action=Event("skip"))',
-  'root = Card(Column([Text("**Name the task**"), TextField("Title", $/form/title), Row([save, skip])]))',
-  "</a2ui>",
-  "Pick one.",
-].join("\n")
-
-/** HE-77: the reply to a click: its surface, updated to say what was chosen (`action` is the click's JSON). */
-const fakeA2uiDone = (action: string): string => {
-  let parsed: { surfaceId?: unknown; name?: unknown; context?: unknown } = {}
-  try {
-    parsed = JSON.parse(action)
-  } catch {
-    // Not JSON: answered as a click on nothing.
-  }
-  const surface = typeof parsed.surfaceId === "string" ? parsed.surfaceId : "fake-form"
-  const said = JSON.stringify({ name: parsed.name, context: parsed.context }).replaceAll("\\", "\\\\").replaceAll('"', '\\"')
-  return ["Done.", "<a2ui>", `surface(${JSON.stringify(surface)}, update=true)`, `root = Card(Text("Got ${said}"))`, "</a2ui>"].join("\n")
-}
+import { FAKE_A2UI_CHOICE, FAKE_A2UI_FORM, fakeA2uiDone } from "./fake-a2ui.ts"
 
 type Json = Record<string, unknown>
 
@@ -917,7 +893,7 @@ const turn = async (text: string) => {
     await exit(0)
   }
   let reply = env.HUNTAWAY_FAKE_CLAUDE_TEXT || `Fake reply to: ${text.trim().slice(0, 200)}`
-  if (text.includes("fake-a2ui")) reply = FAKE_A2UI_FORM
+  if (text.includes("fake-a2ui")) reply = text.includes("fake-a2ui-choice") ? FAKE_A2UI_CHOICE : FAKE_A2UI_FORM
   const clicked = /```a2ui-action\n(.*)\n```/.exec(text)?.[1]
   if (clicked !== undefined) reply = fakeA2uiDone(clicked)
   if (steered.length > 0) reply += ` (and to: ${steered.join("; ").slice(0, 200)})`

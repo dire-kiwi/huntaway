@@ -1,7 +1,6 @@
 import { Effect, Schema } from "effect"
 import { Tool } from "effect/ai"
 import { segments } from "@huntaway/a2ui"
-import { boardCatalogs, check, rules } from "@huntaway/a2ui/express"
 import { Threads } from "../../threads/Threads.ts"
 import { ForPlanning, isLocal, Rerunnable } from "../tool.ts"
 import type { McpCaller } from "../tool.ts"
@@ -41,11 +40,21 @@ export const A2uiCheck = Tool.make("a2ui_check", {
   .annotate(Rerunnable, true)
   .annotate(ForPlanning, true)
 
+/**
+ * What the tools run, loaded on the first call: `@a2ui/agent` (the Express parser) and `@a2ui/web_core` take some 150 ms
+ * to load, which a server's start shouldn't wait for (HE-71) when most runs never call them.
+ */
+const loadA2ui = Effect.promise(() =>
+  import("@huntaway/a2ui/express").then((m) => {
+    const catalogs = m.boardCatalogs()
+    return { catalogs, rules: m.rules(catalogs), check: m.check, transform: m.boardTransform }
+  }),
+)
+
 /** The interactive replies' tools' handlers. */
 export const a2uiTools = Effect.gen(function* () {
   const threads = yield* Threads
-  const catalogs = boardCatalogs()
-  const text = rules(catalogs)
+  const a2ui = yield* Effect.cached(loadA2ui)
 
   /** The closed blocks of the caller's thread's replies so far, in order (none for an agent on another host). */
   const earlierBlocks = Effect.fnUntraced(function* (caller: McpCaller) {
@@ -56,7 +65,12 @@ export const a2uiTools = Effect.gen(function* () {
     )
   })
 
-  const a2uiRules = boardTool(A2uiRules, () => Effect.succeed(text))
-  const a2uiCheck = boardTool(A2uiCheck, (params, caller) => Effect.map(earlierBlocks(caller), (before) => check(params.text, catalogs, before)))
+  const a2uiRules = boardTool(A2uiRules, () => Effect.map(a2ui, (a) => a.rules))
+  const a2uiCheck = boardTool(A2uiCheck, (params, caller) =>
+    Effect.gen(function* () {
+      const a = yield* a2ui
+      return a.check(params.text, a.catalogs, yield* earlierBlocks(caller), a.transform())
+    }),
+  )
   return { a2uiRules, a2uiCheck }
 })
