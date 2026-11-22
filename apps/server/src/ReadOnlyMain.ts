@@ -79,6 +79,7 @@ import { Board } from "./board/Board.ts"
 import { TaskDocumentRepo } from "./docs/TaskDocumentRepo.ts"
 import { TaskDocuments } from "./docs/TaskDocuments.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
+import { FilesTab } from "./git/FilesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
 import { Git } from "./git/Git.ts"
@@ -251,7 +252,7 @@ const TasksArea = Pens.layer.pipe(
   Layer.provideMerge(Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesArea))),
 )
 const GitArea = Restack.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer)),
+  Layer.provideMerge(Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer, FilesTab.layer)),
   Layer.provideMerge(Relocation.layer.pipe(Layer.provideMerge(RelocationRepo.layer))),
   Layer.provideMerge(Layer.mergeAll(TaskBase.layer, Checkpoints.layer)),
   Layer.provideMerge(Layer.mergeAll(GitHubAccessStacked, CheckpointRepo.layer)),

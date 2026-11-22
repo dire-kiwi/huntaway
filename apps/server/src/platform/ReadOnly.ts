@@ -37,8 +37,8 @@ const readingConfig = (rest: ReadonlyArray<string>): boolean => {
 }
 
 /**
- * Subcommands with both reading and writing forms, and the reading ones a read-only server runs: the stash list and a
- * stash's patch, the worktrees, the remotes' names and URLs (`remote show` asks the remote, so not that), the branch
+ * Subcommands with both reading and writing forms, and the reading ones a read-only server runs: a search, the stash list
+ * and a stash's patch, the worktrees, the remotes' names and URLs (`remote show` asks the remote, so not that), the branch
  * `HEAD` names (one argument; two would set it), a setting's value.
  */
 const READING_FORMS: ReadonlyMap<string, (rest: ReadonlyArray<string>) => boolean> = new Map<string, (rest: ReadonlyArray<string>) => boolean>([
@@ -47,6 +47,8 @@ const READING_FORMS: ReadonlyMap<string, (rest: ReadonlyArray<string>) => boolea
   ["remote", (rest) => positional(rest).length === 0 || (rest[0] === "get-url" && positional(rest).length === 2)],
   ["symbolic-ref", (rest) => positional(rest).length <= 1 && !rest.includes("-d") && !rest.includes("--delete")],
   ["config", readingConfig],
+  // HE-79: the Code tab's symbol search, but never opening the files it finds in a program (`-O`, `--open-files-in-pager`).
+  ["grep", (rest) => rest.every((w) => !w.startsWith("--open-files-in-pager") && !/^-[^-]*O/.test(w))],
 ])
 
 /** `-c key=value` settings a reading command may carry: they turn things off or change how output is quoted. */

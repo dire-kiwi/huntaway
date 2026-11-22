@@ -81,6 +81,10 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   "git.mergeWork": (board, p) => taskBranch(board, p.id),
   // A file's diffs too: its content can change while its state in the status doesn't (the old tab read them with it).
   "git.diff": (board, p) => taskState(board, p.id),
+  // HE-79: the Code tab's files, a file's contents and a symbol's uses, as the agent starts and stops (it may have changed them).
+  "git.files": (board, p) => taskState(board, p.id),
+  "git.readFile": (board, p) => taskState(board, p.id),
+  "git.symbol": (board, p) => taskState(board, p.id),
   // The compare view's facts, as one of the prompt's tasks moves, starts or stops, or its worktree changes.
   "tasks.fanout": (board, p) => fanoutState(board, p.id),
   // A host's status is another once it has booted again (a restart, an update): its new boot id, commit and version.

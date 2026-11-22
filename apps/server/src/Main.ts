@@ -142,6 +142,7 @@ import { HtmlTools } from "./browser/HtmlRender.ts"
 import { Browsers } from "./browser/Browsers.ts"
 import { ChromeInstall } from "./browser/ChromeInstall.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
+import { FilesTab } from "./git/FilesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
 import { Git } from "./git/Git.ts"
@@ -394,7 +395,7 @@ const ThreadsLive = Threads.pruner.pipe(
  */
 const GitLive = Restack.layer.pipe(
   // 4.8: restacking stack levels, over their worktrees.
-  Layer.provideMerge(Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer)),
+  Layer.provideMerge(Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer, FilesTab.layer)),
   // 6.11: a project's folder moved or followed, which a worktree setup holds where it is.
   Layer.provideMerge(Relocation.layer.pipe(Layer.provideMerge(RelocationRepo.layer))),
   Layer.provideMerge(Layer.mergeAll(TaskBase.layer, Checkpoints.layer)),
