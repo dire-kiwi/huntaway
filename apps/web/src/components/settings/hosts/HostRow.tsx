@@ -74,8 +74,8 @@ export function HostVersion({ host }: { host: Host }) {
   // The hosts an Update here updates: this one and the others that differ.
   const cluster = clusterOf(host, hosts, local, target)
   const others = cluster.length - 1
-  // Back on what it was sent.
-  const back = !!phase && !!offer.to && (offer.release ? host.version === offer.to : host.commit === offer.to)
+  // Back on what it was sent: the hub's release or commit (not the offer's, which is gone once it's there).
+  const back = !!phase && (offer.release ? !!local?.version && host.version === local.version : !!target && host.commit === target)
 
   // While the host rebuilds, show its progress (its status, polled); done when it comes back (a new boot). A status read
   // again is followed once it has been read: until then it's the one from before.

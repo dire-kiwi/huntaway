@@ -57,9 +57,11 @@ const sendUpdate = (host: Host): Effect.Effect<void, never, AtomRegistry.AtomReg
   Effect.gen(function* () {
     const atom = hostUpdateAtom(host.id)
     yield* Atom.set(atom, { ...idleUpdate, phase: "starting" })
+    // Unread (a host on another protocol, one whose status read dies): no boot to tell it came back by, so it's over
+    // once it's back on what it was sent (HostVersion).
     const boot = yield* Atom.getResult(query("admin.status", host.id, undefined), { suspendOnWaiting: true }).pipe(
-      Effect.map((st) => st.boot_id),
-      Effect.orElseSucceed(() => null),
+      Effect.map((st): string | null => st.boot_id),
+      Effect.catchCause(() => Effect.succeed(null)),
     )
     yield* Atom.update(atom, (s) => ({ ...s, boot }))
     const exit = yield* Effect.exit(hubMutate("hub.hosts.pushUpdate", { id: LinkId.make(host.id) }))
@@ -68,7 +70,10 @@ const sendUpdate = (host: Host): Effect.Effect<void, never, AtomRegistry.AtomReg
     if (Exit.isFailure(exit)) yield* Atom.set(atom, { ...idleUpdate, error: exitError(exit) ?? "update failed" })
     else if (exit.value.up_to_date) yield* Atom.set(atom, { ...idleUpdate, upToDate: true })
     else yield* Atom.update(atom, (s) => ({ ...s, sent: true }))
-  })
+  }).pipe(
+    // Whatever else goes wrong ends it, rather than leaving the row "starting" for good.
+    Effect.catchCause((cause) => Atom.set(hostUpdateAtom(host.id), { ...idleUpdate, error: exitError(Exit.failCause(cause)) ?? "update failed" })),
+  )
 
 /** The hosts an Update of `first` updates: `first` and every other host in `hosts` that Update is offered for. */
 export const clusterOf = (first: Host, hosts: ReadonlyArray<Host>, local: Host | undefined, target: string | null): ReadonlyArray<Host> => [

@@ -564,7 +564,8 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   it sends the hub's checkout as it is (`hosts/useUpdateCommit.ts`, the hub's `admin.status`), a release host only a
   newer version, follows the host's phases by polling it, and ends on its new boot. Since HE-76 it updates the whole
   cluster: Update on one host is sent to every other host the hub links itself that it is offered for too (not a mesh
-  host, which its own neighbour links), a few at a time, and the button says how many (`· all 3 hosts`). Each host's
+  host, which its own neighbour links), a few at a time (the hub makes their bundles one at a time: `Updater`'s
+  `bundleSince`, in its one `outgoing.bundle`), and the button says how many (`· all 3 hosts`). Each host's
   Update is kept per host (`hosts/hostUpdate.ts`, `hostUpdateAtom`), off the row, so one started from a host's page
   still shows on the others' rows; a row follows its host's phases while it is shown.
 - **Dropped.** Settings → Server's database line and Copy again, and the threads' batch rebuild (docs/plan/14: the

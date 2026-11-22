@@ -314,6 +314,10 @@ export class Updater extends Context.Service<Updater, UpdaterShape>()("huntaway-
         return yield* updateFromOrigin(src, commit)
       })
 
+      // Every bundle is made in the one file `outgoing.bundle`, so one at a time: an Update of the whole cluster pushes
+      // to several hosts at once (HE-76), and two at once collided on its lock or read the other's.
+      const bundling = yield* Semaphore.make(1)
+
       /** The checkout's branch and commit, as a git bundle (base64) of the commits after `since` when it's an ancestor. */
       const bundleSince = (dir: string, since: string | null) =>
         Effect.gen(function* () {
@@ -332,7 +336,7 @@ export class Updater extends Context.Service<Updater, UpdaterShape>()("huntaway-
             Effect.mapError((e) => new Unavailable({ what: "update", reason: `reading ${path}: ${e.message}` })),
           )
           return { branch, commit, bundle: Base64.encode(bytes) }
-        })
+        }).pipe(bundling.withPermits(1))
 
       const bodyFor = Effect.fn("Updater.bodyFor")(function* (hostCommit: string | null) {
         // A hub with a checkout sends its code; one deployed without (a container) its commit, which the host fetches

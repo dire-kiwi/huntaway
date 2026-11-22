@@ -109,6 +109,35 @@ test("a release host is offered the hub's version; a newer one, and a checkout h
   })
 })
 
+// HE-76 review: a release host whose status can't be read before the update (one on another protocol, say) has no boot
+// to tell it came back by; it's back once the hub lists it on the hub's version, and its row offers nothing more.
+test("a release host's Update ends when it comes back on the hub's version, its status unread before", async () => {
+  const own = (await hub.rpc("host.info")).version
+  await withBrowser(hub, {}, async (ui) => {
+    let linked = { version: "0.0.9", commit: null, updates_from: "releases" }
+    let updates = 0
+    await routeSockets(ui.page, {
+      rewrite: (tag, value, via) => (via === "rpc" && tag === "hub.hosts.watch" ? value.map((h) => (h.id === hostId ? { ...h, ...linked } : h)) : value),
+      handle: (r, via) => {
+        if (r.tag === "hub.hosts.pushUpdate") {
+          updates++
+          return success({ ok: true })
+        }
+        if (r.tag !== "admin.status" || via !== "relay") return undefined
+        // Unread before; after, a status with no restart under way.
+        return updates ? success(serverStatus({ boot_id: "b2", running_agents: 0 })) : { _tag: "Failure", cause: [{ _tag: "Die", defect: "gone" }] }
+      },
+    })
+    await ui.run(["goto /settings/hosts", `click Update to v${own}`, `wait [data-host="${hostId}"] >> text=starting`])
+    await eventually(() => assert.equal(updates, 1), 10000)
+    // Back on the hub's version: the hub lists it again (a rename sends the list).
+    linked = { ...linked, version: own }
+    await hub.rpc("hub.hosts.update", { id: hostId, name: "back" })
+    await ui.run([`wait [data-host="${hostId}"] >> text=/^v${own.replaceAll(".", "\\.")}/`, `gone [data-host="${hostId}"] >> text=starting`])
+    assert.equal(await ui.page.locator(`[data-host="${hostId}"] button`, { hasText: "Update to" }).count(), 0)
+  })
+})
+
 // HE-76: Update on one host updates the whole cluster: every other linked host that differs from the hub is sent the
 // update too, and each row follows its own; one that is already on the hub's commit isn't.
 test("Update on one host updates every host that differs", async () => {
