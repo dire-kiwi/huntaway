@@ -17,6 +17,7 @@
     "@dire-kiwi/docs-huntaway": "https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.3.0/dire-kiwi-docs-huntaway-0.3.0.tgz",
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
+    "@huntaway/a2ui": "workspace:*",
     "@huntaway/contracts": "workspace:*",
     "@huntaway/plugin": "workspace:*",
     "@huntaway/shared": "workspace:*",

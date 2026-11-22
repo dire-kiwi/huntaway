@@ -101,6 +101,20 @@ export default defineConfig({
         files: ["packages/shared/**", "apps/server/src/hooks/**"],
         rules: { ...off(effectNative), "no-restricted-imports": restrict([noEffect, noTesting, noApps]) },
       },
+      // HE-77: A2UI (Express blocks, the macros ported from the Python SDK) is a port of plain code over @a2ui/agent, which
+      // the server and the web app both run: plain TypeScript too, with no effect import.
+      {
+        files: ["packages/a2ui/**"],
+        rules: {
+          ...off(effectNative),
+          "no-restricted-imports": restrict([
+            { ...noEffect, message: "Plain TypeScript: packages/a2ui is a port of A2UI's own code and does not import effect." },
+            noTesting,
+            noApps,
+            noNode,
+          ]),
+        },
+      },
       // The desktop shell's plain parts: the frame (src/boot), which a release can't replace and so stays small, with no
       // effect import, and runs before any shell; the decisions it shares with the main process (src/shared); and the
       // preload, which Electron runs in the page's sandboxed renderer, with the DOM and Electron's renderer modules.

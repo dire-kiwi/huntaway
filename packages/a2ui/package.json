@@ -1,0 +1,23 @@
+{
+  "name": "@huntaway/a2ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A2UI for the board: Express blocks in agents' replies, and A2UI macros ported to TypeScript",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./express": "./src/express.ts"
+  },
+  "dependencies": {
+    "@a2ui/agent": "0.1.0",
+    "@a2ui/web_core": "0.15.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
+    "yaml": "2.9.1"
+  }
+}

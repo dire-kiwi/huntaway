@@ -120,9 +120,12 @@ function ThreadView({
     return { byMessage, rewind: setRewinding }
   }, [turns.data])
   const items = useStableGroupKeys(model.items, task.id)
+  // HE-77: an interactive reply that changes one drawn before what's loaded asks for the earlier messages.
+  const more = paging.more
+  const loadEarlier = useCallback(() => void paging.loadOlder().catch(() => setOlderFailed(true)), [paging])
   const data = useMemo(
-    () => ({ ...model, running: task.running, cwd, hostId: task.host_id, taskId: task.id, follow }),
-    [model, task.running, cwd, task.host_id, task.id, follow],
+    () => ({ ...model, running: task.running, cwd, hostId: task.host_id, taskId: task.id, follow, more, loadEarlier }),
+    [model, task.running, cwd, task.host_id, task.id, follow, more, loadEarlier],
   )
   // The rows read the new model once it's shown, and redraw if what they pick from it changed.
   const [threadSource] = useState(() => new ThreadSource())

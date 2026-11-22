@@ -10,6 +10,8 @@ import { lineage, ThreadCtx, usePendingFocus } from "./context"
 import { CompactLine, ConnectionRow, EventLine, FoldedTurnRow, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
 import { HtmlPageRow } from "./htmlPage"
 import { Markdown } from "./Markdown"
+import { clicksOf } from "@huntaway/a2ui"
+import { ActionText, Reply } from "./a2ui/A2ui"
 import { AutomationChangeCard, isWorkflowApproval, ProjectChangeCard, TaskDeletionCard, WorkflowChangeCard } from "./requestCards"
 import { SuggestionsCard } from "./SuggestionsCard"
 import type { Item, ReportData } from "./threadModel"
@@ -111,12 +113,13 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
               it.auto ? "border-line bg-transparent text-muted italic" : "border-line-strong bg-raised",
             )}
           >
-            <UserText text={it.text} hostId={hostId} />
+            <UserMessage text={it.text} hostId={hostId} />
           </div>
         </div>
       )
     case "text":
-      return <Markdown text={it.text} />
+      // HE-77: a reply with an `<a2ui>` block draws it as UI.
+      return it.text.includes("<a2ui>") ? <Reply row={it.key} text={it.text} /> : <Markdown text={it.text} />
     case "thinking":
       return <Thinking text={it.text} />
     case "tools":
@@ -147,6 +150,13 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
       return null
   }
 })
+
+/** A user's message: its text, or the clicks on interactive replies in it (HE-77) and any other text. */
+function UserMessage({ text, hostId }: { text: string; hostId: string }) {
+  const found = useMemo(() => (text.includes("```a2ui-action") ? clicksOf(text) : null), [text])
+  if (found === null) return <UserText text={text} hostId={hostId} />
+  return <ActionText clicks={found.clicks}>{found.rest !== "" && <UserText text={found.rest} hostId={hostId} />}</ActionText>
+}
 
 /** A user message: its text, and the files attached to it. */
 function UserText({ text, hostId }: { text: string; hostId: string }) {

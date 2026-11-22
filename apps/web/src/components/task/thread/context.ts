@@ -9,6 +9,10 @@ type ThreadData = ThreadModel & {
   taskId: string
   /** Keeps the thread scrolled to its end, if it was there, after a part of it grew on its own. */
   follow: () => void
+  /** There's more of the thread before what's loaded (HE-77: a reply can change an interactive reply drawn there). */
+  more: boolean
+  /** Loads the page before what's loaded. */
+  loadEarlier: () => void
 }
 
 /** A thread with nothing in it. */
@@ -23,6 +27,8 @@ const EMPTY: ThreadData = {
   hostId: "",
   taskId: "",
   follow: () => {},
+  more: false,
+  loadEarlier: () => {},
 }
 
 /**

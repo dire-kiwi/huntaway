@@ -74,6 +74,7 @@ const context = (task: Thread, o: Partial<PromptContext> = {}): PromptContext =>
   desktopHost: null,
   spacesHost: null,
   browserTools: false,
+  a2ui: false,
   tmp: null,
   memory: "",
   ...o,
@@ -371,5 +372,16 @@ describe("systemPrompt", () => {
     assert.isTrue(text.includes("You are in plan mode") && text.includes("`gh.pr_view`") && !text.includes(githubNote(null)), text)
     // Claude Code tells Claude itself.
     assert.isTrue(!told(thread(), { plan: true }).includes("You are in plan mode"))
+  })
+
+  it("is told of interactive replies while the a2ui experiment is on, and reviewers aren't (HE-77)", () => {
+    assert.isFalse(told(thread()).includes("a2ui_rules"))
+    let text = told(thread(), { a2ui: true })
+    assert.isTrue(text.includes("`<a2ui>` and `</a2ui>` lines") && text.includes("mcp__huntaway__a2ui_rules"), text)
+    assertParagraphs(text)
+    text = told(thread(), { a2ui: true, codex: true })
+    assert.isTrue(text.includes("`huntaway.a2ui_check`"), text)
+    const parent = { number: 1, title: "Fix it", worktree_path: "/w/1", branch: "ia/web-1-fix-it", worktree_ready: true }
+    assert.isFalse(told(thread({ kind: "review", parent_id: TaskId.make("p"), number: 0 }), { parent, a2ui: true }).includes("a2ui_rules"))
   })
 })

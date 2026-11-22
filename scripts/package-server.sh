@@ -12,8 +12,9 @@
 #   <out dir>/node/bin/node     <node binary> (default: the node on PATH; the binary a version manager's shim runs),
 #                               with Node's LICENSE
 #   <out dir>/server/           package.json; src/ and migrations/ compiled to .js (no tests); node_modules/ with the
-#                               production dependencies, @huntaway/shared, @huntaway/contracts and @huntaway/plugin
-#                               (HE-34: the plugin API and its example, which a demo board runs) compiled to .js too
+#                               production dependencies, @huntaway/shared, @huntaway/contracts, @huntaway/plugin
+#                               (HE-34: the plugin API and its example, which a demo board runs) and @huntaway/a2ui
+#                               (HE-77: interactive replies' board tools) compiled to .js too
 #   <out dir>/electron/         only with HUNTAWAY_SHELL_DIR: the desktop shell's *.cjs from that folder, and
 #                               shell.json {"electron": <apps/desktop's Electron version>, "boot": 1}, which an
 #                               installed desktop app loads once it has updated to this release (the release
@@ -59,7 +60,7 @@ cp "$root/target/release/ia-shim" "$out/ia-shim"
 cp -R "$root/apps/web/dist" "$out/ui"
 printf '{ "version": "%s", "commit": "%s" }\n' "$version" "$commit" > "$out/build.json"
 
-# The server and the three workspace packages it runs, compiled to .js by TypeScript's own compiler (TypeScript 7's
+# The server and the four workspace packages it runs, compiled to .js by TypeScript's own compiler (TypeScript 7's
 # tsc, which emits): types and comments stripped, imports of ./x.ts rewritten to ./x.js, the layout of the sources
 # kept. Node then runs it as it is: run as .ts, every process (the server, and each agent's hooks) would load Node's
 # TypeScript stripper, and Node strips nothing under node_modules, where the packages go. It type-checks too, so a
@@ -77,7 +78,7 @@ cat > "$scratch/tsconfig.json" <<EOF
     "rootDir": "$root",
     "outDir": "$scratch/js"
   },
-  "include": ["$server/src", "$server/migrations", "$root/packages/shared/src", "$root/packages/contracts/src", "$root/packages/plugin/src"],
+  "include": ["$server/src", "$server/migrations", "$root/packages/shared/src", "$root/packages/contracts/src", "$root/packages/plugin/src", "$root/packages/a2ui/src"],
   "exclude": ["$root/**/*.test.ts", "$server/src/**/tests/**"]
 }
 EOF
@@ -100,7 +101,7 @@ cp -R "$scratch/deploy/node_modules" "$modules"
 rm -rf "$modules/.bin" "$modules/.pnpm" "$modules/.modules.yaml" "$modules"/.pnpm-workspace-state* "$modules/@types" "$modules/undici-types"
 find "$modules" -type f \( -name '*.ts' -o -name '*.mts' -o -name '*.cts' -o -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 # The workspace packages export ./src/*.ts: theirs compiled, and their exports pointed at the .js.
-for pkg in shared contracts plugin; do
+for pkg in shared contracts plugin a2ui; do
   dir="$modules/@huntaway/$pkg"
   [[ -d $dir ]] || { echo "pnpm deploy left out @huntaway/$pkg" >&2; exit 1; }
   rm -rf "$dir"

@@ -345,3 +345,5 @@ that sync (see _Settings sync_ in Hosts). The experiments:
 - **Assistant check-ins**: the assistant's _Routines_ tab offers **Add check-ins**, a light counterpart to the morning
   brief. At the times you pick (11:00 and 16:30 on weekdays to start with) the assistant looks over your boards and
   messages you only if something needs you; otherwise it stays quiet. See _Check-ins_ in Integrations.
+- **Interactive replies (A2UI)**: new runs are told they can reply with UI (cards, choices, short forms, buttons) that
+  the thread draws and that sends what you pick back to the agent. See _Interactive replies_ in [Agents](agents.md).

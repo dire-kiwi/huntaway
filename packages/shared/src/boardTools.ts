@@ -25,6 +25,9 @@ export const BOARD_TOOLS: ReadonlyArray<string> = [
   "delete_pen",
   "send_to_task",
   "suggest_task_actions",
+  // HE-77: interactive replies.
+  "a2ui_rules",
+  "a2ui_check",
   "get_project",
   "update_project",
   "create_project",

@@ -70,6 +70,8 @@ export interface PromptContext {
   readonly spacesHost: string | null
   /** It has the `browser` server, the task's own web browser (HE-62). */
   readonly browserTools: boolean
+  /** The `a2ui` experiment is on: it is told it can reply with interactive UI (HE-77). */
+  readonly a2ui: boolean
   /** Its temp folder, its `$TMPDIR`. null until plan task 2.8 (`TaskTmp`). */
   readonly tmp: string | null
   /** For the assistant and its routines, its memory as its files say now, last. "" until plan task 6.7 (`Memory`). */

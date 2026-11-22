@@ -1,0 +1,5 @@
+{
+  // No DOM and no Node types in the sources: the server and the web app both run them (docs/plan/02-repository.md).
+  "extends": "../../tsconfig.base.json",
+  "include": ["src", "test"]
+}

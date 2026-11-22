@@ -4,6 +4,8 @@ import { McpServers } from "../McpServers.ts"
 import type { RegisteredTool } from "../McpServers.ts"
 // 6.5
 import { automationTools } from "./automations.ts"
+// HE-77
+import { a2uiTools } from "./a2ui.ts"
 import { connectionTools } from "./connections.ts"
 import { penTools } from "./pens.ts"
 import { projectTools } from "./projects.ts"
@@ -41,6 +43,8 @@ export const BoardTools = McpServers.register(
       ...Object.values(yield* penTools),
       // HE-61
       ...Object.values(yield* suggestionTools),
+      // HE-77
+      ...Object.values(yield* a2uiTools),
       ...Object.values(yield* reviewTools),
       // 6.5
       ...Object.values(yield* automationTools),

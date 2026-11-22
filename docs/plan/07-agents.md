@@ -997,6 +997,65 @@ assistant's and its routines' (`trackedList.owner`, as for tracked work; a proje
   message to send, a button per action (the first highlighted; Delete asks again; a move asks as above) and Leave it; settled, what was
   done. Browser check: `apps/web/tests/ui/suggestionsCard.test.mjs`.
 
+### As built in HE-77: interactive replies (A2UI)<a id="interactive-replies"></a>
+
+An agent can put UI in a reply: an [A2UI](https://a2ui.org) v1.0 **Express** block between `<a2ui>` and `</a2ui>` lines
+(the contract `@a2ui/agent`'s prompt generator teaches). The board draws it in the thread with its own controls
+([09-frontend.md](09-frontend.md#interactive-replies)), and a click comes back to the agent as the user's message. The
+plain parts are in `packages/a2ui` (`@huntaway/a2ui`, [02-repository.md](02-repository.md)); the server adds what the
+agent is told and two board tools.
+
+- **Told only while the `a2ui` experiment is on** (`prompts/a2uiNote.ts`, `PromptContext.a2ui` from
+  `HostSettings.experiments`): one paragraph saying what a block is, when to use one (a choice, a short form, a
+  confirmation, a card; not an ordinary answer, and not in place of `request_user_input` when the turn must stop), and
+  to read the rules first. Threads under a task (reviewers, summaries, workflow steps) aren't told. Blocks are drawn
+  whether it's on or not: an agent may write one anyway, or a thread may hold one from when it was on.
+- **`a2ui_rules`** (`mcp/tools/a2ui.ts`; rerunnable, for plan mode, not for reviewers): the board's rules
+  (`BOARD_RULES` in `packages/a2ui/src/rules.ts`: where a block goes, `surface("<id>")` first, how a click comes back,
+  `surface("<id>", update=true)` to change a surface after it, the check tool) and then `ExpressPromptGenerator`'s
+  contract for the board's catalogs (`boardCatalogs()`: A2UI's basic catalog and the board's macros). It's some 20 KB,
+  which is why the system prompt only points at it.
+- **`a2ui_check { text }`**: checks a reply's blocks as the board will draw them: `check` (`packages/a2ui/src/check.ts`)
+  runs the same `ThreadSurfaces` the web app draws a thread with, over the basic catalog, so each block that names no
+  surface gets one of its own and the macros are lowered and checked as drawn. The caller's thread's earlier blocks
+  (its main conversation's replies from `Threads.stored`; a subagent's, an item with a `parent_id`, the board doesn't
+  draw as blocks) come first, so an `update=true` of an earlier surface checks and a second `surface("<id>")` of one is
+  refused. A reply with `<a2ui>` in it and no block the board draws (the tag mid-line or in a code fence) fails, as
+  does one whose block doesn't close. Says `{ ok, blocks, surfaces }` or `{ ok: false, block, error }`. An agent on
+  another host is checked without its thread. The server loads `@huntaway/a2ui/express` on the first call of either
+  tool (it takes some 150 ms); a release packages `@huntaway/a2ui` compiled, as it does the other workspace packages
+  (`scripts/package-server.sh`).
+- **A click** is the user's message (`tasks.send`, so it starts, steers or queues a run as any message does): a line
+  the user reads (`Clicked “Save”`, the button's text when it has one) and the action as JSON in an ```` ```a2ui-action ````
+  fence: `{ surfaceId, name, sourceComponentId, context }`, the context being what the `Event` named, resolved from
+  the surface's data (`actionMessage` in `packages/a2ui/src/message.ts`). Messages sent while a run is busy are
+  joined into one, so a user's message can hold several clicks and other text: `clicksOf` finds every fence in it.
+- **The board's macros** (`packages/a2ui/src/boardMacros.ts`): `Choice(question, options, event="choose",
+  button="Choose", multiple=false)` (a ChoicePicker and a button sending `{choice: [values]}`, disabled by a
+  `required` check until there's a pick; its pick is kept at `/choice/<its component id>`, so several on a surface
+  would keep theirs apart, though agents are told to give each question a surface (a click locks the whole surface,
+  below): the port gives `render` the instance, `{ id }`, which Python's macros don't have; a block that draws a
+  `Choice` on a surface already there clears `/choice` first, as the update keeps the surface's data and the new
+  `Choice` usually has the old one's id) and `Confirm(title,
+  detail?, confirm="Go ahead", cancel="Cancel", event="confirm")` (two buttons sending `{confirmed: true|false}`): the
+  two things agents ask most, as one line of Express each. `boardCatalogs()` is the basic catalog and the macros'
+  sidecar catalog (`MacroExpander.transformCatalogs`), so the rules list them and the parser takes them;
+  `boardTransform()` lowers them to basic components (`transformToTransport`) before a block is checked or drawn, so
+  the renderer only knows the basic catalog. The expander writes the envelope keys bare (`catalogId`): the published
+  `@a2ui/web_core` 0.15 refuses the `@catalogId` that A2UI's main (and the Python SDK the port follows) has moved to.
+  A call that doesn't lower is an error on its block (`onError: "raise"`).
+- **The macros port** (`packages/a2ui/src/macros/`, `src/builder/`): A2UI's `MacroExpander`, `@macro` and v1.0
+  builder from the Python agent SDK (a2ui-project/a2ui `5ff1b05f`, `python/a2ui_agent/src/a2ui/transformers/macros`,
+  `builder/{core,v1_0}`), which upstream has only in Python. TypeScript has no runtime annotations, so a macro names
+  its parameters' types (`macro({ name, description, params: { title: param.dynamicString("…") }, render })`) and the
+  JSON Schema, the coercion of the model's arguments and `render`'s argument type come from them. The upstream
+  conformance suite (`conformance/agent/macros/macros.yaml`, copied to `test/conformance/fixtures/`) runs: its 46 v1.0
+  cases pass; the 24 v0.9 cases are skipped, each listed with its reason (the v0.9 builder and macros aren't ported:
+  Express targets v1.0).
+- **The fake agent** (`packages/testing/bin/fake-claude.ts`) answers a prompt containing `fake-a2ui` with a form,
+  `fake-a2ui-choice` with the `Choice` macro, and a click with that surface updated to say what was sent, for trying it
+  on a test server.
+
 ### As built in HE-78: HTML pages in the thread<a id="html-pages"></a>
 
 After T3 Code's html_render and html_preview: an agent shows a self-contained HTML page in its thread, and checks it
