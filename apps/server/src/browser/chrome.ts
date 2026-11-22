@@ -86,9 +86,13 @@ export const startChrome = Effect.fnUntraced(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
   const writes = yield* Queue.unbounded<Uint8Array, Cause.Done>()
   const errText = yield* Ref.make("")
-  const lastLines = Effect.map(Ref.get(errText), (all) => {
-    const last = lastSaid(all)
-    return last === "" ? "" : `: ${last}`
+  // A CHECK that fails (an abort) says which first, then a stack long enough to push that out of `errText` (HE-78).
+  const fatal = yield* Ref.make<string | null>(null)
+  const lastLines = Effect.gen(function* () {
+    const last = lastSaid(yield* Ref.get(errText))
+    const first = yield* Ref.get(fatal)
+    const said = first === null || last.includes(first) ? last : `${first} / ${last}`
+    return said === "" ? "" : `: ${said}`
   })
 
   const spawned = yield* spawner
@@ -113,7 +117,16 @@ export const startChrome = Effect.fnUntraced(function* (
   const handle = spawned.success
   const errors = yield* handle.stderr.pipe(
     Stream.decodeText(),
-    Stream.runForEach((chunk) => Ref.update(errText, (all) => (all + chunk).slice(-4000))),
+    Stream.runForEach((chunk) =>
+      Effect.gen(function* () {
+        const before = yield* Ref.getAndUpdate(errText, (all) => (all + chunk).slice(-4000))
+        if ((yield* Ref.get(fatal)) !== null) return
+        // The chunk's lines, with the end of the last line before it (a line can come in two chunks).
+        const lines = `${before.slice(before.lastIndexOf("\n") + 1)}${chunk}`.split("\n")
+        const found = lines.find((l) => /:FATAL:|Check failed/u.test(l))
+        if (found !== undefined) yield* Ref.set(fatal, found.trim().slice(0, 1000))
+      }),
+    ),
     Effect.ignore,
     Effect.forkScoped,
   )
