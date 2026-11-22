@@ -108,3 +108,69 @@ test("a release host is offered the hub's version; a newer one, and a checkout h
     assert.equal(await page.locator("button", { hasText: "Update to" }).count(), 0)
   })
 })
+
+// HE-76: Update on one host updates the whole cluster: every other linked host that differs from the hub is sent the
+// update too, and each row follows its own; one that is already on the hub's commit isn't.
+test("Update on one host updates every host that differs", async () => {
+  const [running, remote] = ["c", "a"].map((c) => c.repeat(40))
+  const third = startServer()
+  const fourth = startServer()
+  try {
+    const ids = await Promise.all([third, fourth].map(async (s) => (await s.rpc("host.info")).host_id))
+    for (const s of [third, fourth]) await hub.rpc("hub.hosts.add", { url: s.url, token: s.token })
+    await eventually(async () => {
+      const listed = await hub.rpc("hub.hosts.list")
+      assert.ok(ids.every((id) => listed.find((h) => h.id === id)?.connected))
+    }, 20000)
+    const [differs, same] = ids
+    await withBrowser(hub, {}, async (ui) => {
+      const pushed = []
+      await routeSockets(ui.page, {
+        rewrite: (tag, value, via) => {
+          if (via !== "rpc") return value
+          if (tag === "host.info") return { ...value, commit: running }
+          if (tag === "hub.hosts.watch")
+            return value.map((h) =>
+              h.id === hostId || h.id === differs
+                ? { ...h, commit: remote, updates_from: "checkout" }
+                : h.id === same
+                  ? { ...h, commit: running, updates_from: "checkout" }
+                  : h,
+            )
+          return value
+        },
+        handle: (r, via) => {
+          if (r.tag === "hub.hosts.pushUpdate") {
+            pushed.push(r.payload.id)
+            return success({ ok: true })
+          }
+          if (r.tag !== "admin.status") return undefined
+          if (via === "rpc") return success(serverStatus({ running_commit: running }))
+          // Each linked host builds, for as long as the test looks.
+          return success(
+            serverStatus({
+              boot_id: "b1",
+              source_dir: "/src",
+              running_commit: remote,
+              running_agents: 0,
+              restart: pushed.length ? { phase: "building_server", log: "", error: null } : null,
+            }),
+          )
+        },
+      })
+      await ui.run(["goto /settings/hosts", `wait [data-host="${hostId}"] >> text=Update to ccccccc · all 2 hosts`])
+      assert.equal(await ui.page.locator(`[data-host="${same}"] button`, { hasText: "Update to" }).count(), 0)
+      await ui.run([
+        `click [data-host="${hostId}"] >> text=Update to ccccccc`,
+        `wait [data-host="${hostId}"] >> text=building server`,
+        `wait [data-host="${differs}"] >> text=building server`,
+      ])
+      assert.deepEqual(new Set(pushed), new Set([hostId, differs]))
+      assert.equal(pushed.length, 2)
+      assert.equal(await ui.page.locator(`[data-host="${same}"]`, { hasText: "building server" }).count(), 0)
+    })
+  } finally {
+    third.stop()
+    fourth.stop()
+  }
+})

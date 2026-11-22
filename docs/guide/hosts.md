@@ -122,7 +122,10 @@ together.
 **Update to <commit>**. The hub packs its checkout's current branch into a git bundle and sends
 it over the link, so no git remote or inbound access is needed. The host fast-forwards its own
 checkout (it refuses if the checkout is dirty, on another branch, or has diverged), then
-rebuilds and restarts like Rebuild & restart; agents keep running.
+rebuilds and restarts like Rebuild & restart; agents keep running. Update on one host updates the whole cluster:
+every other host this board links that differs from it is sent its update too (the button says **· all N hosts**),
+and each host's row shows how far it has got. A host reached through another one (in the mesh) isn't: its own link's
+board updates it.
 
 A host installed from a release (with `--release-updates`, see _Release updates_) goes by version instead: when
 the hub runs a newer release, Settings → Hosts offers **Update to v<version>**, and the host restarts
