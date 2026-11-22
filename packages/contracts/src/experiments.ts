@@ -25,6 +25,12 @@ export const EXPERIMENTS = [
     description:
       "The assistant's Routines tab offers Add check-ins: at the times you pick (say 11:00 and 16:30 on weekdays) the assistant looks over your boards and messages you only if something needs you, and stays quiet otherwise. It leaves you be while you're talking to it.",
   },
+  {
+    id: "a2ui",
+    name: "Interactive replies (A2UI)",
+    description:
+      "Agents are told they can put interactive UI in a reply: an A2UI block, drawn in the thread as cards, choices, forms and buttons in the board's look. What you pick or fill in goes back to the agent as your message. Blocks are drawn whether this is on or not; it decides whether new runs are told about them.",
+  },
 ] as const
 
 /** An experiment's id. */

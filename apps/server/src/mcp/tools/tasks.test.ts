@@ -513,6 +513,8 @@ describe("task tools", () => {
         "send_to_task",
         // HE-61
         "suggest_task_actions",
+        "a2ui_rules",
+        "a2ui_check",
         "get_project",
         "update_project",
         "create_project",

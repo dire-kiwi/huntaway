@@ -6,7 +6,8 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./express": "./src/express.ts"
   },
   "dependencies": {
     "@a2ui/agent": "0.1.0",

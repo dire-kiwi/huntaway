@@ -122,6 +122,7 @@ const OFF = {
   desktopHost: null,
   spacesHost: null,
   browserTools: false,
+  a2ui: false,
   tmp: null,
   memory: "",
 } as const
@@ -200,6 +201,8 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           desktopHost: run.desktopHost ?? null,
           spacesHost: run.spacesHost ?? null,
           browserTools: run.browserTools ?? false,
+          // HE-77: interactive replies, while they're an experiment.
+          a2ui: (yield* settings.get).experiments?.includes("a2ui") === true,
           // 6.7: the assistant's memory.
           memory: run.memory ?? "",
           task,

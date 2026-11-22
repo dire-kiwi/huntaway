@@ -11,9 +11,13 @@
     "test:ui": "pnpm run build && vp test --config tests/ui/vitest.config.ts"
   },
   "dependencies": {
+    "@a2ui/agent": "0.1.0",
+    "@a2ui/react": "0.15.0",
+    "@a2ui/web_core": "0.15.0",
     "@effect/atom-react": "catalog:",
     "@effect/platform-browser": "catalog:",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@huntaway/a2ui": "workspace:*",
     "@huntaway/client": "workspace:*",
     "@huntaway/contracts": "workspace:*",
     "@huntaway/shared": "workspace:*",
@@ -30,7 +34,8 @@
     "react-dom": "19.3.1",
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1",
-    "shiki": "4.5.0"
+    "shiki": "4.5.0",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
