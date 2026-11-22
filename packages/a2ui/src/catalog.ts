@@ -12,7 +12,8 @@ export const BASIC_CATALOG_ID = "https://a2ui.org/specification/v1_0/catalogs/ba
 export const PROTOCOL_VERSION = "1.0"
 
 /** The basic catalog, its components as schemas: what the server checks and teaches. */
-export const basicCatalog = (): Catalog<ComponentApi> => new Catalog(BASIC_CATALOG_ID, PROTOCOL_VERSION, BASIC_COMPONENTS, BASIC_FUNCTIONS, BasicCatalogThemeSchema)
+export const basicCatalog = (): Catalog<ComponentApi> =>
+  new Catalog(BASIC_CATALOG_ID, PROTOCOL_VERSION, BASIC_COMPONENTS, BASIC_FUNCTIONS, BasicCatalogThemeSchema)
 
 /** The basic catalog with a renderer's own components (of the same names, and the same functions and theme). */
 export const basicCatalogOf = <T extends ComponentApi>(components: ReadonlyArray<T>): Catalog<T> =>

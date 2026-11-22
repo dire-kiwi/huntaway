@@ -1,4 +1,5 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react"
+import { actionOf, segments } from "@huntaway/a2ui"
 import { olderPage, threadAtom, threadPreviewAtom } from "@huntaway/client"
 import type { Task } from "@huntaway/contracts"
 import { useMemo } from "react"
@@ -27,13 +28,22 @@ function RowView({ row, host, taskId }: { readonly row: Row; readonly host: stri
     case "user":
       return (
         <View style={[s.card, { alignSelf: "flex-end", maxWidth: "88%", backgroundColor: colors.raised }]}>
-          <Text style={s.body}>{row.text}</Text>
+          <Text style={s.body}>{actionOf(row.text)?.label ?? row.text}</Text>
         </View>
       )
     case "text":
       return (
         <View style={{ paddingHorizontal: 14, paddingVertical: 6 }}>
-          <Markdown text={row.text} />
+          {/* HE-77: an interactive (A2UI) block is drawn on the web board; here it's a note in its place. */}
+          {segments(row.text).map((part) =>
+            part.kind === "markdown" ? (
+              <Markdown key={`md@${part.offset}`} text={part.text} />
+            ) : (
+              <Text key={`a2ui@${part.offset}`} style={[s.faint, { fontStyle: "italic", paddingVertical: 4 }]}>
+                An interactive reply: open the task on the board in a browser to use it.
+              </Text>
+            ),
+          )}
         </View>
       )
     case "tool":

@@ -26,7 +26,7 @@ export const A2uiRules = Tool.make("a2ui_rules", {
 export const A2uiCheck = Tool.make("a2ui_check", {
   description:
     "Check the interactive (A2UI Express) blocks of a reply before you send it, as the board will draw them, after the blocks already in your thread " +
-    "(so surface(\"<id>\", update=true) of an earlier surface checks too). Returns ok with the surfaces it draws, or the first error and which block it's in.",
+    '(so surface("<id>", update=true) of an earlier surface checks too). Returns ok with the surfaces it draws, or the first error and which block it\'s in.',
   parameters: Schema.Struct({
     text: Schema.String.annotate({ description: "The reply as you'll send it (with its <a2ui> … </a2ui> blocks), or one block's Express alone" }),
   }),

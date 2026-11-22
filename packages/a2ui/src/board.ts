@@ -6,3 +6,6 @@ import { basicCatalog } from "./catalog.ts"
 
 /** The catalogs an agent writes against (the inference catalogs). */
 export const boardCatalogs = (): ReadonlyArray<CatalogApi> => [basicCatalog()]
+
+/** How a block's messages are lowered for the renderer: the macros expanded, when there are any. */
+export const boardTransform = (): ((messages: ReadonlyArray<unknown>) => ReadonlyArray<unknown>) | undefined => undefined

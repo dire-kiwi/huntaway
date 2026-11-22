@@ -3,15 +3,15 @@ import { actionMessage, actionOf, closeOf, hasBlock, segments } from "../src/ind
 
 describe("segments", () => {
   it("leaves a reply without a block as Markdown", () => {
-    expect(segments("Just **text**.")).toEqual([{ kind: "markdown", text: "Just **text**." }])
+    expect(segments("Just **text**.")).toEqual([{ kind: "markdown", text: "Just **text**.", offset: 0 }])
   })
 
   it("splits prose and a block", () => {
     const text = 'Pick one:\n<a2ui>\nsurface("pick")\nroot = Text("Hi")\n</a2ui>\nThanks.'
     expect(segments(text)).toEqual([
-      { kind: "markdown", text: "Pick one:\n" },
+      { kind: "markdown", text: "Pick one:\n", offset: 0 },
       { kind: "a2ui", source: 'surface("pick")\nroot = Text("Hi")', closed: true, offset: 10 },
-      { kind: "markdown", text: "\nThanks." },
+      { kind: "markdown", text: "\nThanks.", offset: 58 },
     ])
   })
 
@@ -30,15 +30,15 @@ describe("segments", () => {
     const [block, after] = segments(text)
     expect(block).toMatchObject({ kind: "a2ui", closed: true })
     expect(block?.kind === "a2ui" && block.source.endsWith('</a2ui>\n""")')).toBe(true)
-    expect(after).toEqual({ kind: "markdown", text: "\nafter" })
+    expect(after).toMatchObject({ kind: "markdown", text: "\nafter" })
   })
 
   it("leaves a block shown in a code fence, or mid-line, as Markdown", () => {
     const fenced = 'Write it like this:\n```\n<a2ui>\nroot = Text("x")\n</a2ui>\n```\n~~~md\n<a2ui>\n~~~'
-    expect(segments(fenced)).toEqual([{ kind: "markdown", text: fenced }])
+    expect(segments(fenced)).toEqual([{ kind: "markdown", text: fenced, offset: 0 }])
     expect(hasBlock(fenced)).toBe(false)
     const inline = "The tag is `<a2ui>`, then the Express."
-    expect(segments(inline)).toEqual([{ kind: "markdown", text: inline }])
+    expect(segments(inline)).toEqual([{ kind: "markdown", text: inline, offset: 0 }])
   })
 
   it("finds a block after a fence closes", () => {

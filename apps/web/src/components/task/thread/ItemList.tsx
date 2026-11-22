@@ -9,6 +9,7 @@ import { AttachmentList } from "../Attachments"
 import { lineage, ThreadCtx, usePendingFocus } from "./context"
 import { CompactLine, ConnectionRow, EventLine, FoldedTurnRow, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
 import { Markdown } from "./Markdown"
+import { ActionText, isAction, Reply } from "./a2ui/A2ui"
 import { AutomationChangeCard, isWorkflowApproval, ProjectChangeCard, TaskDeletionCard, WorkflowChangeCard } from "./requestCards"
 import { SuggestionsCard } from "./SuggestionsCard"
 import type { Item, ReportData } from "./threadModel"
@@ -110,12 +111,13 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
               it.auto ? "border-line bg-transparent text-muted italic" : "border-line-strong bg-raised",
             )}
           >
-            <UserText text={it.text} hostId={hostId} />
+            {isAction(it.text) ? <ActionText text={it.text} /> : <UserText text={it.text} hostId={hostId} />}
           </div>
         </div>
       )
     case "text":
-      return <Markdown text={it.text} />
+      // HE-77: a reply with an `<a2ui>` block draws it as UI.
+      return it.text.includes("<a2ui>") ? <Reply row={it.key} text={it.text} /> : <Markdown text={it.text} />
     case "thinking":
       return <Thinking text={it.text} />
     case "tools":

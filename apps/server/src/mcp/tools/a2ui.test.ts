@@ -24,7 +24,7 @@ describe("a2ui tools", () => {
         { type: "item.added", item: { id: "m1", type: "assistant_message", text: first, created_at: Timestamp.make(AT) } },
       ])
       assert.deepStrictEqual(ok(yield* call(me, "a2ui_check", { text: update })), { ok: true, blocks: 1, surfaces: ["pick"] })
-      const bad = ok(yield* call(me, "a2ui_check", { text: '<a2ui>\nroot = Nope()\n</a2ui>' }))
+      const bad = ok(yield* call(me, "a2ui_check", { text: "<a2ui>\nroot = Nope()\n</a2ui>" }))
       assert.strictEqual(bad["ok"], false)
       assert.include(String(bad["error"]), "Nope")
     }).pipe(Effect.provide(TestMcp())),

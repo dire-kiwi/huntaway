@@ -52,7 +52,10 @@ export class ThreadSurfaces<T extends ComponentApi> {
   private version = 0
   private onAction: ((action: ActionPayload) => void) | null = null
 
-  constructor(private readonly options: ThreadSurfacesOptions<T>) {
+  private readonly options: ThreadSurfacesOptions<T>
+
+  constructor(options: ThreadSurfacesOptions<T>) {
+    this.options = options
     this.reset()
   }
 

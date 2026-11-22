@@ -11,7 +11,7 @@ export const ACTION_FENCE = "a2ui-action"
 
 /** A piece of a reply: Markdown, or an `<a2ui>` block's Express source (`closed` false while it is still streaming). */
 export type Segment =
-  | { readonly kind: "markdown"; readonly text: string }
+  | { readonly kind: "markdown"; readonly text: string; readonly offset: number }
   | { readonly kind: "a2ui"; readonly source: string; readonly closed: boolean; readonly offset: number }
 
 /**
@@ -62,7 +62,7 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/
  * of the text, `closed: false`: it is still streaming in, or the agent forgot to close it.
  */
 export function segments(text: string): ReadonlyArray<Segment> {
-  if (!text.includes(OPEN)) return [{ kind: "markdown", text }]
+  if (!text.includes(OPEN)) return [{ kind: "markdown", text, offset: 0 }]
   const out: Array<Segment> = []
   let markdownFrom = 0
   let fence: { char: string; length: number } | null = null
@@ -80,7 +80,7 @@ export function segments(text: string): ReadonlyArray<Segment> {
       const open = lineStart + line.indexOf(OPEN)
       const sourceFrom = open + OPEN.length
       const close = closeOf(text, sourceFrom)
-      pushMarkdown(out, text.slice(markdownFrom, open))
+      pushMarkdown(out, text, markdownFrom, open)
       const source = text.slice(sourceFrom, close === -1 ? text.length : close)
       out.push({ kind: "a2ui", source: trimNewlines(source), closed: close !== -1, offset: open })
       if (close === -1) return out
@@ -93,12 +93,13 @@ export function segments(text: string): ReadonlyArray<Segment> {
     if (nl === -1) break
     lineStart = nl + 1
   }
-  pushMarkdown(out, text.slice(markdownFrom))
+  pushMarkdown(out, text, markdownFrom, text.length)
   return out
 }
 
-function pushMarkdown(out: Array<Segment>, text: string) {
-  if (text.trim() !== "") out.push({ kind: "markdown", text })
+function pushMarkdown(out: Array<Segment>, text: string, from: number, to: number) {
+  const part = text.slice(from, to)
+  if (part.trim() !== "") out.push({ kind: "markdown", text: part, offset: from })
 }
 
 const trimNewlines = (s: string) => s.replace(/^\s*\n/, "").replace(/\n\s*$/, "")
