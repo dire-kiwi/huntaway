@@ -1,17 +1,18 @@
 import { clsx } from "clsx"
-import { ExternalLink, Globe, Loader2, MonitorPlay, Square } from "lucide-react"
+import { Cable, Copy, ExternalLink, Globe, Loader2, MonitorPlay, Square } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { backgroundLabel, serverUrl, type HostTask as Task } from "@huntaway/client"
-import type { BackgroundItem, TaskServer } from "@huntaway/contracts"
+import type { BackgroundItem, PortForward, TaskServer } from "@huntaway/contracts"
 import { useNow } from "../../../state/clock"
 import { exitError, useMutation } from "../../../state/mutation"
-import { millisOf } from "../../ui"
+import { copyText, millisOf } from "../../ui"
 import { duration } from "../../ui/time"
+import { desktopForward, desktopForwards, forwardCommand } from "./forwardPort"
 
 /**
  * What the task's agent left going (HA-405), above its composer: the shells it has running in the background (a dev
  * server, a watcher), each with a Stop that ends it and leaves the agent be, and the servers its processes listen on,
- * with Open and Stop. Once the agent's turn has ended with only those left it's idle, not working, and a message reaches
+ * with Open, Forward port (HE-81: shared with tailcat, for a client on another machine) and Stop. Once the agent's turn has ended with only those left it's idle, not working, and a message reaches
  * it at once.
  */
 export function BackgroundBanner({ task }: { task: Task }) {
@@ -74,6 +75,27 @@ function ShellRow({ task, item, onError }: { task: Task; item: BackgroundItem; o
 function ServerRow({ task, server, onError }: { task: Task; server: TaskServer; onError: (e: string | null) => void }) {
   const url = serverUrl(server, location.hostname)
   const [state, stopServer] = useMutation("tasks.stopServer")
+  const [forwarding, forwardServer] = useMutation("tasks.forwardServer")
+  // The host's share, and where the desktop app forwarded it (or why it didn't).
+  const [shared, setShared] = useState<{ readonly share: PortForward; readonly local: string | null; readonly error: string | null } | null>(null)
+  const [opening, setOpening] = useState(false)
+  const forward = () => {
+    onError(null)
+    void forwardServer(task.host_id, { id: task.id, port: server.port }).then((exit) => {
+      const err = exitError(exit)
+      if (err !== null || exit._tag !== "Success") return onError(`Couldn't forward the port: ${err ?? "no answer"}`)
+      const share = exit.value
+      if (!desktopForwards()) return setShared({ share, local: null, error: null })
+      setOpening(true)
+      return desktopForward(share.address, share.port).then((local) => {
+        setOpening(false)
+        if (local !== null && "url" in local) {
+          setShared({ share, local: local.url, error: null })
+          window.open(local.url, "_blank", "noreferrer")
+        } else setShared({ share, local: null, error: local?.error ?? null })
+      })
+    })
+  }
   const stop = () => {
     onError(null)
     void stopServer(task.host_id, { id: task.id, port: server.port }).then((exit) => {
@@ -82,25 +104,77 @@ function ServerRow({ task, server, onError }: { task: Task; server: TaskServer; 
     })
   }
   return (
-    <div className="flex min-w-0 items-center gap-2 py-0.5" data-server-port={server.port}>
-      <Globe size={12} className="shrink-0 text-muted" />
-      <span className="min-w-0 flex-1 truncate text-muted" title={`${server.command}\nListening on ${server.address}:${server.port} (pid ${server.pid})`}>
-        <span className="text-fg">localhost:{server.port}</span>
-        {server.detached && <span className="text-faint"> · outlives its run</span>}
-        <span className="text-faint"> · {server.command}</span>
-      </span>
-      <a
-        href={url}
-        target="_blank"
-        rel="noreferrer"
-        title={`Open ${url}`}
-        className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted hover:bg-white/5 hover:text-fg"
-      >
-        <ExternalLink size={10} /> Open
-      </a>
-      <RowButton busy={state.busy} title="Stop this server (its process group), not the agent" onClick={stop}>
-        <Square size={9} fill="currentColor" /> Stop
-      </RowButton>
+    <>
+      <div className="flex min-w-0 items-center gap-2 py-0.5" data-server-port={server.port}>
+        <Globe size={12} className="shrink-0 text-muted" />
+        <span className="min-w-0 flex-1 truncate text-muted" title={`${server.command}\nListening on ${server.address}:${server.port} (pid ${server.pid})`}>
+          <span className="text-fg">localhost:{server.port}</span>
+          {server.detached && <span className="text-faint"> · outlives its run</span>}
+          <span className="text-faint"> · {server.command}</span>
+        </span>
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          title={`Open ${url}`}
+          className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted hover:bg-white/5 hover:text-fg"
+        >
+          <ExternalLink size={10} /> Open
+        </a>
+        <RowButton
+          busy={forwarding.busy || opening}
+          title={`Share this server with tailcat, so that it's localhost:${server.port} on this computer too, wherever the board's host is`}
+          onClick={forward}
+        >
+          {!(forwarding.busy || opening) && <Cable size={10} />} Forward port
+        </RowButton>
+        <RowButton busy={state.busy} title="Stop this server (its process group), not the agent" onClick={stop}>
+          <Square size={9} fill="currentColor" /> Stop
+        </RowButton>
+      </div>
+      {shared && <Forwarded {...shared} />}
+    </>
+  )
+}
+
+/** Where a forward of the server is: the desktop app's local URL, or the command to run here. */
+function Forwarded({ share, local, error }: { share: PortForward; local: string | null; error: string | null }) {
+  const [copied, setCopied] = useState(false)
+  if (local !== null)
+    return (
+      <div className="flex min-w-0 items-center gap-1 pb-0.5 pl-5 text-[11px] text-faint" data-server-forward={share.port}>
+        Forwarded here with tailcat:
+        <a href={local} target="_blank" rel="noreferrer" className="truncate text-muted hover:text-fg hover:underline">
+          {local}
+        </a>
+      </div>
+    )
+  const command = forwardCommand(share.address, share.port)
+  return (
+    <div className="min-w-0 pb-0.5 pl-5 text-[11px] text-faint" data-server-forward={share.port}>
+      {error && <div className="text-red-400">{error}</div>}
+      <div>
+        Run this on the computer to reach it from, with{" "}
+        <a href="https://tailscale.com/tailcat" target="_blank" rel="noreferrer" className="text-muted hover:text-fg hover:underline">
+          tailcat
+        </a>
+        , then open localhost:{share.port} there. The address is a key to the server: keep it to yourself.
+      </div>
+      <div className="mt-0.5 flex min-w-0 items-center gap-1">
+        <code className="min-w-0 flex-1 truncate rounded bg-black/20 px-1.5 py-0.5 font-mono text-muted" title={command}>
+          {command}
+        </code>
+        <RowButton
+          busy={false}
+          title="Copy the command"
+          onClick={() => {
+            copyText(command)
+            setCopied(true)
+          }}
+        >
+          <Copy size={10} /> {copied ? "Copied" : "Copy"}
+        </RowButton>
+      </div>
     </div>
   )
 }

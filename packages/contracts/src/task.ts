@@ -238,6 +238,18 @@ export const TaskServer = Schema.Struct({
 })
 export interface TaskServer extends Schema.Schema.Type<typeof TaskServer> {}
 
+/**
+ * HE-81: a task's dev server shared with tailcat (https://tailscale.com/tailcat) by its host: `tailcat forward <address>
+ * <port>` on another machine makes it `localhost:<port>` there. The address is a secret: whoever has it can connect.
+ */
+export const PortForward = Schema.Struct({
+  /** The tailcat address (`tc…`) of the host's `tailcat serve`, new for each share. */
+  address: Schema.String,
+  /** The server's port on its host, which the share serves. */
+  port: Schema.Int,
+})
+export interface PortForward extends Schema.Schema.Type<typeof PortForward> {}
+
 /** A message sent to a running agent, kept until the agent takes it in. */
 export const Steer = Schema.Struct({
   /** Also the stream-json message's uuid, which the agent echoes back when it takes it in. */

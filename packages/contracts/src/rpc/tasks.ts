@@ -4,7 +4,7 @@ import { TaskSkills } from "../agentTools.ts"
 import { Conflict, Invalid, NotFound, Unavailable } from "../errors.ts"
 import { TaskId } from "../ids.ts"
 import { Auth, RequiredScope } from "../session.ts"
-import { Context as TaskContext, NewTask, Task, TaskFilter, TaskPatch } from "../task.ts"
+import { Context as TaskContext, NewTask, PortForward, Task, TaskFilter, TaskPatch } from "../task.ts"
 
 /** Tasks (the old `/projects/{id}/tasks`, `/profiles/{id}/tasks`, `/tasks/{id}`). Changes emit `task` or `task_deleted`. */
 export class TaskRpcs extends RpcGroup.make(
@@ -43,6 +43,16 @@ export class TaskRpcs extends RpcGroup.make(
     payload: { id: TaskId, port: Schema.Int },
     success: Task,
     error: Schema.Union([NotFound, Conflict, Invalid]),
+  }).annotate(RequiredScope, "operate"),
+  /**
+   * HE-81: share the task's server on `port` with tailcat, so a client on another machine can forward it to its own
+   * localhost. The share lasts while the task lists the server (and the board runs); asking again gives the same one.
+   * `Unavailable` when the host has no tailcat, or it didn't start.
+   */
+  Rpc.make("tasks.forwardServer", {
+    payload: { id: TaskId, port: Schema.Int },
+    success: PortForward,
+    error: Schema.Union([NotFound, Invalid, Unavailable]),
   }).annotate(RequiredScope, "operate"),
   /**
    * Stop the agent's background shells, or just `background_id`, leaving the agent be (the banner's Stop; the old
