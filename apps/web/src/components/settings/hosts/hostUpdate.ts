@@ -52,17 +52,24 @@ export const idleUpdate: UpdateState = { phase: null, boot: null, sent: false, e
 /** Each host's Update, by host id, for as long as the page is open. */
 export const hostUpdateAtom = Atom.family((_host: string) => Atom.make<UpdateState>(idleUpdate).pipe(Atom.keepAlive))
 
+/** How long an Update waits to read the host's boot id before sending it without. */
+const BOOT_READ = "5 seconds"
+
 /** Sends `host` this board's update (`hub.hosts.pushUpdate`), noting where it is in `hostUpdateAtom`. */
 const sendUpdate = (host: Host): Effect.Effect<void, never, AtomRegistry.AtomRegistry> =>
   Effect.gen(function* () {
     const atom = hostUpdateAtom(host.id)
     yield* Atom.set(atom, { ...idleUpdate, phase: "starting" })
-    // Unread (a host on another protocol, one whose status read dies): no boot to tell it came back by, so it's over
-    // once it's back on what it was sent (HostVersion).
-    const boot = yield* Atom.getResult(query("admin.status", host.id, undefined), { suspendOnWaiting: true }).pipe(
-      Effect.map((st): string | null => st.boot_id),
-      Effect.catchCause(() => Effect.succeed(null)),
-    )
+    // Its boot id, to tell it came back by. Not read from a host this page can't reach (one on another protocol, which
+    // the hub lists not connected: the read would wait for it for good), nor for long, nor past a failure: with no boot
+    // it's over once it's back on what it was sent, or answers again with no restart under way (HostVersion).
+    const boot = host.connected
+      ? yield* Atom.getResult(query("admin.status", host.id, undefined), { suspendOnWaiting: true }).pipe(
+          Effect.map((st): string | null => st.boot_id),
+          Effect.timeout(BOOT_READ),
+          Effect.catchCause(() => Effect.succeed(null)),
+        )
+      : null
     yield* Atom.update(atom, (s) => ({ ...s, boot }))
     const exit = yield* Effect.exit(hubMutate("hub.hosts.pushUpdate", { id: LinkId.make(host.id) }))
     // The host's status read before the update isn't what it says now.

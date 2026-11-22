@@ -86,7 +86,8 @@ export function HostVersion({ host }: { host: Host }) {
     if (!following || polled.waiting) return
     if (AsyncResult.isSuccess(polled)) {
       const st = polled.value
-      if (boot && st.boot_id !== boot) setState(idleUpdate)
+      // Back (a new boot), or, its boot unread before the update, up again with no restart under way.
+      if (boot ? st.boot_id !== boot : !st.restart) setState(idleUpdate)
       else if (st.restart?.phase === "failed") setState({ ...idleUpdate, error: st.restart.error ?? "update failed" })
       else if (st.restart && st.restart.phase !== phase) setState((s) => ({ ...s, phase: st.restart?.phase ?? s.phase }))
     } else if (AsyncResult.isFailure(polled) && phase !== "restarting") setState((s) => ({ ...s, phase: "restarting" }))

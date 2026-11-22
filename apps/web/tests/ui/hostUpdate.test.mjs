@@ -124,16 +124,58 @@ test("a release host's Update ends when it comes back on the hub's version, its 
           return success({ ok: true })
         }
         if (r.tag !== "admin.status" || via !== "relay") return undefined
-        // Unread before; after, a status with no restart under way.
-        return updates ? success(serverStatus({ boot_id: "b2", running_agents: 0 })) : { _tag: "Failure", cause: [{ _tag: "Die", defect: "gone" }] }
+        // Unread before; after, still downloading, so only coming back on the hub's version ends it.
+        return updates
+          ? success(serverStatus({ boot_id: "b2", running_agents: 0, restart: { phase: "downloading", log: "", error: null } }))
+          : { _tag: "Failure", cause: [{ _tag: "Die", defect: "gone" }] }
       },
     })
-    await ui.run(["goto /settings/hosts", `click Update to v${own}`, `wait [data-host="${hostId}"] >> text=starting`])
-    await eventually(() => assert.equal(updates, 1), 10000)
+    await ui.run(["goto /settings/hosts", `click Update to v${own}`, `wait [data-host="${hostId}"] >> text=downloading`])
+    assert.equal(updates, 1)
     // Back on the hub's version: the hub lists it again (a rename sends the list).
     linked = { ...linked, version: own }
     await hub.rpc("hub.hosts.update", { id: hostId, name: "back" })
-    await ui.run([`wait [data-host="${hostId}"] >> text=/^v${own.replaceAll(".", "\\.")}/`, `gone [data-host="${hostId}"] >> text=starting`])
+    await ui.run([`wait [data-host="${hostId}"] >> text=/^v${own.replaceAll(".", "\\.")}/`, `gone [data-host="${hostId}"] >> text=downloading`])
+    assert.equal(await ui.page.locator(`[data-host="${hostId}"] button`, { hasText: "Update to" }).count(), 0)
+  })
+})
+
+// HE-76 review: a host on another protocol, which the hub lists not connected, can't be reached for its status, and the
+// Update waited for it for good and was never sent. It's sent at once, and over once the hub lists it on its commit.
+test("a host that needs an update is sent it, and is done once it's back on the hub's commit", async () => {
+  const [running, remote] = ["c", "a"].map((c) => c.repeat(40))
+  await withBrowser(hub, {}, async (ui) => {
+    let linked = { commit: remote, updates_from: "checkout", status: "needs_update", connected: false, protocol: 9999 }
+    let updates = 0
+    await routeSockets(ui.page, {
+      rewrite: (tag, value, via) => {
+        if (via !== "rpc") return value
+        if (tag === "host.info") return { ...value, commit: running }
+        if (tag === "hub.hosts.watch") return value.map((h) => (h.id === hostId ? { ...h, ...linked } : h))
+        return value
+      },
+      handle: (r, via) => {
+        if (r.tag === "hub.hosts.pushUpdate") {
+          updates++
+          return success({ ok: true })
+        }
+        if (r.tag !== "admin.status") return undefined
+        if (via === "rpc") return success(serverStatus({ running_commit: running }))
+        // Reachable again: still building, so only coming back on the hub's commit ends it.
+        return success(serverStatus({ boot_id: "b1", running_agents: 0, restart: { phase: "building_server", log: "", error: null } }))
+      },
+    })
+    await ui.run(["goto /settings/hosts", `wait [data-host="${hostId}"] >> text=Needs an update`, `click [data-host="${hostId}"] >> text=Update to ccccccc`])
+    await eventually(() => assert.equal(updates, 1), 3000)
+    await ui.run([`wait [data-host="${hostId}"] >> text=starting`])
+    // Back on the hub's protocol and commit: the hub lists it again (a rename sends the list).
+    linked = { commit: running, updates_from: "checkout" }
+    await hub.rpc("hub.hosts.update", { id: hostId, name: "back again" })
+    await ui.run([
+      `wait [data-host="${hostId}"] >> text=/ccccccc/`,
+      `gone [data-host="${hostId}"] >> text=starting`,
+      `gone [data-host="${hostId}"] >> text=building server`,
+    ])
     assert.equal(await ui.page.locator(`[data-host="${hostId}"] button`, { hasText: "Update to" }).count(), 0)
   })
 })
