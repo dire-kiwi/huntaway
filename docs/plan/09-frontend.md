@@ -862,7 +862,9 @@ What the agent is told and the tools are in [07-agents.md](07-agents.md#interact
   `MessageProcessor`, so a later reply's `update=true` changes the surface an earlier one drew. Each block shows the
   surfaces it was the last to draw; an earlier copy says "Interactive reply updated below". A block that doesn't parse
   or draw shows why, with its source behind a click; nothing of it is drawn. When the start of the list changes (an
-  older page loaded, a rewind) it is rebuilt from the start. The rows are the loaded window of the thread, so a block
+  older page loaded, a rewind) it is rebuilt from the start, keeping each surface's data (what the user typed or
+  picked and hasn't sent) where the same block still draws it, and a click on its way: only an entry the thread
+  hadn't applied before ends one. The rows are the loaded window of the thread, so a block
   that updates a surface drawn before it (`missing`) says so, with Load earlier messages (`more` and `loadEarlier` on
   the thread's context), rather than that it's wrong. A block in a subagent's rows isn't one of the main
   conversation's entries and shows as code. A surface is locked (`inert`, dimmed) while a click on it is on its way

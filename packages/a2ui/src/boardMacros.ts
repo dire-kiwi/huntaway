@@ -2,7 +2,8 @@
 // (`root = Choice("Which approach?", [{label: "A", value: "a"}, …])`) where the same in basic components is a dozen,
 // and the board lowers it to those components (`MacroExpander.transformToTransport`) before it draws it, so the
 // renderer only knows the basic catalog. Each sends the agent one event with what the user picked.
-import { Action, Button, Card, ChoicePicker, Column, DataBinding, Row, Text } from "./builder/index.ts"
+import { Action, Button, Card, CheckRule, ChoicePicker, Column, DataBinding, Required, Row, Text } from "./builder/index.ts"
+import { BASIC_CATALOG_ID } from "./catalog.ts"
 import { macro, param } from "./macros/index.ts"
 
 /** A question with options and a button that sends the pick. */
@@ -10,7 +11,8 @@ export const Choice = macro({
   name: "Choice",
   description:
     "A question with options to pick from and a button that sends the pick: you get the event `event` with context {choice: [the values picked]}. " +
-    "Four or fewer short options show as chips, more as a list.",
+    "The button stays disabled until something is picked. Four or fewer short options show as chips, more as a list. Several on one surface " +
+    "keep their picks apart; give each its own `event` so you can tell their answers apart.",
   params: {
     question: param.dynamicString("The question, as a line of text (simple Markdown)."),
     options: param.array(param.choicePickerOption(), "The options, each {label, value}."),
@@ -18,9 +20,9 @@ export const Choice = macro({
     button: param.string("The button's label.", { default: "Choose" }),
     multiple: param.boolean("Whether the user may pick more than one.", { default: false }),
   },
-  render: ({ question, options, event, button, multiple }) => {
-    // One data path per event, so two Choices on a surface (with different events) keep their picks apart.
-    const picked = new DataBinding(`/choice/${event.replace(/[^A-Za-z0-9_]/g, "_")}`)
+  render: ({ question, options, event, button, multiple }, instance) => {
+    // A data path of the instance's own (its component id), so two Choices on a surface keep their picks apart.
+    const picked = new DataBinding(`/choice/${(instance.id ?? event).replace(/[^A-Za-z0-9_]/g, "_")}`)
     const short = options.length <= 4 && options.every((o) => typeof o.label !== "string" || o.label.length <= 24)
     return Card({
       child: Column({
@@ -34,7 +36,15 @@ export const Choice = macro({
           }),
           Row({
             justify: "end",
-            children: [Button({ child: Text({ text: button }), variant: "primary", action: Action.event(event, { context: { choice: picked } }) })],
+            children: [
+              Button({
+                child: Text({ text: button }),
+                variant: "primary",
+                action: Action.event(event, { context: { choice: picked } }),
+                // Nothing picked, nothing to send: the button is disabled until there's a pick.
+                checks: [new CheckRule(Required({ value: picked, catalogId: BASIC_CATALOG_ID }), "Pick an option first.")],
+              }),
+            ],
           }),
         ],
       }),

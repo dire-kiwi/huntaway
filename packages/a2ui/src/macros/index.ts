@@ -4,7 +4,7 @@
 // catalogs' components. v1.0 only. Apache-2.0, as the code it ports; see the header of each module.
 
 export { macro, MacroDefinition, MacroProtocolError, normalizeVersionFamily, validateV1MacroName } from "./macro.ts"
-export type { AnyMacro, Macro, MacroOptions, MacroParameter, MacroResult, MacroSchemaOptions, MacroVersionFamily } from "./macro.ts"
+export type { AnyMacro, Macro, MacroInstance, MacroOptions, MacroParameter, MacroResult, MacroSchemaOptions, MacroVersionFamily } from "./macro.ts"
 export { param } from "./params.ts"
 export type {
   AnyParam,

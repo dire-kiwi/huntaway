@@ -27,9 +27,9 @@ describe("ThreadSurfaces", () => {
     t.sync([pick])
     t.setSending("pick", true)
     expect(t.block("m1@0")).toMatchObject({ surfaces: [{ sending: true }] })
-    t.sync([pick, { kind: "action", surfaceId: "pick" }])
+    t.sync([pick, { kind: "action", key: "m2#0", surfaceId: "pick" }])
     expect(t.block("m1@0")).toMatchObject({ surfaces: [{ id: "pick", answered: true, sending: false }] })
-    t.sync([pick, { kind: "action", surfaceId: "pick" }, update])
+    t.sync([pick, { kind: "action", key: "m2#0", surfaceId: "pick" }, update])
     // The earlier copy was updated below; the update is live.
     expect(t.block("m1@0")).toEqual({ ok: true, surfaces: [], superseded: true })
     expect(t.block("m3@0")).toMatchObject({ ok: true, surfaces: [{ id: "pick", answered: false }] })
@@ -79,5 +79,20 @@ describe("ThreadSurfaces", () => {
     expect(t.block("m3@0")).toMatchObject({ ok: false, missing: "pick" })
     t.sync([block("m4@0", 'root = Nope("x")')])
     expect(t.block("m4@0")).toMatchObject({ ok: false, missing: undefined })
+  })
+
+  it("keeps what the user typed, and a click on its way, when an older page rebuilds the surfaces (HE-77 review)", () => {
+    const t = make()
+    const form = block("m5@0", 'surface("f")\n$/form/title = "A"\nroot = TextField("Title", $/form/title)')
+    t.sync([form])
+    t.surface("f")?.dataModel.set("/form/title", "typed by user")
+    t.setSending("f", true)
+    // An older page comes in with a block and a click of its own.
+    t.sync([pick, { kind: "action", key: "m2#0", surfaceId: "pick" }, form])
+    expect(t.surface("f")?.dataModel.get("/form/title")).toBe("typed by user")
+    expect(t.block("m5@0")).toMatchObject({ surfaces: [{ id: "f", sending: true }] })
+    // A changed block draws as it now says.
+    t.sync([block("m5@0", 'surface("f")\n$/form/title = "B"\nroot = TextField("Title", $/form/title)')])
+    expect(t.surface("f")?.dataModel.get("/form/title")).toBe("B")
   })
 })

@@ -1031,7 +1031,9 @@ agent is told and two board tools.
   the surface's data (`actionMessage` in `packages/a2ui/src/message.ts`). Messages sent while a run is busy are
   joined into one, so a user's message can hold several clicks and other text: `clicksOf` finds every fence in it.
 - **The board's macros** (`packages/a2ui/src/boardMacros.ts`): `Choice(question, options, event="choose",
-  button="Choose", multiple=false)` (a ChoicePicker and a button sending `{choice: [values]}`) and `Confirm(title,
+  button="Choose", multiple=false)` (a ChoicePicker and a button sending `{choice: [values]}`, disabled by a
+  `required` check until there's a pick; its pick is kept at `/choice/<its component id>`, so several on a surface keep
+  theirs apart: the port gives `render` the instance, `{ id }`, which Python's macros don't have) and `Confirm(title,
   detail?, confirm="Go ahead", cancel="Cancel", event="confirm")` (two buttons sending `{confirmed: true|false}`): the
   two things agents ask most, as one line of Express each. `boardCatalogs()` is the basic catalog and the macros'
   sidecar catalog (`MacroExpander.transformCatalogs`), so the rules list them and the parser takes them;

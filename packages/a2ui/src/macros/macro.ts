@@ -75,12 +75,12 @@ export class MacroDefinition {
   /** The protocol family it targets: always v1.0 here. */
   readonly targetVersion: MacroVersionFamily = "1.0"
   /** Builds the macro's tree from coerced arguments, by parameter name. */
-  readonly render: (args: Readonly<Record<string, unknown>>) => unknown
+  readonly render: (args: Readonly<Record<string, unknown>>, instance?: MacroInstance) => unknown
   constructor(
     name: string,
     description: string | undefined,
     parameters: ReadonlyMap<string, MacroParameter>,
-    render: (args: Readonly<Record<string, unknown>>) => unknown,
+    render: (args: Readonly<Record<string, unknown>>, instance?: MacroInstance) => unknown,
   ) {
     validateV1MacroName(name)
     this.name = name
@@ -115,8 +115,19 @@ export interface MacroOptions<P extends Params> {
   /** What it renders, for the prompt. */
   readonly description?: string
   readonly params: P
-  /** Builds the tree from the coerced arguments; it must return a single root node. */
-  readonly render: (args: RenderArgs<P>) => MacroResult
+  /**
+   * Builds the tree from the coerced arguments; it must return a single root node. `instance` says which instance is
+   * being expanded (an addition of this port: Python's macros don't know their instance): its component id, which a
+   * macro can make its data paths from so that two instances on a surface keep their data apart. It has none when the
+   * macro is called from another's `render`.
+   */
+  readonly render: (args: RenderArgs<P>, instance: MacroInstance) => MacroResult
+}
+
+/** The instance of a macro being expanded. */
+export interface MacroInstance {
+  /** Its component id on the surface, when it has one. */
+  readonly id: string | undefined
 }
 
 /** A macro: callable from another macro's `render` (which inlines its tree), and registered with a `MacroExpander`. */
@@ -149,7 +160,8 @@ export function macro<P extends Params>(options: MacroOptions<P>): Macro<P> {
   const parameters = new Map<string, MacroParameter>(
     Object.entries(options.params).map(([name, p]) => [name, { name, type: p.type, description: p.description, presence: p.presence, default: p.default }]),
   )
-  const render = (args: Readonly<Record<string, unknown>>): MacroResult => options.render(asRenderArgs<P>(args))
+  const render = (args: Readonly<Record<string, unknown>>, instance: MacroInstance = { id: undefined }): MacroResult =>
+    options.render(asRenderArgs<P>(args), instance)
   const definition = new MacroDefinition(options.name, options.description, parameters, render)
   const call = (args: CallArgs<P>): MacroResult => render(withDefaults(parameters, args))
   return Object.assign(call, { definition })

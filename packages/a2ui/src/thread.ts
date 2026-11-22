@@ -13,7 +13,9 @@ import { MessageProcessor } from "@a2ui/web_core"
 import { errorText, surfaceIdsOf } from "./rules.ts"
 
 /** What the thread says, in order: a closed `<a2ui>` block of a reply (its key: the item and the offset), or a click. */
-export type ThreadEntry = { readonly kind: "block"; readonly key: string; readonly source: string } | { readonly kind: "action"; readonly surfaceId: string }
+export type ThreadEntry =
+  | { readonly kind: "block"; readonly key: string; readonly source: string }
+  | { readonly kind: "action"; readonly key: string; readonly surfaceId: string }
 
 /** What one block shows. */
 export type BlockView =
@@ -58,6 +60,11 @@ export class ThreadSurfaces<T extends ComponentApi> {
   private readonly sending = new Set<string>()
   private readonly listeners = new Set<() => void>()
   private version = 0
+  /**
+   * The entries applied so far, kept over a rebuild: only one that comes in new (the agent drawing a surface again, the
+   * thread showing a click) ends a click on its way, not one replayed when an older page comes in.
+   */
+  private readonly seen = new Set<string>()
   private onAction: ((action: ActionPayload) => void) | null = null
 
   private readonly options: ThreadSurfacesOptions<T>
@@ -88,16 +95,45 @@ export class ThreadSurfaces<T extends ComponentApi> {
   sync(entries: ReadonlyArray<ThreadEntry>): boolean {
     const same = this.applied.length <= entries.length && this.applied.every((a, i) => sameEntry(a.entry, entries[i]))
     if (same && this.applied.length === entries.length) return false
+    const kept = same ? null : this.surfaceData()
     if (!same) this.reset()
-    for (const entry of entries.slice(this.applied.length)) this.applied.push({ entry, view: this.apply(entry) })
+    for (const entry of entries.slice(this.applied.length)) {
+      this.applied.push({ entry, view: this.apply(entry) })
+      this.seen.add(entryKey(entry))
+    }
+    if (kept !== null) this.restore(kept)
     this.notify()
     return true
   }
 
+  /**
+   * Each surface's data now (what the user typed or picked, not yet sent), with the block that drew it last. The object
+   * itself: the processor it's from is about to go, so nothing changes it after.
+   */
+  private surfaceData(): ReadonlyArray<{ readonly id: string; readonly owner: string; readonly source: string; readonly data: unknown }> {
+    return [...this.owner].flatMap(([id, owner]) => {
+      const at = this.applied.find((a) => a.entry.kind === "block" && a.entry.key === owner)
+      const model = this.surface(id)?.dataModel
+      if (at?.entry.kind !== "block" || model === undefined) return []
+      return [{ id, owner, source: at.entry.source, data: model.get("/") }]
+    })
+  }
+
+  /** Puts a rebuild's surfaces' data back where the same block (same key and source) drew the surface last. */
+  private restore(kept: ReturnType<ThreadSurfaces<T>["surfaceData"]>) {
+    for (const k of kept) {
+      if (this.owner.get(k.id) !== k.owner) continue
+      const at = this.applied.find((a) => a.entry.kind === "block" && a.entry.key === k.owner)
+      if (at?.entry.kind !== "block" || at.entry.source !== k.source) continue
+      this.surface(k.id)?.dataModel.set("/", k.data)
+    }
+  }
+
   private apply(entry: ThreadEntry): BlockView | null {
+    const fresh = !this.seen.has(entryKey(entry))
     if (entry.kind === "action") {
       this.answered.add(entry.surfaceId)
-      this.sending.delete(entry.surfaceId)
+      if (fresh) this.sending.delete(entry.surfaceId)
       return null
     }
     // A block that names no surface gets its own, so two such blocks never collide.
@@ -117,7 +153,7 @@ export class ThreadSurfaces<T extends ComponentApi> {
         this.owner.set(id, entry.key)
         this.answered.delete(id)
         // The agent drew it again: a click still marked as on its way (one that never reached the thread) is moot.
-        this.sending.delete(id)
+        if (fresh) this.sending.delete(id)
       }
       return { ok: true, surfaces: [], superseded: false }
     } catch (e) {
@@ -171,7 +207,10 @@ export class ThreadSurfaces<T extends ComponentApi> {
 }
 
 const sameEntry = (a: ThreadEntry, b: ThreadEntry | undefined): boolean =>
-  b !== undefined && (a.kind === "block" ? b.kind === "block" && a.key === b.key && a.source === b.source : b.kind === "action" && a.surfaceId === b.surfaceId)
+  b !== undefined && a.key === b.key && (a.kind === "block" ? b.kind === "block" && a.source === b.source : b.kind === "action" && a.surfaceId === b.surfaceId)
+
+/** An entry as `seen` keeps it: a block's key and source (an edited block is new), a click's key. */
+const entryKey = (e: ThreadEntry): string => (e.kind === "block" ? `block\u0000${e.key}\u0000${e.source}` : `action\u0000${e.key}`)
 
 /** The surfaces a block's `surface("<id>", update=true)` lines name. */
 const updatedIds = (source: string): ReadonlyArray<string> =>

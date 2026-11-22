@@ -66,7 +66,8 @@ function entriesOf(items: ReadonlyArray<Item>): ReadonlyArray<ThreadEntry> {
       for (const s of segments(it.text)) if (s.kind === "a2ui" && s.closed) entries.push({ kind: "block", key: blockKey(it.key, s.offset), source: s.source })
     } else if (it.type === "user") {
       // Messages sent while a run was busy are joined into one: it can hold several clicks.
-      for (const click of clicksOf(it.text)?.clicks ?? []) entries.push({ kind: "action", surfaceId: click.action.surfaceId })
+      for (const [i, click] of (clicksOf(it.text)?.clicks ?? []).entries())
+        entries.push({ kind: "action", key: `${it.key}#${i}`, surfaceId: click.action.surfaceId })
     }
   }
   made.set(items, entries)

@@ -62,7 +62,7 @@ export function expandMacro(
     if (p.presence === "required" && !(p.name in coerced)) throw new TypeError(`Macro '${meta.name}' is missing the required argument '${p.name}'.`)
   }
 
-  const root = rootOf(meta.name, meta.render(withDefaults(meta.parameters, coerced)))
+  const root = rootOf(meta.name, meta.render(withDefaults(meta.parameters, coerced), { id: instanceId }))
   const flattened = flattenComponentTree(root, instanceId)
   validateV1MacroName(meta.name)
   for (const comp of flattened) {
