@@ -16,30 +16,38 @@ const WORD_CHAR = /[\p{L}\p{N}_$]/u
 /** Longer names than this aren't looked up. */
 export const MAX_SYMBOL_LENGTH = 200
 
-/** Words that are languages' own, not symbols: clicking one looks nothing up, and none is in an outline. */
+/**
+ * Words reserved in nearly every language that has them, not symbols: clicking one looks nothing up (but after a `.` or
+ * `::`, where it's a member's name: `Effect.catch`), and none is in an outline. A word that's a keyword in only some
+ * languages (`type`, `match`, `of`, `from`, `register`, `delete`…) is a name like any other.
+ */
 export const KEYWORDS: ReadonlySet<string> = new Set(
   (
-    "if else elif elsif for foreach while do switch case default break continue return yield await async new delete typeof " +
-    "instanceof in of is as not and or try catch except finally throw throws raise with function func fn def fun class " +
-    "struct enum interface trait impl type let const var val static public private protected internal readonly abstract " +
-    "override virtual final extends implements import export from package use using namespace module mod pub mut self " +
-    "this super true false null nil None True False undefined void unsafe extern inline sizeof goto lambda pass match " +
-    "end then begin defer go chan select where loop unless until when sub proc echo print require include " +
-    "int char float double long short unsigned signed bool auto register volatile"
+    "if else elif elsif for foreach while do switch case break continue return yield await async new typeof instanceof " +
+    "try catch except finally throw throws raise function class struct enum interface let const var static public private " +
+    "protected extends implements import export package namespace this super true false null nil None True False " +
+    "undefined void int char float double long short unsigned signed bool sizeof goto"
   ).split(" "),
 )
 
-/** Whether `s` is a name worth looking up: a name's characters, not too long, and not a keyword. */
-export const isSymbolName = (s: string): boolean => s.length > 0 && s.length <= MAX_SYMBOL_LENGTH && NAME_RE.test(s) && !KEYWORDS.has(s)
+/** Whether `s` is a name `git.symbol` looks up: a name's characters, not too long (a keyword too: the client decides). */
+export const isName = (s: string): boolean => s.length > 0 && s.length <= MAX_SYMBOL_LENGTH && NAME_RE.test(s)
 
-/** The symbol name `offset` (a character of `line`) is in, and where it starts; null for one that isn't (a keyword too). */
+/** Whether `s` is a name worth looking up: a name, and not a keyword. */
+export const isSymbolName = (s: string): boolean => isName(s) && !KEYWORDS.has(s)
+
+/**
+ * The symbol name `offset` (a character of `line`) is in, and where it starts; null for one that isn't. A keyword is
+ * one only as a member's name, after `.` or `::`.
+ */
 export function wordAt(line: string, offset: number): { readonly name: string; readonly start: number } | null {
   let start = Math.min(Math.max(offset, 0), line.length)
   let end = start
   while (start > 0 && WORD_CHAR.test(line[start - 1] ?? "")) start--
   while (end < line.length && WORD_CHAR.test(line[end] ?? "")) end++
   const name = line.slice(start, end)
-  return isSymbolName(name) ? { name, start } : null
+  const member = /(?:\.|::)\s*$/.test(line.slice(0, start))
+  return (member ? isName(name) && !/^\d/.test(name) : isSymbolName(name)) ? { name, start } : null
 }
 
 /** Where `name` is in `line` as a whole word (each start); `name` is a symbol name. */

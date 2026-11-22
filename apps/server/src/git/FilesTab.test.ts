@@ -136,6 +136,11 @@ describe("FilesTab", () => {
         yield* symlink("src/util.ts", `${wt}/in.ts`)
         assert.strictEqual((yield* c.read(id, "in.ts").pipe(Effect.orDie)).text, UTIL)
         assert.strictEqual(yield* fails(c.read(id, "out.txt")), "path: out.txt is a link out of the repository")
+        // Nor through a link into the repository's own .git (its config may hold a remote's token).
+        yield* git(wt, ["config", "remote.origin.url", "https://token@example.com/x.git"])
+        const gitDir = (yield* git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim()
+        yield* symlink(`${gitDir}/config`, `${wt}/cfg`)
+        assert.match(yield* fails(c.read(id, "cfg")), /^path: cfg is a link out of the /)
         for (const bad of ["../x", "/etc/passwd", "", ".git/config", "src/.git/x"]) assert.match(yield* fails(c.read(id, bad)), /^path: not a /, bad)
         assert.strictEqual(yield* fails(c.read(id, "src")), "path: src isn't a file")
         assert.strictEqual(yield* fails(c.read(id, "nope.ts")), "path: no such file: nope.ts")
@@ -162,7 +167,16 @@ describe("FilesTab", () => {
         )
         assert.isFalse(found.truncated)
         assert.deepStrictEqual((yield* c.symbol(id, "nowhere", undefined).pipe(Effect.orDie)).hits, [])
-        for (const bad of ["-e", "a b", "if", "x".repeat(201)]) assert.match(yield* fails(c.symbol(id, bad, undefined)), /^name: not a symbol's name/, bad)
+        for (const bad of ["-e", "a b", "1x", "x".repeat(201)]) assert.match(yield* fails(c.symbol(id, bad, undefined)), /^name: not a symbol's name/, bad)
+        // A keyword in some language is a name in another (`Option.match`, a field `type`): looked up all the same.
+        yield* write(`${wt}/src/opt.ts`, "export const match = 1\nOption.match(x)\n")
+        assert.deepStrictEqual(
+          (yield* c.symbol(id, "match", undefined).pipe(Effect.orDie)).hits.map((h) => [h.line, h.definition]),
+          [
+            [1, true],
+            [2, false],
+          ],
+        )
       }),
     ),
   )
@@ -181,10 +195,34 @@ describe("FilesTab", () => {
         assert.deepStrictEqual(yield* files(id), { available: true, folder: "proj/", files: ["proj/a.sh"], truncated: false })
         assert.strictEqual((yield* c.read(id, "proj/a.sh").pipe(Effect.orDie)).text, "helper() { :; }\n")
         assert.strictEqual(yield* fails(c.read(id, ".bashrc")), "path: .bashrc isn't in the project's folder (proj/)")
+        // Nor through a link: out of the folder, or into .git.
+        yield* symlink("../.bashrc", `${home}/proj/rc`)
+        yield* symlink("../.git", `${home}/proj/g`)
+        assert.strictEqual(yield* fails(c.read(id, "proj/rc")), "path: proj/rc is a link out of the project's files")
+        assert.strictEqual(yield* fails(c.read(id, "proj/g/config")), "path: proj/g/config is a link out of the project's files")
         assert.deepStrictEqual(
           (yield* c.symbol(id, "helper", undefined).pipe(Effect.orDie)).hits.map((h) => h.path),
           ["proj/a.sh"],
         )
+      }),
+    ),
+  )
+
+  it.live("leaves out a submodule and an untracked repository of its own, which aren't files", () =>
+    run(
+      Effect.gen(function* () {
+        const { id, wt } = yield* taskRepo
+        const lib = `${yield* tempDir}/lib`
+        yield* write(`${lib}/lib.ts`, "export const x = 1\n")
+        yield* newRepo(lib)
+        yield* git(lib, ["add", "."])
+        yield* git(lib, ["commit", "-qm", "lib"])
+        yield* git(wt, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "lib"])
+        const nested = `${wt}/nested`
+        yield* write(`${nested}/n.ts`, "n\n")
+        yield* newRepo(nested)
+        const tree = yield* files(id)
+        assert.deepStrictEqual(tree.files, [".gitignore", ".gitmodules", "README.md", "src/parse.ts", "src/util.ts"])
       }),
     ),
   )

@@ -1,5 +1,5 @@
 import { assert, describe, it } from "vite-plus/test"
-import { definesName, isSymbolName, occurrences, outline, wordAt } from "../src/symbols.ts"
+import { definesName, isName, isSymbolName, occurrences, outline, wordAt } from "../src/symbols.ts"
 
 // HE-79: the Code tab's search-based symbols.
 
@@ -7,6 +7,11 @@ describe("symbols", () => {
   it("a symbol's name: a name's characters, not a keyword", () => {
     for (const s of ["foo", "Foo_bar", "$el", "_", "naïve", "x1"]) assert.isTrue(isSymbolName(s), s)
     for (const s of ["", "1x", "a-b", "if", "return", "const", "a.b", "x".repeat(201)]) assert.isFalse(isSymbolName(s), s)
+    // Keywords of only some languages are names.
+    for (const s of ["type", "match", "of", "from", "register", "delete", "select", "module", "default", "self"]) assert.isTrue(isSymbolName(s), s)
+    // The server looks any name up; the client decides what's a keyword.
+    assert.isTrue(isName("if"))
+    assert.isFalse(isName("a b"))
   })
 
   it("the word clicked, and where a name is in a line", () => {
@@ -19,6 +24,11 @@ describe("symbols", () => {
     assert.isNull(wordAt(line, 4), "a keyword")
     assert.isNull(wordAt(line, line.length), "a keyword at the end")
     assert.deepStrictEqual(occurrences(line, "fooBar"), [8, 21])
+    // A member's name, a keyword elsewhere: `Option.match`, `Effect.catch`, `Foo::new`.
+    assert.deepStrictEqual(wordAt("Option.match(x)", 9), { name: "match", start: 7 })
+    assert.deepStrictEqual(wordAt("  Effect.catch((e) => e)", 11), { name: "catch", start: 9 })
+    assert.deepStrictEqual(wordAt("Foo::new()", 6), { name: "new", start: 5 })
+    assert.isNull(wordAt("} catch (e) {", 4))
     assert.deepStrictEqual(occurrences("fooBarX fooBar_ $fooBar fooBar", "fooBar"), [24])
     assert.deepStrictEqual(occurrences("a $x b$x", "$x"), [2])
   })
@@ -93,6 +103,8 @@ describe("symbols", () => {
       "  }",
       "}",
       "function helper() {}",
+      "export function register(a) {",
+      "export const match = 1",
     ].join("\n")
     assert.deepStrictEqual(
       outline(text, "a.ts").map((e) => [e.name, e.line, e.depth]),
@@ -102,6 +114,8 @@ describe("symbols", () => {
         ["depth", 5, 2],
         ["parse", 6, 2],
         ["helper", 13, 0],
+        ["register", 14, 0],
+        ["match", 15, 0],
       ],
     )
     assert.deepStrictEqual(

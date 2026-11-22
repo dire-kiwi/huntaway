@@ -1,6 +1,6 @@
 import { Context, Effect, FileSystem, Layer } from "effect"
 import type { GitFileContent, GitSymbol, GitSymbolHit, GitTree, TaskId } from "@huntaway/contracts"
-import { definesName, isSymbolName, occurrences } from "@huntaway/shared"
+import { definesName, isName, occurrences } from "@huntaway/shared"
 import { badPath, outsideFolder } from "./changes/parse.ts"
 import { ChangesInvalid, type ChangesError } from "./ChangesTab.ts"
 import { clearLocation, Git } from "./Git.ts"
@@ -108,18 +108,27 @@ export class FilesTab extends Context.Service<FilesTab, FilesTabShape>()("huntaw
         const repo = yield* repoOf(id)
         if (repo === null) return { available: false, reason: "not a git repository", files: [], truncated: false } satisfies GitTree
         const { top, folder } = repo
-        const listed = yield* run(
-          top,
-          ["--literal-pathspecs", "ls-files", "-z", "--cached", "--others", "--exclude-standard", ...scope(folder)],
-          32 * 1024 * 1024,
-        )
-        if (!listed.ok) return yield* invalid("repository", listed.stderr.trim() || "git ls-files failed")
+        // What git tracks, with each file's mode: a submodule (a gitlink, mode 160000) is a folder of another repository.
+        const tracked = yield* run(top, ["--literal-pathspecs", "ls-files", "-z", "--cached", "--stage", ...scope(folder)], 32 * 1024 * 1024)
+        if (!tracked.ok) return yield* invalid("repository", tracked.stderr.trim() || "git ls-files failed")
+        // And what it would: an untracked repository of its own is listed as its folder (`nested/`), which isn't a file.
+        const others = yield* run(top, ["--literal-pathspecs", "ls-files", "-z", "--others", "--exclude-standard", ...scope(folder)], 32 * 1024 * 1024)
+        if (!others.ok) return yield* invalid("repository", others.stderr.trim() || "git ls-files failed")
         // Files deleted from the working tree are still in the index: they aren't there to read.
         const deleted = yield* run(top, ["--literal-pathspecs", "ls-files", "-z", "--deleted", ...scope(folder)])
         const gone = new Set(lossy.decode(deleted.stdout).split("\0"))
-        const all = [...new Set(lossy.decode(listed.stdout).split("\0"))].filter((p) => p !== "" && !gone.has(p))
-        // The last one may have been cut short.
-        if (listed.truncated) all.pop()
+        const entries = (o: { readonly stdout: Uint8Array; readonly truncated: boolean }) => {
+          const list = lossy.decode(o.stdout).split("\0")
+          // The last one may have been cut short.
+          if (o.truncated) list.pop()
+          return list
+        }
+        const cached = entries(tracked).flatMap((e) => {
+          const tab = e.indexOf("\t")
+          return tab < 0 || e.startsWith("160000 ") ? [] : [e.slice(tab + 1)]
+        })
+        const all = [...new Set([...cached, ...entries(others)])].filter((p) => p !== "" && !p.endsWith("/") && !gone.has(p))
+        const listed = { truncated: tracked.truncated || others.truncated }
         all.sort()
         const result: GitTree = { available: true, folder, files: all.slice(0, MAX_FILES), truncated: listed.truncated || all.length > MAX_FILES }
         return result
@@ -127,16 +136,18 @@ export class FilesTab extends Context.Service<FilesTab, FilesTabShape>()("huntaw
 
       const read = Effect.fn("FilesTab.read")(function* (id: TaskId, path: string) {
         const { top, folder } = yield* need(id)
-        const bad =
-          badPath(path) ??
-          (path.split("/").includes(".git") ? `not a file of the working tree: ${path}` : null) ??
-          (folder !== null ? outsideFolder(path, folder) : null)
+        /** Why `p` (from the top) isn't a file of the view: in `.git`, or outside the project's folder. */
+        const outside = (p: string) =>
+          (p.split("/").includes(".git") ? `not a file of the working tree: ${path}` : null) ?? (folder !== null ? outsideFolder(p, folder) : null)
+        const bad = badPath(path) ?? outside(path)
         if (bad !== null) return yield* invalid("path", bad)
         const missing = () => invalid("path", `no such file: ${path}`)
         // A link is followed only to a file in the repository.
         const realTop = yield* fs.realPath(top).pipe(Effect.mapError(missing))
         const real = yield* fs.realPath(`${top}/${path}`).pipe(Effect.mapError(missing))
         if (!real.startsWith(`${realTop}/`)) return yield* invalid("path", `${path} is a link out of the repository`)
+        // Nor through a link into `.git` or out of the project's folder.
+        if (outside(real.slice(realTop.length + 1)) !== null) return yield* invalid("path", `${path} is a link out of the project's files`)
         const info = yield* fs.stat(real).pipe(Effect.mapError(missing))
         if (info.type !== "File") return yield* invalid("path", `${path} isn't a file`)
         const size = Number(info.size)
@@ -148,7 +159,7 @@ export class FilesTab extends Context.Service<FilesTab, FilesTabShape>()("huntaw
       })
 
       const symbol = Effect.fn("FilesTab.symbol")(function* (id: TaskId, name: string, from: string | undefined) {
-        if (!isSymbolName(name)) return yield* invalid("name", `not a symbol's name: ${name.slice(0, 100)}`)
+        if (!isName(name)) return yield* invalid("name", `not a symbol's name: ${name.slice(0, 100)}`)
         const { top, folder } = yield* need(id)
         // A word (`-w`), as given (`-F`), in text files (`-I`), untracked ones too; `-e` so the name is never an option.
         const o = yield* run(

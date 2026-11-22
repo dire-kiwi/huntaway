@@ -30,6 +30,27 @@ beforeAll(async () => {
 })
 afterAll(() => server?.stop())
 
+/** Clicks the middle of the first character of `word` in line `n` (from 0) of the file shown. */
+async function clickWord(page, n, word) {
+  const at = await page.locator(`css=[data-n='${n}'] [data-code]`).evaluate((code, w) => {
+    const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT)
+    let offset = code.textContent.indexOf(w)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (offset < node.textContent.length) {
+        const range = document.createRange()
+        range.setStart(node, offset)
+        range.setEnd(node, offset + 1)
+        const box = range.getBoundingClientRect()
+        return { x: box.left + box.width / 2, y: box.top + box.height / 2 }
+      }
+      offset -= node.textContent.length
+    }
+    return null
+  }, word)
+  if (!at) throw new Error(`${word} isn't in line ${n}`)
+  await page.mouse.click(at.x, at.y)
+}
+
 test("finds a file, looks a name up, follows a use and goes back", async () => {
   await withBrowser(server, {}, async (ui) => {
     // The README first, as its preview; the tree beside it.
@@ -38,7 +59,9 @@ test("finds a file, looks a name up, follows a use and goes back", async () => {
     await ui.run(["press t", "type util", "press Enter", "wait css=[data-n='0'] >> text=helper"])
     await ui.run(["wait role=treeitem[name='util.ts'][selected]"])
     // A click on the name looks it up: its definition here, its uses in parse.ts.
-    await ui.run(["click css=[data-n='0'] [data-code] span:text-is('helper')", "wait role=heading[name=/Definitions/]"])
+    // Clicked where it is in the line, whether or not the highlighter's colours have come yet (they cut it into spans).
+    await clickWord(ui.page, 0, "helper")
+    await ui.run(["wait role=heading[name=/Definitions/]"])
     const panel = ui.page.getByLabel("Symbol")
     await panel.getByText("util.ts").first().waitFor()
     await panel.getByText("parse.ts").first().waitFor()

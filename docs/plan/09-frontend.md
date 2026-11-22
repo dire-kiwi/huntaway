@@ -302,14 +302,15 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 ### The Code tab (HE-79)
 
 - **Where.** `components/code/`: `Code.tsx` (the view, a `preloadable` chunk mounted by `task/view/TabContent.tsx` for the
-  `code` tab, which every task with a Changes tab has), `FileTree.tsx`, `FileView.tsx` (`CodeLines`), `SymbolPanel.tsx`
+  `code` tab, which every task with a Changes tab has; on a phone the task's tabs are tighter so all of them still fit), `FileTree.tsx`, `FileView.tsx` (`CodeLines`), `SymbolPanel.tsx`
   (the symbol's hits, and the file's outline), `tree.ts` and `lines.ts` (plain, tested in `tests/unit/code/`), `state.ts`.
 - **What it shows.** The tree of `git.files` (folders first, a folder holding one folder on one row, files with changes
   marked from `git.status` as the Changes tab lists them), a finder over it (`t`, Enter opens the first match), the file
   (`git.readFile`) highlighted by the Changes tab's Shiki worker (`useTextHighlight` in `changes/highlight.ts`, files of
   up to 20,000 lines), a Markdown file as its preview first, and the README of the project's folder until a file is
   picked. Over 3,000 lines only the lines in view (and 80 each side) are drawn.
-- **Symbols.** A click on a name (not a drag) takes the word under the caret (`wordAt`) and looks it up (`git.symbol`):
+- **Symbols.** A click on a name (not a drag) takes the word under the caret (`wordAt`: not a keyword, unless it's a
+  member's name after `.` or `::`) and looks it up (`git.symbol`):
   the side panel lists its definitions and uses by file, its uses in the file are marked, and a hit opens its file at
   its line. The outline button lists the names the file defines (`outline` from `@huntaway/shared`). Back (and
   Alt+←) returns to the places before; Escape closes the panel (not the task).

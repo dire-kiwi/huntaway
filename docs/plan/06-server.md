@@ -391,13 +391,17 @@ two tool-call test cases.
   `ChangesTab`.
 - **Where.** The folder the Changes tab is of (`TaskBase.changesDir`), from the top of its repository, only the
   project's folder when that is part of one; git with no optional locks and the location variables cleared.
-- **`git.files`.** `ls-files -z --cached --others --exclude-standard`, less `--deleted`, sorted, at most 50,000.
+- **`git.files`.** `ls-files -z --cached --stage` (less submodules, mode 160000) and `--others --exclude-standard` (less
+  an untracked repository of its own, listed as its folder with a slash), less `--deleted`, sorted, at most 50,000.
 - **`git.readFile`.** Read from the working tree as it is (not from the index or a commit). Refused (`Invalid`, field
   `path`): a path with `..`, absolute, with a `.git` component, outside the project's folder, a link whose target is
-  outside the repository (`realPath` compared with the top's), a folder, a missing file. Over 2 MiB is `too_large` with
+  outside the repository (`realPath` compared with the top's) or, from the top, in `.git` or outside the project's
+  folder, a folder, a missing file. Over 2 MiB is `too_large` with
   no text; a NUL in the first 8,000 bytes is `binary`; text that isn't UTF-8 is decoded lossily with `not_utf8`.
 - **`git.symbol`: search, not a parser.** `grep -n -z -I -w -F --untracked -e <name>` (a name must be letters, digits,
-  `_` and `$`, not a keyword, at most 200 characters, so it is never an option or a pattern). Each line found is a hit,
+  `_` and `$`, at most 200 characters, so it is never an option or a pattern; a keyword is looked up too, as the client
+  decides what's clickable: `KEYWORDS` holds only words reserved in nearly every language, and one after `.` or `::`
+  is a member's name, `Effect.catch`). Each line found is a hit,
   a definition when one of `symbols.ts`'s patterns matches it (`function N`, `class N`, `def N`, `fn N`, `type N`,
   `const N`, Go's `func (r T) N(`, a method's `N(…) {`, a top-level `N = …`, a field with a modifier, C's `int N(` in
   C-like files) and it isn't an import or a comment. Definitions first, the file it was looked up from first in each;

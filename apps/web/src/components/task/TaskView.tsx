@@ -400,13 +400,14 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       {canMark && <ReminderButton task={task} onError={setMarkErr} />}
       <AgentsPill task={task} onReveal={() => setTab("thread")} />
       <ContextPill task={task} />
-      <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5 narrow:order-first">
+      {/* On a phone, tighter, so every tab (Code too, HE-79) fits its width. */}
+      <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5 narrow:order-first narrow:gap-0.5">
         {tabs.map((t) => (
           <button
             key={t}
             onClick={() => selectTab(t)}
             className={clsx(
-              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize narrow:py-1.5",
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize narrow:px-1.5 narrow:py-1.5",
               shown === t ? "bg-raised text-fg" : "text-muted hover:text-fg",
             )}
           >
