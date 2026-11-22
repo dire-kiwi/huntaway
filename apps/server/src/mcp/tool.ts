@@ -59,6 +59,26 @@ export const ApprovalKind = Context.Reference<"project" | "delete_task" | "autom
   defaultValue: () => null,
 })
 
+/** HE-78: the mark of a board tool's result that is MCP content already (`BoardContent`). */
+export const CONTENT_MARK = "huntaway/content"
+
+/**
+ * A board tool's result that is MCP content already (html_preview's screenshot, html_render's answer), given to the
+ * agent as it is: the board's server gives every other result as JSON text, and only one marked so isn't (`callResult`).
+ */
+export const BoardContent = Schema.Struct({
+  content: Schema.Array(Schema.Unknown),
+  isError: Schema.optional(Schema.Boolean),
+  _meta: Schema.Struct({ [CONTENT_MARK]: Schema.Literal(true) }),
+})
+export type BoardContent = typeof BoardContent.Type
+
+/** `content` as a board tool's result (`BoardContent`). */
+export const boardContent = (content: { readonly content: ReadonlyArray<unknown>; readonly isError?: boolean | undefined }): BoardContent => ({
+  ...content,
+  _meta: { [CONTENT_MARK]: true },
+})
+
 /** An annotation of a tool (its default if the tool has none). */
 export const annotation = <A>(tool: Tool.Any, key: Context.Reference<A>): A => Context.get(tool.annotations, key)
 
@@ -117,6 +137,9 @@ export const THREAD_TOOLS: ReadonlyArray<string> = [
   "track_work",
   "untrack_work",
   "list_tracked_work",
+  // HE-78: a page in the caller's own thread, and a preview in its host's Chrome of local files.
+  "html_preview",
+  "html_render",
 ]
 
 /** What a thread tool tells an agent on another host. */
