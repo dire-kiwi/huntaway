@@ -1030,8 +1030,10 @@ reviewers; `html_preview` is rerunnable, `html_render` not (a second page would 
   with the page under the documents' policy and theme. So a page can't make the host's Chrome load another address
   (with its profile's cookies, or one on this machine) and get a screenshot of it back, which a top-level page could
   (found in review; the test points every way out at a local server and checks it's never asked). Chrome runs the
-  sandboxed frame in a process of its own, so the page's session auto-attaches it (`Target.setAutoAttach`, waiting for
-  the debugger) and follows its console before letting it start. The page reports its height to the wrapper as
+  sandboxed frame in a process of its own, so the page's session auto-attaches it (`Target.setAutoAttach`) and follows
+  its console. Not held for the debugger: a held frame held `Page.setDocumentContent` on CI's Chromium, which then
+  crashed; `Runtime.enable` and `Log.enable` report what came before them anyway. A Chrome that exits other than
+  cleanly logs the stderr kept (its last 4,000 characters), where a crash's cause is. The page reports its height to the wrapper as
   `fitFrame` does; the preview waits for the wrapper's load, that height and two frames (10 s at most), and answers a PNG
   of up to 4000 px with its height, the console (`Runtime.consoleAPICalled`, `Runtime.exceptionThrown`, and
   `Log.entryAdded` warnings and errors, which carry CSP refusals and ignored dialogs), and the images it left out. A

@@ -194,6 +194,8 @@ function FullScreen({
     <div
       role="dialog"
       aria-label={title}
+      // Keeps the task panel's own clicks and keys off it (TaskView.tsx): a click in it isn't one outside the panel.
+      data-modal
       className="fixed inset-0 z-[60] flex flex-col items-center gap-2 bg-black/80 p-4 narrow:p-0"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()

@@ -779,7 +779,9 @@ the frame takes the height the page reports, from the call's `height` until then
 `OpenLinkBar` (in the full-screen view while that's open, where the click was), as a document's frame does, and
 `escapeToBoard`, which passes Escape on (`iaKey`: a key pressed in the frame, another origin, never reaches the board).
 Its buttons (shown on hover, always where there's no hover) download the page and open it full screen (a portal, wider,
-zoom 50 to 200 %; Escape, on the board or in the page, closes it before the task view's own Escape). The
+zoom 50 to 200 %; Escape, on the board or in the page, closes it before the task view's own Escape; `data-modal`, so a
+click in it isn't one outside the side panel, which would close the task). Browser check:
+`apps/web/tests/ui/htmlPage.test.mjs`. The
 tool rows call them "Previewed a page" and "Showed a page". The phone app shows the call as a tool call for now.
 
 ### Experiments (HE-22)

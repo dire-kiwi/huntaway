@@ -114,12 +114,16 @@ export const startChrome = Effect.fnUntraced(function* (
     Effect.forkScoped,
   )
   const exited = handle.exitCode.pipe(
-    Effect.map((code) => `Chrome exited (${Number(code)})`),
-    Effect.orElseSucceed(() => "Chrome stopped"),
-    Effect.flatMap((why) =>
+    Effect.map((code) => ({ why: `Chrome exited (${Number(code)})`, ok: Number(code) === 0 })),
+    Effect.orElseSucceed(() => ({ why: "Chrome stopped", ok: false })),
+    Effect.flatMap(({ why, ok }) =>
       Effect.andThen(
         Fiber.await(errors),
-        Effect.map(lastLines, (said) => `${why}${said}`),
+        Effect.gen(function* () {
+          // A crash's cause is near the start of its report, which the error's last lines don't reach (HE-78).
+          if (!ok) yield* Effect.logWarning(`${why}; what it wrote last:\n${yield* Ref.get(errText)}`)
+          return `${why}${yield* lastLines}`
+        }),
       ),
     ),
   )

@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, PubSub, Stream } from "effect"
+import { Effect, Fiber, FileSystem, Option, PubSub, Stream } from "effect"
 import { Base64 } from "effect/encoding"
 import {
   FRAME_CSP,
@@ -192,12 +192,14 @@ export const consoleLine = (e: CdpEvent): string | null => {
 
 const BOARD_BACKGROUND = { r: 11, g: 11, b: 14, a: 1 }
 
-/** Follows the console of a frame attached under the preview's page, then lets it start (it waits for that). */
+/**
+ * Follows the console of a frame attached under the preview's page. It isn't held for this (`waitForDebuggerOnStart`
+ * is off): a frame held for the debugger can hold `Page.setDocumentContent` with it, and on CI's Chromium it did, then
+ * crashed. Nothing is lost by it: `Runtime.enable` reports the console messages logged so far and `Log.enable` the
+ * entries so far.
+ */
 const follow = (frame: CdpPage) =>
-  Effect.all([frame.send("Runtime.enable"), frame.send("Log.enable")], { concurrency: 1, discard: true }).pipe(
-    Effect.ensuring(frame.send("Runtime.runIfWaitingForDebugger").pipe(Effect.ignore)),
-    Effect.ignore,
-  )
+  Effect.all([frame.send("Runtime.enable"), frame.send("Log.enable")], { concurrency: "unbounded", discard: true }).pipe(Effect.ignore)
 
 /** Loads `html` in `page` at `width`: its height, its console and a screenshot (base64 PNG). */
 const previewOn = (page: CdpPage, session: (sessionId: string) => CdpPage, html: string, width: number) =>
@@ -209,14 +211,18 @@ const previewOn = (page: CdpPage, session: (sessionId: string) => CdpPage, html:
         if (said.length < MAX_MESSAGES) said.push(line.length > MAX_MESSAGE ? `${line.slice(0, MAX_MESSAGE - 1)}…` : line)
       }
       // The page's frame, which Chrome runs in a process of its own (a sandboxed frame is isolated): its session, once
-      // attached, is read too. It waits to start until its console is followed.
+      // attached, is read too (`follow`).
       const frames = new Set<string>()
+      const following: Array<Fiber.Fiber<void>> = []
       yield* PubSub.take(sub).pipe(
         Effect.flatMap((e) => {
           if (e.method === "Target.attachedToTarget" && e.sessionId === page.sessionId) {
             const id = str(e.params, "sessionId")
             frames.add(id)
-            return follow(session(id)).pipe(Effect.forkScoped, Effect.asVoid)
+            return follow(session(id)).pipe(
+              Effect.forkScoped,
+              Effect.map((f) => void following.push(f)),
+            )
           }
           if (e.sessionId !== page.sessionId && (e.sessionId === undefined || !frames.has(e.sessionId))) return Effect.void
           // The thread's frame has no allow-modals, so the page's dialogs are ignored there; one here (the wrapper's,
@@ -233,7 +239,7 @@ const previewOn = (page: CdpPage, session: (sessionId: string) => CdpPage, html:
         Effect.forkScoped,
       )
       yield* page.send("Log.enable")
-      yield* page.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true })
+      yield* page.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true })
       yield* page.send("Emulation.setDeviceMetricsOverride", { width, height: 720, deviceScaleFactor: 1, mobile: false })
       yield* page.send("Emulation.setDefaultBackgroundColorOverride", { color: BOARD_BACKGROUND })
       const tree = yield* page.send("Page.getFrameTree")
@@ -251,6 +257,8 @@ const previewOn = (page: CdpPage, session: (sessionId: string) => CdpPage, html:
         ),
         "data",
       )
+      // What a frame logged before it was followed comes when it is: that's in before the console is read.
+      yield* Fiber.joinAll(following)
       const late = isRecord(settled["result"]) && settled["result"]["value"] === false
       return { height, shot, png, console: [...said], late }
     }),
