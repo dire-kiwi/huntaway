@@ -51,16 +51,20 @@ export interface ChromeProcess {
 const encoder = new TextEncoder()
 
 /**
- * The last three lines of what Chrome wrote to stderr, joined, for an error: less what it says when there is no D-Bus
- * session (as on a server or a CI runner), which it writes all through its start and which is never why it failed.
+ * The last three lines of what Chrome wrote to stderr, joined, for an error (after the line a crash's report starts
+ * with, when it crashed): less what it says when there is no D-Bus session (as on a server or a CI runner), which it
+ * writes all through its start and which is never why it failed.
  */
-export const lastSaid = (stderr: string) =>
-  stderr
+export const lastSaid = (stderr: string) => {
+  const lines = stderr
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l !== "" && !/:ERROR:dbus\//u.test(l))
-    .slice(-3)
-    .join(" / ")
+  const last = lines.slice(-3)
+  // A crash's report ends in its registers and stack, which say nothing: its cause is the line it starts with (HE-78).
+  const crash = lines.findLast((l) => /Received signal|Check failed|FATAL:/u.test(l))
+  return (crash === undefined || last.includes(crash) ? last : [crash, ...last]).join(" / ")
+}
 
 /** Whole messages from the pipe's text: each ends with a NUL. */
 export const splitMessages = <E, R>(text: Stream.Stream<string, E, R>): Stream.Stream<string, E, R> =>
@@ -82,9 +86,13 @@ export const startChrome = Effect.fnUntraced(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
   const writes = yield* Queue.unbounded<Uint8Array, Cause.Done>()
   const errText = yield* Ref.make("")
-  const lastLines = Effect.map(Ref.get(errText), (all) => {
-    const last = lastSaid(all)
-    return last === "" ? "" : `: ${last}`
+  // A CHECK that fails (an abort) says which first, then a stack long enough to push that out of `errText` (HE-78).
+  const fatal = yield* Ref.make<string | null>(null)
+  const lastLines = Effect.gen(function* () {
+    const last = lastSaid(yield* Ref.get(errText))
+    const first = yield* Ref.get(fatal)
+    const said = first === null || last.includes(first) ? last : `${first} / ${last}`
+    return said === "" ? "" : `: ${said}`
   })
 
   const spawned = yield* spawner
@@ -109,17 +117,30 @@ export const startChrome = Effect.fnUntraced(function* (
   const handle = spawned.success
   const errors = yield* handle.stderr.pipe(
     Stream.decodeText(),
-    Stream.runForEach((chunk) => Ref.update(errText, (all) => (all + chunk).slice(-4000))),
+    Stream.runForEach((chunk) =>
+      Effect.gen(function* () {
+        const before = yield* Ref.getAndUpdate(errText, (all) => (all + chunk).slice(-4000))
+        if ((yield* Ref.get(fatal)) !== null) return
+        // The chunk's lines, with the end of the last line before it (a line can come in two chunks).
+        const lines = `${before.slice(before.lastIndexOf("\n") + 1)}${chunk}`.split("\n")
+        const found = lines.find((l) => /:FATAL:|Check failed/u.test(l))
+        if (found !== undefined) yield* Ref.set(fatal, found.trim().slice(0, 1000))
+      }),
+    ),
     Effect.ignore,
     Effect.forkScoped,
   )
   const exited = handle.exitCode.pipe(
-    Effect.map((code) => `Chrome exited (${Number(code)})`),
-    Effect.orElseSucceed(() => "Chrome stopped"),
-    Effect.flatMap((why) =>
+    Effect.map((code) => ({ why: `Chrome exited (${Number(code)})`, ok: Number(code) === 0 })),
+    Effect.orElseSucceed(() => ({ why: "Chrome stopped", ok: false })),
+    Effect.flatMap(({ why, ok }) =>
       Effect.andThen(
         Fiber.await(errors),
-        Effect.map(lastLines, (said) => `${why}${said}`),
+        Effect.gen(function* () {
+          // A crash's cause is near the start of its report, which the error's last lines don't reach (HE-78).
+          if (!ok) yield* Effect.logWarning(`${why}; what it wrote last:\n${yield* Ref.get(errText)}`)
+          return `${why}${yield* lastLines}`
+        }),
       ),
     ),
   )

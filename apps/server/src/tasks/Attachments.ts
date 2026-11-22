@@ -110,6 +110,8 @@ const collect = (rows: ReadonlyArray<ReadonlyArray<{ readonly text: string | nul
 export interface AttachmentsShape {
   /** Saves a file (`data` strict base64, at most 10 MiB decoded) under a cleaned name: where it is. */
   readonly upload: (name: string, data: string) => Effect.Effect<Attachment, Invalid>
+  /** Saves a file the board made (an agent's HTML page, HE-78) as `upload` does one sent to it. */
+  readonly save: (name: string, bytes: Uint8Array) => Effect.Effect<Attachment, Invalid>
   /** A saved file, base64. The id must be one (32 hex) and the name a cleaned one. */
   readonly get: (id: string, name: string) => Effect.Effect<AttachmentData, AttachmentNotFound>
   /**
@@ -184,7 +186,11 @@ export class Attachments extends Context.Service<Attachments, AttachmentsShape>(
       const upload = Effect.fn("Attachments.upload")(function* (given: string, data: string) {
         const b64 = data.trim()
         if (decodedSize(b64) > MAX_BYTES) return yield* new Invalid({ field: "data", reason: `${given} is larger than ${MAX_BYTES / 1024 / 1024} MB` })
-        const bytes = yield* Effect.fromResult(decodeStrictBase64(b64))
+        return yield* save(given, yield* Effect.fromResult(decodeStrictBase64(b64)))
+      })
+
+      const save = Effect.fn("Attachments.save")(function* (given: string, bytes: Uint8Array) {
+        if (bytes.length > MAX_BYTES) return yield* new Invalid({ field: "data", reason: `${given} is larger than ${MAX_BYTES / 1024 / 1024} MB` })
         const id = AttachmentId.make((yield* random.uuidV4()).replaceAll("-", ""))
         const name = cleanName(given)
         const folder = dataDir.attachment(id)
@@ -238,7 +244,7 @@ export class Attachments extends Context.Service<Attachments, AttachmentsShape>(
         return removed
       }).pipe(Effect.withSpan("Attachments.prune"))
 
-      return Attachments.of({ upload, get, ofTask, referenced, dirsFor, removeUnreferenced, prune })
+      return Attachments.of({ upload, save, get, ofTask, referenced, dirsFor, removeUnreferenced, prune })
     }),
   )
 

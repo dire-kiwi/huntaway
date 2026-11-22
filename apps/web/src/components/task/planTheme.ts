@@ -8,7 +8,7 @@ import { linksInNewTabs, noWebRtc } from "./htmlFrame"
  * scrolled to: it also reports when the page has loaded and when the DOM changes. It runs in the
  * component's frame, as source (in the board with linksInNewTabs, as frames in a plan's frame can't load other pages).
  */
-function fitFrame() {
+export function fitFrame() {
   let last = -1
   const post = () => {
     const body = document.body

@@ -53,6 +53,9 @@ export function toolName(t: { name: string; kind: string; server?: string | unde
   return t.name
 }
 
+/** The board's `html_render` (HE-78; `mcp__issue_agent__` is the board's server before the rename to Huntaway). */
+export const isHtmlRender = (name: string) => /^mcp__(huntaway|issue_agent)__html_render$/.test(name)
+
 /** What's made of each item and request, while it stays the same object: a cache of one kind of thing made. */
 function cache<T>(): (of: object, make: () => T) => T {
   const made = new WeakMap<object, T>()
@@ -289,6 +292,7 @@ class Rows {
   }
 
   private tool(call: Call) {
+    if (isHtmlRender(call.name)) return this.push({ type: "html", key: keyOf(call.id), call })
     const last = this.items[this.items.length - 1]
     // A group of calls is a new object (its calls are copied), so the one before stays as it was.
     if (last?.type === "tools") this.items[this.items.length - 1] = { ...last, calls: [...last.calls, call] }

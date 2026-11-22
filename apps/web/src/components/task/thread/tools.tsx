@@ -1,6 +1,6 @@
 import { clsx } from "clsx"
 import { Option, Schema } from "effect"
-import { BookOpen, Bot, ChevronRight, FileText, Globe, LayoutGrid, ListChecks, Loader2, Monitor, Pencil, Search, Terminal, Wrench, X } from "lucide-react"
+import { BookOpen, Bot, ChevronRight, Eye, FileText, Globe, LayoutGrid, ListChecks, Loader2, Monitor, Pencil, Search, Terminal, Wrench, X } from "lucide-react"
 import { memo, useContext, useState, type ReactNode } from "react"
 import { navigate } from "../../../state/route"
 // 6.3
@@ -51,6 +51,9 @@ export function toolMeta(name: string, input: unknown, cwd?: string | null): { i
   const board = /^mcp__(huntaway|issue_agent)__/
   if (board.test(name)) {
     const tool = name.replace(board, "")
+    // HE-78: an agent's HTML page (htmlPage.tsx shows a kept one as the page).
+    if (tool === "html_preview") return { icon: <Eye size={s} />, label: "Previewed a page", summary: i.width === undefined ? "" : `${shown(i.width)}px wide` }
+    if (tool === "html_render") return { icon: <Eye size={s} />, label: "Showed a page", summary: shown(i.title) }
     const title = shown(i.title)
     const question = shown(i.question)
     return { icon: <LayoutGrid size={s} />, label: "Board", summary: `${tool}${title ? `  “${title}”` : question ? `  ${question}` : ""}` }

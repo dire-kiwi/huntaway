@@ -57,12 +57,36 @@ const codexPrompt = (id: string, metadata: Record<string, unknown>): ThreadReque
   metadata: { request_id: id, status: "pending", tool_name: "Bash", codex: { id: 1, method: "item/commandExecution/requestApproval" }, ...metadata },
 })
 
+/** A finished tool call, of an MCP server when `server` is given. */
+const call = (id: string, name: string, server?: string): Item => ({
+  id,
+  type: "tool_call",
+  name,
+  kind: server === undefined ? "other" : "mcp",
+  ...(server === undefined ? {} : { server }),
+  input: {},
+  status: "completed",
+  result: { content: "ok" },
+})
+
 describe("buildItemModel", () => {
   it("keys and tool names come back as the messages had them", () => {
     expect([keyOf("legacy:12"), keyOf("legacy:12:3"), keyOf("legacy:12:result"), keyOf("toolu_1")]).toEqual(["12", "12.3", "12.result", "toolu_1"])
     expect(toolName({ name: "pr_view", kind: "mcp", server: "gh" })).toBe("mcp__gh__pr_view")
     expect(toolName({ name: "board", kind: "app" })).toBe("mcp__app__board")
     expect(toolName({ name: "Bash", kind: "shell" })).toBe("Bash")
+  })
+
+  it("an html_render call is a page of its own between the tool groups around it (HE-78)", () => {
+    const model = buildItemModel(
+      whole([call("a", "Read"), call("b", "html_preview", "huntaway"), call("c", "html_render", "huntaway"), call("d", "Bash"), call("e", "Bash")]),
+      false,
+    )
+    expect(model.items.map((row) => (row.type === "tools" ? `tools:${row.calls.map((c) => c.id).join("")}` : `${row.type}:${row.key}`))).toEqual([
+      "tools:ab",
+      "html:c",
+      "tools:de",
+    ])
   })
 
   it("requests from before the board's metadata (converter 2) still draw as prompts", () => {

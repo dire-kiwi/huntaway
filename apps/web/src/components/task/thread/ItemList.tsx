@@ -8,6 +8,7 @@ import { openTaskModal } from "../../../state/route"
 import { AttachmentList } from "../Attachments"
 import { lineage, ThreadCtx, usePendingFocus } from "./context"
 import { CompactLine, ConnectionRow, EventLine, FoldedTurnRow, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
+import { HtmlPageRow } from "./htmlPage"
 import { Markdown } from "./Markdown"
 import { AutomationChangeCard, isWorkflowApproval, ProjectChangeCard, TaskDeletionCard, WorkflowChangeCard } from "./requestCards"
 import { SuggestionsCard } from "./SuggestionsCard"
@@ -120,6 +121,8 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
       return <Thinking text={it.text} />
     case "tools":
       return <ToolGroup calls={it.calls} running={running} cwd={cwd} />
+    case "html":
+      return <HtmlPageRow call={it.call} running={running} hostId={hostId} cwd={cwd} />
     case "event":
       return <EventLine level={it.level} text={it.text} detail={it.detail} />
     case "permission":

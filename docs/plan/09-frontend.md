@@ -772,6 +772,25 @@ and the override went with the last one.
   a board trigger), `tests/unit/ui/{dates,reminders}.test.ts` (run in several time zones), `analyticsRange.test.ts`,
   `automationDraft.test.ts`; `tests/unit/state/fakeHost.test.ts` calls through `runExit` and `mutate`.
 
+### As built in HE-78: HTML pages in the thread
+
+An `html_render` call (docs/plan/07-agents.md, HTML pages in the thread) is an item of its own in the thread model,
+`{ type: "html", call }` (`itemModel.ts`' `Rows.tool`, by `isHtmlRender`), not one of a tool group, so a folded turn
+leaves it in sight. `thread/htmlPage.tsx` draws it: while it runs or if it failed, as its tool row (`ToolGroup`);
+once its answer names the kept page (`htmlRenderAttachment`), the page, read with `attachmentTextAtom`
+(`attachmentFiles.ts`, `attachments.get` decoded as UTF-8, kept while shown). The frame is a document's (`sandbox`
+`allow-scripts allow-forms`, `srcdoc`): `FRAME_CSP` and `noWebRtc` before the page, the theme (`liveTheme`: the stock
+theme with the board's `--color-*` as the tint leaves them) and the page, then `fitFrame` (planTheme.ts', now exported:
+the frame takes the height the page reports, from the call's `height` until then, 40 to 20,000 px) and
+`linksInNewTabs`, whose `iaOpen` opens a link at once after the user's own input in the frame and otherwise asks with
+`OpenLinkBar` (in the full-screen view while that's open, where the click was), as a document's frame does, and
+`escapeToBoard`, which passes Escape on (`iaKey`: a key pressed in the frame, another origin, never reaches the board).
+Its buttons (shown on hover, always where there's no hover) download the page and open it full screen (a portal, wider,
+zoom 50 to 200 %; Escape, on the board or in the page, closes it before the task view's own Escape; `data-modal`, so a
+click in it isn't one outside the side panel, which would close the task). Browser check:
+`apps/web/tests/ui/htmlPage.test.mjs`. The
+tool rows call them "Previewed a page" and "Showed a page". The phone app shows the call as a tool call for now.
+
 ### Experiments (HE-22)
 
 Settings → **Experiments** (`settings/Experiments.tsx`) lists the features still being tried, each with a switch and
