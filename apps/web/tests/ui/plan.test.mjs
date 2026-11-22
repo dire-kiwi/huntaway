@@ -5,7 +5,7 @@
 // and the board hears that a version was written over from a `task` event the check gives it.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { pick, seedThread, startServer, withBrowser } from "./harness.mjs"
+import { eventually, pick, seedThread, startServer, withBrowser } from "./harness.mjs"
 import { demoBoard, docFrame, PLAN, planDocument, routeDocuments, saved } from "./documents.mjs"
 
 let server, project, plan
@@ -62,8 +62,11 @@ test("a plan is themed, its components work, and it runs to the bottom with room
     const before = await pad()
     assert.ok(before > composer.height, `padding ${before}`)
     await ui.run(["click Ask for changes to the plan", "type one", "press Shift+Enter", "type two", "press Shift+Enter", "type three"])
-    await page.waitForTimeout(200)
-    assert.ok((await pad()) > before, `padding ${await pad()} after ${before}`)
+    // The frame is told of the composer's new height after it has grown: wait for that, rather than a fixed while.
+    await eventually(async () => {
+      const after = await pad()
+      assert.ok(after > before, `padding ${after} after ${before}`)
+    })
   })
 })
 

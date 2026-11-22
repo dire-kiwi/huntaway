@@ -194,6 +194,7 @@ describe("Attachments", () => {
           Attachments,
           Attachments.of({
             upload: attachments.upload,
+            save: attachments.save,
             get: attachments.get,
             ofTask: attachments.ofTask,
             referenced: attachments.referenced,

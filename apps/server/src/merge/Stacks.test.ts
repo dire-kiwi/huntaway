@@ -178,82 +178,90 @@ describe("restacking", () => {
     ),
   )
 
-  it.effect("a three-level stack restacks each level on the one below it", () =>
-    board(
-      Effect.gen(function* () {
-        const { p, repo, remote } = yield* project()
-        const one = yield* level(p, "One", "one.txt", null)
-        const two = yield* level(p, "Two", "two.txt", one)
-        const three = yield* level(p, "Three", "three.txt", two)
-        yield* squashMerge(repo, one)
-        yield* update(one.id, { status: "done" })
-        yield* restacked(two.id, three.id)
-        const t2 = yield* reload(two.id)
-        let t3 = yield* reload(three.id)
-        assert.deepStrictEqual([t2.restack, t2.base_branch], [null, "master"])
-        // Three follows Two's new branch, still stacked on it, with neither One's commit nor Two's old one.
-        assert.deepStrictEqual([t3.restack, t3.base_branch, stackState(yield* projectRows(p), t3)], [null, two.branch, "open"])
-        assert.deepStrictEqual(yield* own(repo, "origin/master", t3.branch ?? ""), ["Two", "Three"])
-        assert.strictEqual(yield* rev(repo, `${t3.branch}^`), yield* rev(repo, two.branch ?? ""))
-        assert.strictEqual(yield* git(remote, ["rev-parse", t3.branch ?? ""]), yield* rev(repo, t3.branch ?? ""))
-        assert.strictEqual(yield* rev(repo, startRef(three.id)), yield* rev(repo, two.branch ?? ""))
-        // Two merges in turn (a plain merge this time): Three goes to master.
-        yield* git(repo, ["push", "-q", "origin", `${two.branch}:refs/heads/master`])
-        yield* update(two.id, { status: "done" })
-        yield* restacked(three.id)
-        t3 = yield* reload(three.id)
-        assert.deepStrictEqual([t3.restack, t3.base_branch, stackState(yield* projectRows(p), t3)], [null, "master", "merged"])
-        assert.deepStrictEqual(yield* own(repo, "origin/master", t3.branch ?? ""), ["Three"])
-      }),
-    ),
+  it.effect(
+    "a three-level stack restacks each level on the one below it",
+    () =>
+      board(
+        Effect.gen(function* () {
+          const { p, repo, remote } = yield* project()
+          const one = yield* level(p, "One", "one.txt", null)
+          const two = yield* level(p, "Two", "two.txt", one)
+          const three = yield* level(p, "Three", "three.txt", two)
+          yield* squashMerge(repo, one)
+          yield* update(one.id, { status: "done" })
+          yield* restacked(two.id, three.id)
+          const t2 = yield* reload(two.id)
+          let t3 = yield* reload(three.id)
+          assert.deepStrictEqual([t2.restack, t2.base_branch], [null, "master"])
+          // Three follows Two's new branch, still stacked on it, with neither One's commit nor Two's old one.
+          assert.deepStrictEqual([t3.restack, t3.base_branch, stackState(yield* projectRows(p), t3)], [null, two.branch, "open"])
+          assert.deepStrictEqual(yield* own(repo, "origin/master", t3.branch ?? ""), ["Two", "Three"])
+          assert.strictEqual(yield* rev(repo, `${t3.branch}^`), yield* rev(repo, two.branch ?? ""))
+          assert.strictEqual(yield* git(remote, ["rev-parse", t3.branch ?? ""]), yield* rev(repo, t3.branch ?? ""))
+          assert.strictEqual(yield* rev(repo, startRef(three.id)), yield* rev(repo, two.branch ?? ""))
+          // Two merges in turn (a plain merge this time): Three goes to master.
+          yield* git(repo, ["push", "-q", "origin", `${two.branch}:refs/heads/master`])
+          yield* update(two.id, { status: "done" })
+          yield* restacked(three.id)
+          t3 = yield* reload(three.id)
+          assert.deepStrictEqual([t3.restack, t3.base_branch, stackState(yield* projectRows(p), t3)], [null, "master", "merged"])
+          assert.deepStrictEqual(yield* own(repo, "origin/master", t3.branch ?? ""), ["Three"])
+        }),
+      ),
+    // A stack restacked in a git repository: a second or so alone, past the default 5 s on a loaded CI runner.
+    20_000,
   )
 
-  it.effect("a restack that conflicts is left to the agent, then to the user; once it's done, the next run's end finishes it", () =>
-    board(
-      Effect.gen(function* () {
-        const { p, repo } = yield* project()
-        const low = yield* level(p, "Low", "low.txt", null)
-        const up = yield* level(p, "Up", "low.txt", low)
-        yield* change(up.id, { status: "in_review" })
-        const head = yield* rev(repo, up.branch ?? "")
-        // Low was squashed in with a change to the same file.
-        yield* git(repo, ["fetch", "-q", "origin"])
-        const wt = `${yield* tempDir}/wt`
-        yield* git(repo, ["worktree", "add", "-q", "--detach", wt, "origin/master"])
-        yield* write(wt, "low.txt", "Low, as merged\n")
-        yield* git(wt, ["add", "."])
-        yield* git(wt, ["commit", "-q", "-m", "Low (#1)"])
-        yield* git(wt, ["push", "-q", "origin", "HEAD:refs/heads/master"])
-        yield* update(low.id, { status: "done" })
-        yield* restacked(up.id)
-        let t = yield* reload(up.id)
-        // Nothing moved, and its agent is asked to do it (its launch fails here: no agent).
-        assert.strictEqual(t.restack, "conflict")
-        assert.strictEqual(yield* rev(repo, up.branch ?? ""), head)
-        assert.strictEqual(yield* git(up.worktree_path ?? "", ["status", "--porcelain"]), "")
-        const asked = yield* lastPrompt(up.id)
-        assert.match(asked, /couldn't restack its branch .* onto `master` itself: its commits conflict with it/)
-        assert.include(asked, startRef(up.id))
-        // Its run ends (here: its launch failed) with the restack still to do: the user's turn.
-        yield* (yield* Restack).afterRun(up.id)
-        yield* restacked(up.id)
-        t = yield* reload(up.id)
-        assert.strictEqual(t.status, "needs_attention")
-        assert.match(t.attention_reason ?? "", /Couldn't restack it onto master: its commits conflict with it/)
-        assert.isTrue(stackWaits(yield* projectRows(p), t))
-        // Once its agent has rebased and pushed it, the next run's end finishes the restack.
-        const uwt = up.worktree_path ?? ""
-        yield* git(uwt, ["fetch", "-q", "origin"])
-        yield* git(uwt, ["reset", "-q", "--hard", "origin/master"])
-        yield* write(uwt, "low.txt", "Up\n")
-        yield* git(uwt, ["commit", "-q", "-am", "Up"])
-        yield* git(uwt, ["push", "-q", "-f", "origin", up.branch ?? ""])
-        yield* (yield* Restack).afterRun(up.id)
-        yield* restacked(up.id)
-        t = yield* reload(up.id)
-        assert.deepStrictEqual([t.restack, t.base_branch], [null, "master"])
-      }),
-    ),
+  it.effect(
+    "a restack that conflicts is left to the agent, then to the user; once it's done, the next run's end finishes it",
+    () =>
+      board(
+        Effect.gen(function* () {
+          const { p, repo } = yield* project()
+          const low = yield* level(p, "Low", "low.txt", null)
+          const up = yield* level(p, "Up", "low.txt", low)
+          yield* change(up.id, { status: "in_review" })
+          const head = yield* rev(repo, up.branch ?? "")
+          // Low was squashed in with a change to the same file.
+          yield* git(repo, ["fetch", "-q", "origin"])
+          const wt = `${yield* tempDir}/wt`
+          yield* git(repo, ["worktree", "add", "-q", "--detach", wt, "origin/master"])
+          yield* write(wt, "low.txt", "Low, as merged\n")
+          yield* git(wt, ["add", "."])
+          yield* git(wt, ["commit", "-q", "-m", "Low (#1)"])
+          yield* git(wt, ["push", "-q", "origin", "HEAD:refs/heads/master"])
+          yield* update(low.id, { status: "done" })
+          yield* restacked(up.id)
+          let t = yield* reload(up.id)
+          // Nothing moved, and its agent is asked to do it (its launch fails here: no agent).
+          assert.strictEqual(t.restack, "conflict")
+          assert.strictEqual(yield* rev(repo, up.branch ?? ""), head)
+          assert.strictEqual(yield* git(up.worktree_path ?? "", ["status", "--porcelain"]), "")
+          const asked = yield* lastPrompt(up.id)
+          assert.match(asked, /couldn't restack its branch .* onto `master` itself: its commits conflict with it/)
+          assert.include(asked, startRef(up.id))
+          // Its run ends (here: its launch failed) with the restack still to do: the user's turn.
+          yield* (yield* Restack).afterRun(up.id)
+          yield* restacked(up.id)
+          t = yield* reload(up.id)
+          assert.strictEqual(t.status, "needs_attention")
+          assert.match(t.attention_reason ?? "", /Couldn't restack it onto master: its commits conflict with it/)
+          assert.isTrue(stackWaits(yield* projectRows(p), t))
+          // Once its agent has rebased and pushed it, the next run's end finishes the restack.
+          const uwt = up.worktree_path ?? ""
+          yield* git(uwt, ["fetch", "-q", "origin"])
+          yield* git(uwt, ["reset", "-q", "--hard", "origin/master"])
+          yield* write(uwt, "low.txt", "Up\n")
+          yield* git(uwt, ["commit", "-q", "-am", "Up"])
+          yield* git(uwt, ["push", "-q", "-f", "origin", up.branch ?? ""])
+          yield* (yield* Restack).afterRun(up.id)
+          yield* restacked(up.id)
+          t = yield* reload(up.id)
+          assert.deepStrictEqual([t.restack, t.base_branch], [null, "master"])
+        }),
+      ),
+    // A stack restacked in a git repository: a second or so alone, past the default 5 s on a loaded CI runner.
+    20_000,
   )
 
   it.effect.each(["remote ahead", "uncommitted"] as const)("a restack with its branch's remote %s is left to the agent", (how) =>

@@ -328,6 +328,12 @@ describe("hosts, whole servers", () => {
         yield* git(repos, ["clone", "-q", "hub", "host"])
         yield* git(repos, ["clone", "-q", "hub", "other"])
         yield* git(`${repos}/other`, ["checkout", "-q", "-b", "elsewhere"])
+        yield* git(repos, ["clone", "-q", "hub", "ahead"])
+        yield* fs.writeFileString(`${repos}/ahead/more.txt`, "more")
+        yield* git(`${repos}/ahead`, ["add", "-A"])
+        yield* git(`${repos}/ahead`, ["commit", "-q", "-m", "two"])
+        yield* git(repos, ["clone", "-q", "hub", "third"])
+        yield* git(`${repos}/third`, ["checkout", "-q", "-b", "elsewhere"])
 
         const hub = yield* startServer([...SERVE, "--source-dir", `${repos}/hub`])
         const board = yield* boardClient(hub.port, hub.token)
@@ -343,10 +349,25 @@ describe("hosts, whole servers", () => {
         const same = yield* linkHost(`${repos}/host`)
         assert.deepStrictEqual(yield* board("hub.hosts.pushUpdate", { id: same }), { ok: true, up_to_date: true })
 
+        // HE-76 review: a host ahead of the hub runs its code already, and a cluster Update sends to it as it differs:
+        // up to date, not rebuilt and restarted for nothing (its fast-forward to an ancestor does nothing).
+        const ahead = yield* linkHost(`${repos}/ahead`)
+        assert.deepStrictEqual(yield* board("hub.hosts.pushUpdate", { id: ahead }), { ok: true, up_to_date: true })
+
         const other = yield* linkHost(`${repos}/other`)
         const refused = yield* Effect.flip(board("hub.hosts.pushUpdate", { id: other }))
         assert.strictEqual(refused._tag, "Unavailable")
         assert.include(refused._tag === "Unavailable" ? refused.reason : "", "is on elsewhere, the hub's on main")
+
+        // HE-76: an Update of the whole cluster pushes to several hosts at once. Each gets its own bundle (they were made
+        // in one file, and pushes at once failed on its lock or read another's): each refuses for its branch, every time.
+        const third = yield* linkHost(`${repos}/third`)
+        const atOnce = yield* Effect.forEach(
+          Array.from({ length: 24 }, (_, i) => (i % 2 === 0 ? other : third)),
+          (id) => Effect.flip(board("hub.hosts.pushUpdate", { id })),
+          { concurrency: "unbounded" },
+        )
+        for (const e of atOnce) assert.include(e._tag === "Unavailable" ? e.reason : e._tag, "is on elsewhere, the hub's on main")
 
         const own = (yield* board("hub.hosts.list", undefined))[0]?.id ?? ""
         assert.strictEqual((yield* Effect.flip(board("hub.hosts.pushUpdate", { id: LinkId.make(own) })))._tag, "Invalid")

@@ -121,6 +121,27 @@ your message (shown in the thread as what you clicked: open it to see what it se
   carry anything out just by being shown.
 - **On the phone** a block is a note to open the task on the board in a browser.
 
+## Pages in the thread
+
+An agent can answer with a page rather than only text: a chart, a table, a diagram, a collage of screenshots, a
+mockup. Ask for one ("show this as a chart") and it writes a self-contained HTML page and calls the board's
+`html_render`, and the page shows in the thread where the call is, above its written reply, as wide as the reply
+column and as tall as the page. It's drawn in the board's colours (your profile's tint too), its scripts run in a
+sandbox away from the board, and nothing outside it loads but scripts, styles and fonts from cdnjs, jsDelivr, unpkg and
+Google Fonts. A link you click in it opens in a new tab (if the page tries to open one by itself, the board asks
+first). Its buttons, on hover (always shown on a touch screen), download the page or open it full screen, where it can
+be zoomed; Escape closes it.
+
+Agents can put local images in a page by their absolute paths (say, screenshots they took): the board puts them in the
+page when it keeps it, so it still works once the files are gone. Only files that are images go in. The page is kept
+with the board's attachments, for as long as the thread refers to it; deleting the task deletes it.
+
+Before showing a page, an agent checks it with `html_preview`, which loads it in the board's headless browser (the one
+each task's browser uses, downloaded the first time) as the thread would show it, and answers with a screenshot, how
+tall the page is, and what its console said, including what the page's policy refused to load. Both tools work in plan
+mode; reviewers don't get them. A page can't size itself to the window (`100vh` and the like are refused), since its
+frame grows to fit it.
+
 ## Agent tools (MCP)
 
 Each run gets the `huntaway` MCP server, which the board serves itself, in process for Claude runs,

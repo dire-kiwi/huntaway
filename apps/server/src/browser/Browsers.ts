@@ -88,6 +88,11 @@ export interface BrowsersShape {
   readonly openPages: Effect.Effect<number>
   /** Close the headless pages nobody has used or watched for 30 minutes, and Chrome when none is left (a loop runs it every minute). */
   readonly reap: Effect.Effect<void>
+  /**
+   * HE-78: `use` on a page of its own in the headless Chrome (started if it isn't running), which nobody sees and which
+   * closes after: `html_preview`'s. Chrome stays up while one is open.
+   */
+  readonly scratch: <A, E, R>(use: (page: CdpPage) => Effect.Effect<A, E, R>) => Effect.Effect<A, E | ChromeUnavailable | CdpError, R>
   /** The download of the headless Chrome going, if one is. */
   readonly installing: Effect.Effect<ChromeInstalling | null>
   /** A ticket for the task's browser's socket (single use, for a minute). */
@@ -189,6 +194,8 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
       const tickets = yield* Ref.make<ReadonlyMap<string, { readonly task: TaskId; readonly role: BrowserRole; readonly expires: number }>>(new Map())
       const paneIds = yield* Ref.make(0)
       const chromeIds = yield* Ref.make(0)
+      /** The scratch pages open (`scratch`), which keep Chrome up. */
+      const scratches = yield* Ref.make(0)
       const profileDir = `${config.dataDir}/browser/profile`
 
       const setTab = (task: TaskId, f: (t: Tab) => Tab) =>
@@ -431,7 +438,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
         yield* lock.withPermits(1)(
           chromeLock.withPermits(1)(
             Effect.gen(function* () {
-              if ([...(yield* Ref.get(tabs)).values()].some((t) => t.headless !== null)) return
+              if ([...(yield* Ref.get(tabs)).values()].some((t) => t.headless !== null) || (yield* Ref.get(scratches)) > 0) return
               const r = yield* Ref.getAndSet(running, null)
               if (r !== null) yield* Scope.close(r.scope, Exit.void)
             }),
@@ -460,6 +467,23 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           Stream.runForEach(() => followProxy),
         )
       }).pipe(Effect.scoped, Effect.forever, Effect.forkScoped)
+
+      const scratch: BrowsersShape["scratch"] = (use) =>
+        Effect.acquireUseRelease(
+          // Under `lock`, as a task's page opens: `reap` doesn't close the Chrome it's opened in.
+          lock.withPermits(1)(Effect.tap(chrome, () => Ref.update(scratches, (n) => n + 1))),
+          (r) =>
+            Effect.gen(function* () {
+              const cdp = r.chrome.cdp
+              const targetId = str(yield* cdp.send("Target.createTarget", { url: BLANK, newWindow: true }), "targetId")
+              return yield* Effect.gen(function* () {
+                const scratchPage = pageOf(cdp, str(yield* cdp.send("Target.attachToTarget", { targetId, flatten: true }), "sessionId"))
+                yield* preparePage(scratchPage)
+                return yield* use(scratchPage)
+              }).pipe(Effect.ensuring(cdp.send("Target.closeTarget", { targetId }).pipe(Effect.ignore)))
+            }),
+          () => Ref.update(scratches, (n) => n - 1),
+        )
 
       const ticket: BrowsersShape["ticket"] = (task, role) =>
         Effect.gen(function* () {
@@ -590,6 +614,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
 
       return Browsers.of({
         page,
+        scratch,
         state: (task) =>
           Effect.gen(function* () {
             const t = yield* getTab(task)

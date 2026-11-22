@@ -138,6 +138,7 @@ import { Teleport } from "./spaces/Teleport.ts"
 import { TeleportRepo } from "./spaces/TeleportRepo.ts"
 import { SpacesTools } from "./spaces/SpacesTools.ts"
 import { BrowserTools } from "./browser/BrowserTools.ts"
+import { HtmlTools } from "./browser/HtmlRender.ts"
 import { Browsers } from "./browser/Browsers.ts"
 import { ChromeInstall } from "./browser/ChromeInstall.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
@@ -668,8 +669,9 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3, A, E4, R4>(
         Layer.provideMerge(Docker.layer),
       ),
     ),
-    // HE-62: each task's web browser, and the `browser` MCP server's tools, over the MCP area.
-    Layer.provideMerge(BrowserTools.pipe(Layer.provideMerge(Browsers.layer), Layer.provideMerge(ChromeInstall.layer))),
+    // HE-62: each task's web browser, and the `browser` MCP server's tools, over the MCP area; HE-78: and the board's
+    // html_render and html_preview, whose previews use its Chrome.
+    Layer.provideMerge(Layer.mergeAll(BrowserTools, HtmlTools).pipe(Layer.provideMerge(Browsers.layer), Layer.provideMerge(ChromeInstall.layer))),
     // 6.8: push, watching the board's events for what devices want.
     Layer.provideMerge(PushLive),
     // HE-34: the plugins, over the MCP area they define their servers with.

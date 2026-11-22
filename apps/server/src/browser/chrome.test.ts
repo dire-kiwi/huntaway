@@ -24,6 +24,17 @@ describe("lastSaid", () => {
     assert.strictEqual(lastSaid(said.join("\n")), "first / [1:2:1121/0.1:ERROR:content/a.cc:1] second / third")
     assert.strictEqual(lastSaid(dbus(3)), "")
   })
+
+  it("names the line a crash's report starts with, before its last lines (HE-78)", () => {
+    const crash = [
+      "Received signal 11 SEGV_MAPERR 000000000010",
+      "#0 0x55 base::debug::CollectStackTrace()",
+      "r8: 0 r9: 0",
+      "ip: 7d2e efl: 246",
+      "[end of stack trace]",
+    ]
+    assert.strictEqual(lastSaid(crash.join("\n")), "Received signal 11 SEGV_MAPERR 000000000010 / r8: 0 r9: 0 / ip: 7d2e efl: 246 / [end of stack trace]")
+  })
 })
 
 describe.skipIf(systemChrome === null)("startChrome", () => {

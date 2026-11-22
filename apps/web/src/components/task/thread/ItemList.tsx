@@ -8,6 +8,7 @@ import { openTaskModal } from "../../../state/route"
 import { AttachmentList } from "../Attachments"
 import { lineage, ThreadCtx, usePendingFocus } from "./context"
 import { CompactLine, ConnectionRow, EventLine, FoldedTurnRow, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
+import { HtmlPageRow } from "./htmlPage"
 import { Markdown } from "./Markdown"
 import { clicksOf } from "@huntaway/a2ui"
 import { ActionText, Reply } from "./a2ui/A2ui"
@@ -123,6 +124,8 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
       return <Thinking text={it.text} />
     case "tools":
       return <ToolGroup calls={it.calls} running={running} cwd={cwd} />
+    case "html":
+      return <HtmlPageRow call={it.call} running={running} hostId={hostId} cwd={cwd} />
     case "event":
       return <EventLine level={it.level} text={it.text} detail={it.detail} />
     case "permission":
@@ -148,7 +151,6 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
   }
 })
 
-/** A user message: its text, and the files attached to it. */
 /** A user's message: its text, or the clicks on interactive replies in it (HE-77) and any other text. */
 function UserMessage({ text, hostId }: { text: string; hostId: string }) {
   const found = useMemo(() => (text.includes("```a2ui-action") ? clicksOf(text) : null), [text])
@@ -156,6 +158,7 @@ function UserMessage({ text, hostId }: { text: string; hostId: string }) {
   return <ActionText clicks={found.clicks}>{found.rest !== "" && <UserText text={found.rest} hostId={hostId} />}</ActionText>
 }
 
+/** A user message: its text, and the files attached to it. */
 function UserText({ text, hostId }: { text: string; hostId: string }) {
   const { text: body, files } = useMemo(() => splitAttachments(text), [text])
   return (

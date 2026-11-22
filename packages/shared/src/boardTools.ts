@@ -42,4 +42,7 @@ export const BOARD_TOOLS: ReadonlyArray<string> = [
   "delete_workflow",
   "run_workflow",
   "submit_review",
+  // HE-78: registered with the browser area (apps/server/src/browser/HtmlRender.ts), whose Chrome takes the previews.
+  "html_preview",
+  "html_render",
 ]

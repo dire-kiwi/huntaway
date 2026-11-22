@@ -562,7 +562,14 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   board's connected hosts that run agents and `hub.hosts.copyConfig`, whose `files` are now the archive's entries (it
   said how many) and which now copies through 6.11's archives (08-hosts.md). HE-6's row Update is the old one again:
   it sends the hub's checkout as it is (`hosts/useUpdateCommit.ts`, the hub's `admin.status`), a release host only a
-  newer version, follows the host's phases by polling it, and ends on its new boot.
+  newer version, follows the host's phases by polling it, and ends on its new boot. Since HE-76 it updates the whole
+  cluster: Update on one host is sent to every other host the hub links itself that it is offered for too (not a mesh
+  host, which its own neighbour links), a few at a time (the hub makes their bundles one at a time: `Updater`'s
+  `bundleSince`, in its one `outgoing.bundle`), and the button says how many (`· all 3 hosts`). Each host's
+  Update is followed to its end in the action that sent it (`hosts/hostUpdate.ts`: the host's `admin.status` polled,
+  and the hub's list for it back on what it was sent), not on its row, and kept per host (`hostUpdateAtom`), which the
+  rows show; so one started from a host's page ends for the hosts with no row shown too. A host whose server runs the
+  hub's commit or one after it (ahead of the hub) answers up to date rather than restarting (`Updater.runsAlready`).
 - **Dropped.** Settings → Server's database line and Copy again, and the threads' batch rebuild (docs/plan/14: the
   two-file database scheme, moving threads onto items). `Devices.tsx` and the paired phones under Network access, with
   device pairing (14, Deferred).
@@ -764,6 +771,25 @@ and the override went with the last one.
   `packages/client/test/queries.test.ts` (one atom per payload, a mutation reading its group again and not another's,
   a board trigger), `tests/unit/ui/{dates,reminders}.test.ts` (run in several time zones), `analyticsRange.test.ts`,
   `automationDraft.test.ts`; `tests/unit/state/fakeHost.test.ts` calls through `runExit` and `mutate`.
+
+### As built in HE-78: HTML pages in the thread
+
+An `html_render` call (docs/plan/07-agents.md, HTML pages in the thread) is an item of its own in the thread model,
+`{ type: "html", call }` (`itemModel.ts`' `Rows.tool`, by `isHtmlRender`), not one of a tool group, so a folded turn
+leaves it in sight. `thread/htmlPage.tsx` draws it: while it runs or if it failed, as its tool row (`ToolGroup`);
+once its answer names the kept page (`htmlRenderAttachment`), the page, read with `attachmentTextAtom`
+(`attachmentFiles.ts`, `attachments.get` decoded as UTF-8, kept while shown). The frame is a document's (`sandbox`
+`allow-scripts allow-forms`, `srcdoc`): `FRAME_CSP` and `noWebRtc` before the page, the theme (`liveTheme`: the stock
+theme with the board's `--color-*` as the tint leaves them) and the page, then `fitFrame` (planTheme.ts', now exported:
+the frame takes the height the page reports, from the call's `height` until then, 40 to 20,000 px) and
+`linksInNewTabs`, whose `iaOpen` opens a link at once after the user's own input in the frame and otherwise asks with
+`OpenLinkBar` (in the full-screen view while that's open, where the click was), as a document's frame does, and
+`escapeToBoard`, which passes Escape on (`iaKey`: a key pressed in the frame, another origin, never reaches the board).
+Its buttons (shown on hover, always where there's no hover) download the page and open it full screen (a portal, wider,
+zoom 50 to 200 %; Escape, on the board or in the page, closes it before the task view's own Escape; `data-modal`, so a
+click in it isn't one outside the side panel, which would close the task). Browser check:
+`apps/web/tests/ui/htmlPage.test.mjs`. The
+tool rows call them "Previewed a page" and "Showed a page". The phone app shows the call as a tool call for now.
 
 ### Experiments (HE-22)
 
