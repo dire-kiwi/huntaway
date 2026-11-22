@@ -36,6 +36,20 @@ const readingConfig = (rest: ReadonlyArray<string>): boolean => {
   return more.length === 0
 }
 
+/** The options `git grep` may have on a read-only server: `FilesTab.symbol`'s. */
+const GREP_OPTIONS: ReadonlySet<string> = new Set(["-n", "-z", "-I", "-w", "-F", "--untracked", "--no-color", "--no-recurse-submodules", "--no-column"])
+
+/** `git grep` with only `GREP_OPTIONS`, a pattern after each `-e`, and anything after `--` (the paths). */
+const readingGrep = (rest: ReadonlyArray<string>): boolean => {
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i] ?? ""
+    if (w === "--") return true
+    if (w === "-e") i++
+    else if (w.startsWith("-") && !GREP_OPTIONS.has(w)) return false
+  }
+  return true
+}
+
 /**
  * Subcommands with both reading and writing forms, and the reading ones a read-only server runs: a search, the stash list
  * and a stash's patch, the worktrees, the remotes' names and URLs (`remote show` asks the remote, so not that), the branch
@@ -47,8 +61,9 @@ const READING_FORMS: ReadonlyMap<string, (rest: ReadonlyArray<string>) => boolea
   ["remote", (rest) => positional(rest).length === 0 || (rest[0] === "get-url" && positional(rest).length === 2)],
   ["symbolic-ref", (rest) => positional(rest).length <= 1 && !rest.includes("-d") && !rest.includes("--delete")],
   ["config", readingConfig],
-  // HE-79: the Code tab's symbol search, but never opening the files it finds in a program (`-O`, `--open-files-in-pager`).
-  ["grep", (rest) => rest.every((w) => !w.startsWith("--open-files-in-pager") && !/^-[^-]*O/.test(w))],
+  // HE-79: the Code tab's symbol search, with the options it gives and no others: git takes any prefix of a long option
+  // (`--op=sh` is `--open-files-in-pager=sh`, which runs a program), so options are allowed by name rather than refused.
+  ["grep", readingGrep],
 ])
 
 /** `-c key=value` settings a reading command may carry: they turn things off or change how output is quoted. */

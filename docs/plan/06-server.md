@@ -394,11 +394,12 @@ two tool-call test cases.
 - **`git.files`.** `ls-files -z --cached --stage` (less submodules, mode 160000) and `--others --exclude-standard` (less
   an untracked repository of its own, listed as its folder with a slash), less `--deleted`, sorted, at most 50,000.
 - **`git.readFile`.** Read from the working tree as it is (not from the index or a commit). Refused (`Invalid`, field
-  `path`): a path with `..`, absolute, with a `.git` component, outside the project's folder, a link whose target is
+  `path`): a path with `..`, absolute, with a `.git` component (in any case, as a file system may ignore it), outside the project's folder, a link whose target is
   outside the repository (`realPath` compared with the top's) or, from the top, in `.git` or outside the project's
   folder, a folder, a missing file. Over 2 MiB is `too_large` with
   no text; a NUL in the first 8,000 bytes is `binary`; text that isn't UTF-8 is decoded lossily with `not_utf8`.
-- **`git.symbol`: search, not a parser.** `grep -n -z -I -w -F --untracked -e <name>` (a name must be letters, digits,
+- **`git.symbol`: search, not a parser.** `grep -n -z -I -w -F --untracked --no-recurse-submodules --no-column -e <name>`
+  (the last two against the user's `submodule.recurse`, which refuses `--untracked`, and `grep.column`) (a name must be letters, digits,
   `_` and `$`, at most 200 characters, so it is never an option or a pattern; a keyword is looked up too, as the client
   decides what's clickable: `KEYWORDS` holds only words reserved in nearly every language, and one after `.` or `::`
   is a member's name, `Effect.catch`). Each line found is a hit,
@@ -412,8 +413,8 @@ two tool-call test cases.
   one). Tree-sitter (`web-tree-sitter` with each language's grammar and tags query) would tell definitions from uses
   exactly and could replace the patterns without changing the wire; it was left out for the megabytes of grammars and
   the queries to keep per language.
-- **The read-only server** runs `git grep` (a reading form in `platform/ReadOnly.ts`), but never with `-O` or
-  `--open-files-in-pager`, which would run a program.
+- **The read-only server** runs `git grep` (a reading form in `platform/ReadOnly.ts`) with `FilesTab.symbol`'s options
+  only, as git takes any prefix of a long option (`--op=sh` is `--open-files-in-pager=sh`, which runs a program).
 - **Tests.** `git/FilesTab.test.ts` (the list with untracked, ignored and deleted files; reads, binary, too large, not
   UTF-8, a link in and one out, `.git`, a folder; a symbol's hits and order with an untracked file; a folder inside a
   bigger repository; a folder that isn't one), `packages/shared/test/symbols.test.ts` (the patterns per language, the
@@ -1668,7 +1669,7 @@ module under `lifecycle/` or a loop's layer.
   `Worktrees`, `Gh`, the shim… spawn without `Proc`), over the machine's; `Proc.readOnly` checks the same before it
   runs. Both take git only, under `GIT_OPTIONAL_LOCKS=0`, with the plan's subcommands plus what the Changes tab, a
   task's diff and the branch facts read: `rev-list`, `ls-tree`, and the reading forms of `stash` (`list`, `show`),
-  `worktree list`, `grep` (not with `-O`, HE-79), `remote` (names, `get-url`; not `remote show`, which asks the remote), `symbolic-ref` (one
+  `worktree list`, `grep` (with the Code tab's options only, HE-79), `remote` (names, `get-url`; not `remote show`, which asks the remote), `symbolic-ref` (one
   argument) and `config` (a key's value, the list). Before the subcommand only `-C`, a few printing options and a short
   list of `-c` settings that turn things off (`core.fsmonitor=false`, `core.hooksPath=/dev/null`…) pass; after it,
   `--output`, `--ext-diff` and `--exec*` do not. Everything else fails as `PermissionDenied` (`ProcFailed` through

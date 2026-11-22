@@ -29,7 +29,8 @@ describe("isReadingGit", () => {
       "git config --get user.name",
       "git config get user.name",
       "git config --list",
-      "git --literal-pathspecs grep -n -z -I -w -F --untracked --no-color -e parse --",
+      "git --literal-pathspecs grep -n -z -I -w -F --untracked --no-color --no-recurse-submodules --no-column -e parse --",
+      "git grep -n -e --op=sh -- --op=sh",
       "git -c core.fsmonitor=false -c core.hooksPath=/dev/null status",
     ])
       expect([line, reads(line)]).toEqual([line, true])
@@ -59,6 +60,10 @@ describe("isReadingGit", () => {
       "git grep -O -e x",
       "git grep -nOvim -e x",
       "git grep --open-files-in-pager=vim -e x",
+      "git grep --op=sh -e x",
+      "git grep --open=sh -e x",
+      "git grep --open-files=sh -e x",
+      "git grep -n --ext-grep -e x",
       "git -c core.fsmonitor=touch status",
       "git -c alias.st=!rm status",
       "git -c core.hooksPath=/tmp/hooks status",

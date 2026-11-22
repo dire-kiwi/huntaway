@@ -141,7 +141,8 @@ describe("FilesTab", () => {
         const gitDir = (yield* git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim()
         yield* symlink(`${gitDir}/config`, `${wt}/cfg`)
         assert.match(yield* fails(c.read(id, "cfg")), /^path: cfg is a link out of the /)
-        for (const bad of ["../x", "/etc/passwd", "", ".git/config", "src/.git/x"]) assert.match(yield* fails(c.read(id, bad)), /^path: not a /, bad)
+        for (const bad of ["../x", "/etc/passwd", "", ".git/config", "src/.git/x", ".GIT/config", "src/.Git/x"])
+          assert.match(yield* fails(c.read(id, bad)), /^path: not a /, bad)
         assert.strictEqual(yield* fails(c.read(id, "src")), "path: src isn't a file")
         assert.strictEqual(yield* fails(c.read(id, "nope.ts")), "path: no such file: nope.ts")
       }),
@@ -167,6 +168,13 @@ describe("FilesTab", () => {
         )
         assert.isFalse(found.truncated)
         assert.deepStrictEqual((yield* c.symbol(id, "nowhere", undefined).pipe(Effect.orDie)).hits, [])
+        // Not as the user's settings would have it: `submodule.recurse` refuses `--untracked`, `grep.column` adds a field.
+        yield* git(wt, ["config", "submodule.recurse", "true"])
+        yield* git(wt, ["config", "grep.column", "true"])
+        const configured = yield* c.symbol(id, "helper", "src/parse.ts").pipe(Effect.orDie)
+        assert.deepStrictEqual(configured, found)
+        yield* git(wt, ["config", "--unset", "submodule.recurse"])
+        yield* git(wt, ["config", "--unset", "grep.column"])
         for (const bad of ["-e", "a b", "1x", "x".repeat(201)]) assert.match(yield* fails(c.symbol(id, bad, undefined)), /^name: not a symbol's name/, bad)
         // A keyword in some language is a name in another (`Option.match`, a field `type`): looked up all the same.
         yield* write(`${wt}/src/opt.ts`, "export const match = 1\nOption.match(x)\n")

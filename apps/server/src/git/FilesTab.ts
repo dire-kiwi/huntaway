@@ -136,9 +136,10 @@ export class FilesTab extends Context.Service<FilesTab, FilesTabShape>()("huntaw
 
       const read = Effect.fn("FilesTab.read")(function* (id: TaskId, path: string) {
         const { top, folder } = yield* need(id)
-        /** Why `p` (from the top) isn't a file of the view: in `.git`, or outside the project's folder. */
+        /** Why `p` (from the top) isn't a file of the view: in `.git` (in any case: a file system may ignore it), or outside the project's folder. */
         const outside = (p: string) =>
-          (p.split("/").includes(".git") ? `not a file of the working tree: ${path}` : null) ?? (folder !== null ? outsideFolder(p, folder) : null)
+          (p.split("/").some((c) => c.toLowerCase() === ".git") ? `not a file of the working tree: ${path}` : null) ??
+          (folder !== null ? outsideFolder(p, folder) : null)
         const bad = badPath(path) ?? outside(path)
         if (bad !== null) return yield* invalid("path", bad)
         const missing = () => invalid("path", `no such file: ${path}`)
@@ -161,10 +162,26 @@ export class FilesTab extends Context.Service<FilesTab, FilesTabShape>()("huntaw
       const symbol = Effect.fn("FilesTab.symbol")(function* (id: TaskId, name: string, from: string | undefined) {
         if (!isName(name)) return yield* invalid("name", `not a symbol's name: ${name.slice(0, 100)}`)
         const { top, folder } = yield* need(id)
-        // A word (`-w`), as given (`-F`), in text files (`-I`), untracked ones too; `-e` so the name is never an option.
+        // A word (`-w`), as given (`-F`), in text files (`-I`), untracked ones too; `-e` so the name is never an option. Not
+        // as the user's settings would have it: `submodule.recurse` refuses `--untracked`, `grep.column` adds a field.
         const o = yield* run(
           top,
-          ["--literal-pathspecs", "grep", "-n", "-z", "-I", "-w", "-F", "--untracked", "--no-color", "-e", name, ...scope(folder)],
+          [
+            "--literal-pathspecs",
+            "grep",
+            "-n",
+            "-z",
+            "-I",
+            "-w",
+            "-F",
+            "--untracked",
+            "--no-color",
+            "--no-recurse-submodules",
+            "--no-column",
+            "-e",
+            name,
+            ...scope(folder),
+          ],
           MAX_GREP,
         )
         // `git grep` exits 1 when nothing matches.
