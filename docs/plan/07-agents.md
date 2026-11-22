@@ -1029,15 +1029,16 @@ reviewers; `html_preview` is rerunnable, `html_render` not (a second page would 
   inlined image, eval and a blob: worker still work) holds a sandboxed srcdoc frame (`allow-scripts allow-forms`: no popups, no navigating the top, no dialogs)
   with the page under the documents' policy and theme. So a page can't make the host's Chrome load another address
   (with its profile's cookies, or one on this machine) and get a screenshot of it back, which a top-level page could
-  (found in review; the test points every way out at a local server and checks it's never asked). Chrome runs the
-  sandboxed frame in a process of its own, so the page's session auto-attaches it (`Target.setAutoAttach`) and follows
-  its console. Not held for the debugger: a held frame held `Page.setDocumentContent` on CI's Chromium, which then
-  crashed; `Runtime.enable` and `Log.enable` report what came before them anyway. A Chrome that exits other than
-  cleanly logs the stderr kept (its last 4,000 characters), where a crash's cause is. The page reports its height to the wrapper as
-  `fitFrame` does; the preview waits for the wrapper's load, that height and two frames (10 s at most), and answers a PNG
-  of up to 4000 px with its height, the console (`Runtime.consoleAPICalled`, `Runtime.exceptionThrown`, and
-  `Log.entryAdded` warnings and errors, which carry CSP refusals and ignored dialogs), and the images it left out. A
-  dialog on the page itself is dismissed with a line saying so, rather than holding the page. Trusted Types aren't
+  (found in review; the test points every way out at a local server and checks it's never asked). The page's console
+  reaches the wrapper by script (`CONSOLE`, first in the frame: its console calls, uncaught errors and rejections,
+  `securitypolicyviolation` events, and its dialogs, which the thread's frame ignores), not over the protocol: Chrome
+  runs the sandboxed frame in a process of its own, and following that one (`Target.setAutoAttach`) crashed CI's
+  Chromium (it held `Page.setDocumentContent` while held for the debugger, and crashed the browser without). A Chrome
+  that exits other than cleanly logs the stderr kept (its last 4,000 characters), and its error names the line a crash's
+  report starts with (`lastSaid`). The page reports its height to the wrapper as
+  `fitFrame` does; the preview waits for the wrapper's load, that height, two frames and 200 ms for what the page logs as it starts (10 s at most), and answers a PNG
+  of up to 4000 px with its height, the console as the page told it, and the images it left out. A dialog on the
+  wrapper (should anything get one up) is dismissed with a line saying so, rather than holding the page. Trusted Types aren't
   required in a preview: the board's default policy lets every string through, so a page behaves the same.
 - **Content results on the board's server**: a board tool's result is JSON text, so these two return MCP content marked
   `_meta: { "huntaway/content": true }` (`BoardContent`, `boardContent` in `mcp/tool.ts`), which `callResult` gives as it

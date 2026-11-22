@@ -51,16 +51,20 @@ export interface ChromeProcess {
 const encoder = new TextEncoder()
 
 /**
- * The last three lines of what Chrome wrote to stderr, joined, for an error: less what it says when there is no D-Bus
- * session (as on a server or a CI runner), which it writes all through its start and which is never why it failed.
+ * The last three lines of what Chrome wrote to stderr, joined, for an error (after the line a crash's report starts
+ * with, when it crashed): less what it says when there is no D-Bus session (as on a server or a CI runner), which it
+ * writes all through its start and which is never why it failed.
  */
-export const lastSaid = (stderr: string) =>
-  stderr
+export const lastSaid = (stderr: string) => {
+  const lines = stderr
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l !== "" && !/:ERROR:dbus\//u.test(l))
-    .slice(-3)
-    .join(" / ")
+  const last = lines.slice(-3)
+  // A crash's report ends in its registers and stack, which say nothing: its cause is the line it starts with (HE-78).
+  const crash = lines.findLast((l) => /Received signal|Check failed|FATAL:/u.test(l))
+  return (crash === undefined || last.includes(crash) ? last : [crash, ...last]).join(" / ")
+}
 
 /** Whole messages from the pipe's text: each ends with a NUL. */
 export const splitMessages = <E, R>(text: Stream.Stream<string, E, R>): Stream.Stream<string, E, R> =>
