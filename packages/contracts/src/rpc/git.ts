@@ -145,6 +145,54 @@ export const GitShown = Schema.Struct({
 })
 export interface GitShown extends Schema.Schema.Type<typeof GitShown> {}
 
+/**
+ * HE-79: the Code tab's files, at the top of the folder `git.status` shows: the working tree's files git tracks or would
+ * (untracked ones not ignored), from the top of the repository (all in `folder` when the project's folder is only part
+ * of it). At most 50,000, `truncated` when there were more; `available: false` with `reason` when it isn't a repository.
+ */
+export const GitTree = Schema.Struct({
+  available: Schema.Boolean,
+  reason: Schema.optional(Schema.String),
+  folder: Schema.optional(Schema.NullOr(Schema.String)),
+  files: Schema.Array(Schema.String),
+  truncated: Schema.Boolean,
+})
+export interface GitTree extends Schema.Schema.Type<typeof GitTree> {}
+
+/**
+ * HE-79: a file of the working tree, as it is there: its `text`, or none when it's `binary` (a NUL in its first 8 KiB)
+ * or `too_large` (over 2 MiB). One that isn't UTF-8 is decoded lossily, with `not_utf8`.
+ */
+export const GitFileContent = Schema.Struct({
+  path: Schema.String,
+  /** In bytes. */
+  size: Schema.Int,
+  text: Schema.optional(Schema.String),
+  binary: Schema.optional(Schema.Boolean),
+  too_large: Schema.optional(Schema.Boolean),
+  not_utf8: Schema.optional(Schema.Boolean),
+})
+export interface GitFileContent extends Schema.Schema.Type<typeof GitFileContent> {}
+
+/** HE-79: a line a symbol's name is on: the file, the line (from 1), its text (cut to 400 characters), and whether it defines it. */
+export const GitSymbolHit = Schema.Struct({
+  path: Schema.String,
+  line: Schema.Int,
+  /** Where the name starts in `text` (in characters), or -1 when it isn't found there as a whole word. */
+  column: Schema.Int,
+  text: Schema.String,
+  definition: Schema.Boolean,
+})
+export interface GitSymbolHit extends Schema.Schema.Type<typeof GitSymbolHit> {}
+
+/** HE-79: where a name is defined and used in the working tree, found by search (`git grep -w`): at most 1,000 lines. */
+export const GitSymbol = Schema.Struct({
+  name: Schema.String,
+  hits: Schema.Array(GitSymbolHit),
+  truncated: Schema.Boolean,
+})
+export interface GitSymbol extends Schema.Schema.Type<typeof GitSymbol> {}
+
 /** `push` stashes; `apply`, `pop` and `drop` take a stash by its index and its commit. */
 export const GitStashAction = Schema.Literals(["push", "apply", "pop", "drop"])
 export type GitStashAction = typeof GitStashAction.Type
@@ -199,6 +247,16 @@ export class GitRpcs extends RpcGroup.make(
   Rpc.make("git.show", {
     payload: { id: TaskId, rev: Schema.String, stash: Schema.optional(Schema.Boolean) },
     success: GitShown,
+    error: ChangesErrors,
+  }).annotate(RequiredScope, "read"),
+  /** HE-79: the Code tab's files: what's in the working tree, but what git ignores. */
+  Rpc.make("git.files", { payload: { id: TaskId }, success: GitTree, error: ChangesErrors }).annotate(RequiredScope, "read"),
+  /** HE-79: a file of the working tree, from the top of the repository (none in `.git`, none through a link out of it). */
+  Rpc.make("git.readFile", { payload: { id: TaskId, path: Schema.String }, success: GitFileContent, error: ChangesErrors }).annotate(RequiredScope, "read"),
+  /** HE-79: where a symbol (a name) is defined and used in the working tree; `path`, the file it was looked up from, comes first. */
+  Rpc.make("git.symbol", {
+    payload: { id: TaskId, name: Schema.String, path: Schema.optional(Schema.String) },
+    success: GitSymbol,
     error: ChangesErrors,
   }).annotate(RequiredScope, "read"),
   /** Stage the files as they are (removed ones too), or everything (no paths). */

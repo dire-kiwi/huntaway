@@ -231,6 +231,11 @@ function fromCache(file: FileDiff, lang: string): FileRuns | null {
 function highlightFile(file: FileDiff, lang: string): Promise<boolean> {
   const todo = [...new Set(sidesOf(file).texts.filter((t) => t && !cached(lang, t)))]
   if (!todo.length) return Promise.resolve(true)
+  return highlightTexts(lang, todo)
+}
+
+/** Highlights texts into the cache. Resolves false if they couldn't be. */
+function highlightTexts(lang: string, todo: string[]): Promise<boolean> {
   return call(lang, todo).then((lines) => {
     if (!lines) return false
     todo.forEach((t, i) => {
@@ -276,5 +281,29 @@ export function useHighlight(file: FileDiff | null, on = true): FileRuns | null 
       stale = true
     }
   }, [file, lang, on, runs])
+  return runs
+}
+
+/** HE-79: files with more lines than this aren't highlighted in the Code tab. */
+export const MAX_FILE_LINES = 20_000
+
+/**
+ * HE-79: a whole file's highlighted lines (the Code tab's), once they're ready: null until then, and for a file in no
+ * language the worker knows or with more than MAX_FILE_LINES lines.
+ */
+export function useTextHighlight(path: string, text: string | null, lineCount: number): Run[][] | null {
+  const lang = useMemo(() => (text !== null && lineCount <= MAX_FILE_LINES ? langFor(path) : null), [path, text, lineCount])
+  const [ready, setReady] = useState(0)
+  const runs = useMemo(() => (lang && text !== null && ready >= 0 ? (cached(lang, text) ?? null) : null), [lang, text, ready])
+  useEffect(() => {
+    if (!lang || text === null || runs) return undefined
+    let stale = false
+    void highlightTexts(lang, [text]).then((ok) => {
+      if (ok && !stale) setReady((n) => n + 1)
+    })
+    return () => {
+      stale = true
+    }
+  }, [lang, text, runs])
   return runs
 }

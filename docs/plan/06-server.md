@@ -382,6 +382,44 @@ two tool-call test cases.
   first commit, non-UTF-8 files staged whole), on the whole board's services with worktrees from `Worktrees.setup`,
   plus the 5,000-file cut, `numstat` paths of a rename, a diff over 4 MiB and a folder that isn't a repository.
 
+#### As built in HE-79: `FilesTab`, the Code tab's reads
+
+- **Files.** `git/FilesTab.ts` (the service), with the definition patterns in `packages/shared/src/symbols.ts` (plain,
+  shared with the web app's outline). The wire is three more `read` methods in `packages/contracts/src/rpc/git.ts`:
+  `git.files` (`GitTree`), `git.readFile` (`GitFileContent`), `git.symbol` (`GitSymbol` of `GitSymbolHit`s), with the
+  Changes tab's errors; the handlers are `rpc/git.ts`, the layer is on Main's (and ReadOnlyMain's) git line beside
+  `ChangesTab`.
+- **Where.** The folder the Changes tab is of (`TaskBase.changesDir`), from the top of its repository, only the
+  project's folder when that is part of one; git with no optional locks and the location variables cleared.
+- **`git.files`.** `ls-files -z --cached --stage` (less submodules, mode 160000) and `--others --exclude-standard` (less
+  an untracked repository of its own, listed as its folder with a slash), less `--deleted`, sorted, at most 50,000.
+- **`git.readFile`.** Read from the working tree as it is (not from the index or a commit). Refused (`Invalid`, field
+  `path`): a path with `..`, absolute, with a `.git` component (in any case, as a file system may ignore it), outside the project's folder, a link whose target is
+  outside the repository (`realPath` compared with the top's) or, from the top, in `.git` or outside the project's
+  folder, a folder, a missing file. Over 2 MiB is `too_large` with
+  no text; a NUL in the first 8,000 bytes is `binary`; text that isn't UTF-8 is decoded lossily with `not_utf8`.
+- **`git.symbol`: search, not a parser.** `grep -n -z -I -w -F --untracked --no-recurse-submodules --no-column -e <name>`
+  (the last two against the user's `submodule.recurse`, which refuses `--untracked`, and `grep.column`) (a name must be letters, digits,
+  `_` and `$`, at most 200 characters, so it is never an option or a pattern; a keyword is looked up too, as the client
+  decides what's clickable: `KEYWORDS` holds only words reserved in nearly every language, and one after `.` or `::`
+  is a member's name, `Effect.catch`). Each line found is a hit,
+  a definition when one of `symbols.ts`'s patterns matches it (`function N`, `class N`, `def N`, `fn N`, `type N`,
+  `const N`, Go's `func (r T) N(`, a method's `N(…) {`, a top-level `N = …`, a field with a modifier, C's `int N(` in
+  C-like files) and it isn't an import or a comment. Definitions first, the file it was looked up from first in each;
+  at most 1,000 hits (`truncated`), a line's text cut to 400 characters around the name.
+- **Decided.** GitHub's precise navigation needs an index built per language (stack graphs); its search-based
+  navigation is what this is: no index, no grammar per language, nothing to keep up to date as the agent edits. The cost
+  is that it knows no scopes or types (a local `const x` defines every `x`; a string that reads like a definition is
+  one). Tree-sitter (`web-tree-sitter` with each language's grammar and tags query) would tell definitions from uses
+  exactly and could replace the patterns without changing the wire; it was left out for the megabytes of grammars and
+  the queries to keep per language.
+- **The read-only server** runs `git grep` (a reading form in `platform/ReadOnly.ts`) with `FilesTab.symbol`'s options
+  only, as git takes any prefix of a long option (`--op=sh` is `--open-files-in-pager=sh`, which runs a program).
+- **Tests.** `git/FilesTab.test.ts` (the list with untracked, ignored and deleted files; reads, binary, too large, not
+  UTF-8, a link in and one out, `.git`, a folder; a symbol's hits and order with an untracked file; a folder inside a
+  bigger repository; a folder that isn't one), `packages/shared/test/symbols.test.ts` (the patterns per language, the
+  outline), `ReadOnly.test.ts` and `ReadOnlyMain.test.ts` (the three methods answer on a rehearsal).
+
 ### GitHub — [inventory 03](inventory/03-mcp.md) (2.9, 2.10), [04](inventory/04-git-review.md), [06](inventory/06-integrations.md)
 
 `Gh` (running `gh` with one account's token and nothing else, target checks, the unsandboxed-git hardening),
@@ -1631,7 +1669,7 @@ module under `lifecycle/` or a loop's layer.
   `Worktrees`, `Gh`, the shim… spawn without `Proc`), over the machine's; `Proc.readOnly` checks the same before it
   runs. Both take git only, under `GIT_OPTIONAL_LOCKS=0`, with the plan's subcommands plus what the Changes tab, a
   task's diff and the branch facts read: `rev-list`, `ls-tree`, and the reading forms of `stash` (`list`, `show`),
-  `worktree list`, `remote` (names, `get-url`; not `remote show`, which asks the remote), `symbolic-ref` (one
+  `worktree list`, `grep` (with the Code tab's options only, HE-79), `remote` (names, `get-url`; not `remote show`, which asks the remote), `symbolic-ref` (one
   argument) and `config` (a key's value, the list). Before the subcommand only `-C`, a few printing options and a short
   list of `-c` settings that turn things off (`core.fsmonitor=false`, `core.hooksPath=/dev/null`…) pass; after it,
   `--output`, `--ext-diff` and `--exec*` do not. Everything else fails as `PermissionDenied` (`ProcFailed` through

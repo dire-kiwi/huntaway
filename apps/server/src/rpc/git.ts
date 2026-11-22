@@ -2,6 +2,7 @@ import { Effect } from "effect"
 import { Conflict, GitRpcs, Invalid, NotFound, Unavailable } from "@huntaway/contracts"
 import { ChangesTab } from "../git/ChangesTab.ts"
 import type { ChangesError } from "../git/ChangesTab.ts"
+import { FilesTab } from "../git/FilesTab.ts"
 import { TaskBase } from "../git/TaskBase.ts"
 import { Worktrees } from "../git/Worktrees.ts"
 import { Tasks } from "../tasks/Tasks.ts"
@@ -25,6 +26,7 @@ export const GitHandlers = GitRpcs.toLayer(
     const worktrees = yield* Worktrees
     const base = yield* TaskBase
     const tab = yield* ChangesTab
+    const code = yield* FilesTab
     const tasks = yield* Tasks
     return GitRpcs.of({
       // A setup that fails was the old 400.
@@ -50,6 +52,9 @@ export const GitHandlers = GitRpcs.toLayer(
       "git.status": ({ id }) => changes(tab.status(id)),
       "git.diff": ({ id, path, staged, untracked }) => changes(tab.diff(id, path, { staged: staged ?? false, untracked: untracked ?? false })),
       "git.show": ({ id, rev, stash }) => changes(tab.show(id, rev, stash ?? false)),
+      "git.files": ({ id }) => changes(code.files(id)),
+      "git.readFile": ({ id, path }) => changes(code.read(id, path)),
+      "git.symbol": ({ id, name, path }) => changes(code.symbol(id, name, path)),
       "git.stage": ({ id, paths }) => changes(tab.stage(id, paths)),
       "git.unstage": ({ id, paths }) => changes(tab.unstage(id, paths)),
       "git.discard": ({ id, paths, staged }) => changes(tab.discard(id, paths, staged ?? false)),

@@ -274,7 +274,10 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const profileScratch = scratch && !task.project_id
   const labels = taskLabels(task)
   const docsOnly = documentsOnly(task)
-  const tabs: Tab[] = [...labels, ...(group !== undefined || scratch || assistant || routine || pensThread || docsOnly ? ["thread"] : ["thread", "changes"])]
+  const tabs: Tab[] = [
+    ...labels,
+    ...(group !== undefined || scratch || assistant || routine || pensThread || docsOnly ? ["thread"] : ["thread", "changes", "code"]),
+  ]
   // 6.7: the assistant's morning brief, its memory files and routines.
   if (assistant) tabs.push("brief", "memory", "routines")
   // A project that uses workflows has no reviews of the board's (HA-277): a workflow's steps add their own tabs (a
@@ -397,13 +400,14 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       {canMark && <ReminderButton task={task} onError={setMarkErr} />}
       <AgentsPill task={task} onReveal={() => setTab("thread")} />
       <ContextPill task={task} />
-      <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5 narrow:order-first">
+      {/* On a phone, tighter, so every tab (Code too, HE-79) fits its width. */}
+      <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5 narrow:order-first narrow:gap-0.5">
         {tabs.map((t) => (
           <button
             key={t}
             onClick={() => selectTab(t)}
             className={clsx(
-              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize narrow:py-1.5",
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize narrow:px-1.5 narrow:py-1.5",
               shown === t ? "bg-raised text-fg" : "text-muted hover:text-fg",
             )}
           >
@@ -565,12 +569,13 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             </div>
           </>
         )}
-        {/* A document, the changes' panels and the terminals get the room; so do the desktop, the browser, the memory and the brief. */}
+        {/* A document, the changes' panels, the code and the terminals get the room; so do the desktop, the browser, the memory and the brief. */}
         {wide &&
           !desktop &&
           !browser &&
           !docShown &&
           shown !== "changes" &&
+          shown !== "code" &&
           shown !== "memory" &&
           shown !== "brief" &&
           !isTerminalTab(tab) &&

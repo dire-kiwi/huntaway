@@ -299,6 +299,28 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   page, the linked host's projects and tasks on the board, one opened and moved, the host stopped (its board stays,
   marked offline) and started again, and forgotten. The harness's servers have `kill()` and `restart()` for it.
 
+### The Code tab (HE-79)
+
+- **Where.** `components/code/`: `Code.tsx` (the view, a `preloadable` chunk mounted by `task/view/TabContent.tsx` for the
+  `code` tab, which every task with a Changes tab has; on a phone the task's tabs are tighter so all of them still fit), `FileTree.tsx`, `FileView.tsx` (`CodeLines`), `SymbolPanel.tsx`
+  (the symbol's hits, and the file's outline), `tree.ts` and `lines.ts` (plain, tested in `tests/unit/code/`), `state.ts`.
+- **What it shows.** The tree of `git.files` (folders first, a folder holding one folder on one row, files with changes
+  marked from `git.status` as the Changes tab lists them), a finder over it (`t`, Enter opens the first match), the file
+  (`git.readFile`) highlighted by the Changes tab's Shiki worker (`useTextHighlight` in `changes/highlight.ts`, files of
+  up to 20,000 lines), a Markdown file as its preview first, and the README of the project's folder until a file is
+  picked. Over 3,000 lines only the lines in view (and 80 each side) are drawn.
+- **Symbols.** A click on a name (not a drag) takes the word under the caret (`wordAt`: not a keyword, unless it's a
+  member's name after `.` or `::`) and looks it up (`git.symbol`):
+  the side panel lists its definitions and uses by file, its uses in the file are marked, and a hit opens its file at
+  its line. The outline button lists the names the file defines (`outline` from `@huntaway/shared`). Back (and
+  Alt+←) returns to the places before; Escape closes the panel (not the task).
+- **State.** Where the tab is (the file, line, the places to go back to, the open folders, the symbol) is an atom per
+  host and task kept for the page's life (`codeState`), so leaving the tab or the task and coming back keeps it. The
+  reads are queries read again every 10 s while the page is shown, on focus, as the agent starts and stops
+  (`invalidate.ts`), and after a Changes tab change (the `git` group).
+- **Checks.** `tests/ui/code.test.mjs`: the README first, `t` to a file, a name clicked and its use in another file
+  followed, back, Escape.
+
 ### Step 1 as done for `changes/` (4.2, HE-5)
 
 - **What came over.** All of the old `components/changes/` but `Compare.tsx`: `Changes.tsx`, `DiffLines.tsx`,
