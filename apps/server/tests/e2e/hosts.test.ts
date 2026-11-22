@@ -328,6 +328,10 @@ describe("hosts, whole servers", () => {
         yield* git(repos, ["clone", "-q", "hub", "host"])
         yield* git(repos, ["clone", "-q", "hub", "other"])
         yield* git(`${repos}/other`, ["checkout", "-q", "-b", "elsewhere"])
+        yield* git(repos, ["clone", "-q", "hub", "ahead"])
+        yield* fs.writeFileString(`${repos}/ahead/more.txt`, "more")
+        yield* git(`${repos}/ahead`, ["add", "-A"])
+        yield* git(`${repos}/ahead`, ["commit", "-q", "-m", "two"])
         yield* git(repos, ["clone", "-q", "hub", "third"])
         yield* git(`${repos}/third`, ["checkout", "-q", "-b", "elsewhere"])
 
@@ -344,6 +348,11 @@ describe("hosts, whole servers", () => {
 
         const same = yield* linkHost(`${repos}/host`)
         assert.deepStrictEqual(yield* board("hub.hosts.pushUpdate", { id: same }), { ok: true, up_to_date: true })
+
+        // HE-76 review: a host ahead of the hub runs its code already, and a cluster Update sends to it as it differs:
+        // up to date, not rebuilt and restarted for nothing (its fast-forward to an ancestor does nothing).
+        const ahead = yield* linkHost(`${repos}/ahead`)
+        assert.deepStrictEqual(yield* board("hub.hosts.pushUpdate", { id: ahead }), { ok: true, up_to_date: true })
 
         const other = yield* linkHost(`${repos}/other`)
         const refused = yield* Effect.flip(board("hub.hosts.pushUpdate", { id: other }))

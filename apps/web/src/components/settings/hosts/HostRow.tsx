@@ -1,21 +1,16 @@
-import { useAtom, useAtomValue } from "@effect/atom-react"
-import { query, type QueryResult } from "@huntaway/client"
+import { useAtomValue } from "@effect/atom-react"
 import type { Host } from "@huntaway/contracts"
 import { LinkId } from "@huntaway/contracts"
 import { clsx } from "clsx"
-import { AsyncResult, Atom } from "effect/reactivity"
 import { Loader2, Server, Trash2 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useBoard } from "../../../state/board"
 import { useAction, useMutation } from "../../../state/mutation"
 import { navigate } from "../../../state/route"
 import { Button, Help, Input, Select, timeAgo, ToggleField, useConfirm } from "../../ui"
 import { hubRpc, useHubMutation } from "./hub"
-import { clusterOf, hostUpdateAtom, idleUpdate, offerOf, updateHosts } from "./hostUpdate"
+import { clusterOf, hostUpdateAtom, offerOf, updateHosts } from "./hostUpdate"
 import { useUpdateCommit } from "./useUpdateCommit"
-
-/** No update to follow. */
-const noStatus: Atom.Atom<QueryResult<"admin.status">> = Atom.make<QueryResult<"admin.status">>(AsyncResult.initial())
 
 const MODE_LABEL: Record<Host["mode"], string> = {
   local: "this host",
@@ -58,15 +53,14 @@ function statusOf(host: Host): { label: string; dot: string } {
  * update" (docs/plan/05-protocol.md, Versions). Update sends this board's code (its checkout as it is, `useUpdateCommit`)
  * or, to a host installed from a release, the release it runs (only a newer one) to the host, which rebuilds and
  * restarts (`hub.hosts.pushUpdate`, the host's `admin.update`), and to every other host that differs too, so the whole
- * cluster moves together (HE-76, hostUpdate.ts). Its phases show while it does; it is over when the host comes back (a
- * new boot), or reconnects on that commit or version. Agents keep running meanwhile.
+ * cluster moves together (HE-76, hostUpdate.ts, which follows each to its end). Its phases show while it does; it is
+ * over when the host comes back (a new boot), or reconnects on that commit or version. Agents keep running meanwhile.
  */
 export function HostVersion({ host }: { host: Host }) {
   const local = useBoard((s) => s.hosts.find((h) => h.local))
   const hosts = useBoard((s) => s.hosts)
   const target = useUpdateCommit(local)
-  const [state, setState] = useAtom(hostUpdateAtom(host.id))
-  const { phase, boot, sent } = state
+  const { phase, error, upToDate } = useAtomValue(hostUpdateAtom(host.id))
   const [, run] = useAction()
   const outdated = host.status === "needs_update"
   const behind = !host.local && !!host.commit && !!local?.commit && host.commit !== local.commit
@@ -74,27 +68,9 @@ export function HostVersion({ host }: { host: Host }) {
   // The hosts an Update here updates: this one and the others that differ.
   const cluster = clusterOf(host, hosts, local, target)
   const others = cluster.length - 1
-  // Back on what it was sent: the hub's release or commit (not the offer's, which is gone once it's there).
-  const back = !!phase && (offer.release ? !!local?.version && host.version === local.version : !!target && host.commit === target)
-
-  // While the host rebuilds, show its progress (its status, polled); done when it comes back (a new boot). A status read
-  // again is followed once it has been read: until then it's the one from before.
-  const following = phase !== null && sent
-  const polled = useAtomValue(following ? query("admin.status", host.id, undefined, { refresh: "1.5 seconds" }) : noStatus)
-  useEffect(() => {
-    if (back) return setState(idleUpdate)
-    if (!following || polled.waiting) return
-    if (AsyncResult.isSuccess(polled)) {
-      const st = polled.value
-      // Back (a new boot), or, its boot unread before the update, up again with no restart under way.
-      if (boot ? st.boot_id !== boot : !st.restart) setState(idleUpdate)
-      else if (st.restart?.phase === "failed") setState({ ...idleUpdate, error: st.restart.error ?? "update failed" })
-      else if (st.restart && st.restart.phase !== phase) setState((s) => ({ ...s, phase: st.restart?.phase ?? s.phase }))
-    } else if (AsyncResult.isFailure(polled) && phase !== "restarting") setState((s) => ({ ...s, phase: "restarting" }))
-  }, [back, following, polled, boot, phase, setState])
 
   if (!host.version && !outdated) return null
-  const update = () => void run(updateHosts(cluster))
+  const update = () => void run(updateHosts(cluster, local, target))
   const to = offer.release ? `v${offer.to ?? "?"}` : short(offer.to)
   const what = offer.release ? "The host downloads this release and restarts onto it." : "Send this board's code to the host, which rebuilds and restarts."
   return (
@@ -128,8 +104,8 @@ export function HostVersion({ host }: { host: Host }) {
         </button>
       )}
       {phase && <span className="text-st-progress">{phase.replace("_", " ")}…</span>}
-      {state.upToDate && !phase && <span className="text-muted">already up to date</span>}
-      {state.error && <span className="text-red-400">{state.error}</span>}
+      {upToDate && !phase && <span className="text-muted">already up to date</span>}
+      {error && <span className="text-red-400">{error}</span>}
     </div>
   )
 }

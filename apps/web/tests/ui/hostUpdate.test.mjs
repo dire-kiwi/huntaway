@@ -196,6 +196,10 @@ test("Update on one host updates every host that differs", async () => {
     const [differs, same] = ids
     await withBrowser(hub, {}, async (ui) => {
       const pushed = []
+      // What the linked hosts say (one answer for both: the relays aren't told apart): a push starts a build, and the
+      // test ends it with a new boot.
+      let boot = "b1"
+      let building = false
       await routeSockets(ui.page, {
         rewrite: (tag, value, via) => {
           if (via !== "rpc") return value
@@ -213,18 +217,18 @@ test("Update on one host updates every host that differs", async () => {
         handle: (r, via) => {
           if (r.tag === "hub.hosts.pushUpdate") {
             pushed.push(r.payload.id)
+            building = true
             return success({ ok: true })
           }
           if (r.tag !== "admin.status") return undefined
           if (via === "rpc") return success(serverStatus({ running_commit: running }))
-          // Each linked host builds, for as long as the test looks.
           return success(
             serverStatus({
-              boot_id: "b1",
+              boot_id: boot,
               source_dir: "/src",
               running_commit: remote,
               running_agents: 0,
-              restart: pushed.length ? { phase: "building_server", log: "", error: null } : null,
+              restart: building ? { phase: "building_server", log: "", error: null } : null,
             }),
           )
         },
@@ -238,6 +242,22 @@ test("Update on one host updates every host that differs", async () => {
       ])
       assert.deepEqual(new Set(pushed), new Set([hostId, differs]))
       assert.equal(pushed.length, 2)
+      // Both come back (on their old commit, as the hub's rewritten list has it), and are offered it again.
+      ;[boot, building] = ["b2", false]
+      await ui.run([`wait [data-host="${hostId}"] >> text=Update to ccccccc · all 2 hosts`, `wait [data-host="${differs}"] >> text=Update to ccccccc`])
+
+      // HE-76 review: from a host's own page (opened in the page, so what each host's Update has got to stays), where
+      // only that host's row is shown, the other host's Update ends too, so a second Update sends it again.
+      await ui.run([`click [data-host="${hostId}"] >> text=Configure`, "click Update to ccccccc · all 2 hosts", "wait building server"])
+      await eventually(() => assert.equal(pushed.length, 4))
+      ;[boot, building] = ["b3", false]
+      await ui.run(["click Update to ccccccc · all 2 hosts", "wait building server"])
+      await eventually(() =>
+        assert.deepEqual(
+          [hostId, differs].map((id) => pushed.filter((p) => p === id).length),
+          [3, 3],
+        ),
+      )
       assert.equal(await ui.page.locator(`[data-host="${same}"]`, { hasText: "building server" }).count(), 0)
     })
   } finally {

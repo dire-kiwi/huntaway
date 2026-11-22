@@ -566,8 +566,10 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   cluster: Update on one host is sent to every other host the hub links itself that it is offered for too (not a mesh
   host, which its own neighbour links), a few at a time (the hub makes their bundles one at a time: `Updater`'s
   `bundleSince`, in its one `outgoing.bundle`), and the button says how many (`· all 3 hosts`). Each host's
-  Update is kept per host (`hosts/hostUpdate.ts`, `hostUpdateAtom`), off the row, so one started from a host's page
-  still shows on the others' rows; a row follows its host's phases while it is shown.
+  Update is followed to its end in the action that sent it (`hosts/hostUpdate.ts`: the host's `admin.status` polled,
+  and the hub's list for it back on what it was sent), not on its row, and kept per host (`hostUpdateAtom`), which the
+  rows show; so one started from a host's page ends for the hosts with no row shown too. A host whose server runs the
+  hub's commit or one after it (ahead of the hub) answers up to date rather than restarting (`Updater.runsAlready`).
 - **Dropped.** Settings → Server's database line and Copy again, and the threads' batch rebuild (docs/plan/14: the
   two-file database scheme, moving threads onto items). `Devices.tsx` and the paired phones under Network access, with
   device pairing (14, Deferred).

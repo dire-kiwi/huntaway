@@ -245,6 +245,12 @@ export class Updater extends Context.Service<Updater, UpdaterShape>()("huntaway-
         return yield* restarts.begin(rebuildAndRestart(rebuild))
       })
 
+      /**
+       * Whether the server runs the hub's `commit` already, or one after it (a host ahead of its hub: HE-76's cluster
+       * Update sends to every host that differs, and a fast-forward to an ancestor is a no-op not worth a restart).
+       */
+      const runsAlready = (dir: string, commit: string) => (running === null ? Effect.succeed(false) : isAncestor(dir, commit, running))
+
       const noCheckout = new Unavailable({ what: "update", reason: "this host isn't running from a source checkout; update it by hand" })
       /** A job running already: say so before the checkout changes. */
       const notBusy = Effect.gen(function* () {
@@ -257,7 +263,7 @@ export class Updater extends Context.Service<Updater, UpdaterShape>()("huntaway-
         Effect.gen(function* () {
           const current = (yield* branchOf(dir)) ?? ""
           if (current !== branch) return yield* refuse(`this host's checkout is on ${current}, the hub's on ${branch}`)
-          if ((yield* head(dir)) === commit && running === commit) return { ok: true as const, up_to_date: true }
+          if (yield* runsAlready(dir, commit)) return { ok: true as const, up_to_date: true }
           yield* notBusy
           if (yield* dirty(dir)) return yield* refuse("this host's checkout has uncommitted changes")
           const bytes = Base64.decode(bundle.trim())
@@ -276,7 +282,7 @@ export class Updater extends Context.Service<Updater, UpdaterShape>()("huntaway-
 
       const updateFromOrigin = (dir: string, commit: string) =>
         Effect.gen(function* () {
-          if (running === commit) return { ok: true as const, up_to_date: true }
+          if (yield* runsAlready(dir, commit)) return { ok: true as const, up_to_date: true }
           const branch = yield* branchOf(dir)
           if (branch === null) return yield* refuse("this host's checkout isn't on a branch")
           yield* notBusy
