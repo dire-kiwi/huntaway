@@ -87,27 +87,73 @@ const MAX_MESSAGES = 60
 const MAX_MESSAGE = 600
 
 /**
- * The page as a preview loads it: the board's frame policy first, then the theme, then the page. Trusted Types aren't
- * required here: in the board, a default policy that lets every string through goes with them (to keep a javascript:
- * frame from WebRTC, which isn't a preview's concern), so the page's innerHTML works there as it does here.
+ * Reports the page's height to the wrapper, as the board's `fitFrame` (apps/web planTheme.ts) does: the body's extent,
+ * when it loads, as the DOM changes and as anything in it changes size. Runs in the page's frame, as source.
+ */
+const FIT = `(() => {
+  let last = -1
+  const post = () => {
+    const b = document.body
+    if (!b) return
+    const h = Math.max(b.scrollHeight, Math.ceil(b.getBoundingClientRect().height))
+    if (h === last) return
+    last = h
+    parent.postMessage({ iaHtmlHeight: h }, "*")
+  }
+  const sizes = new ResizeObserver(post)
+  addEventListener("DOMContentLoaded", () => {
+    sizes.observe(document.body)
+    for (const e of document.body.querySelectorAll("*")) sizes.observe(e)
+    new MutationObserver(post).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true })
+    post()
+  })
+  for (const t of ["load", "transitionend", "animationend"]) addEventListener(t, post)
+})()`
+
+/** `value` as a double-quoted attribute's value. */
+const attribute = (value: string) => value.replaceAll("&", "&amp;").replaceAll('"', "&quot;")
+
+/**
+ * The preview's document, which holds the page as the board's thread does (thread/htmlPage.tsx): the page in a
+ * sandboxed frame (srcdoc, `allow-scripts allow-forms`: its own opaque origin, no popups, no navigating the top, no
+ * dialogs), under the documents' policy, with the theme first. The wrapper's own policy holds the frame's navigations
+ * (`frame-src 'none'`, as the board's `frame-src 'self'` does), so a page can't make the host's Chrome load another
+ * address (with its profile's cookies, or one on this machine) and screenshot it. The wrapper takes the height the page
+ * reports (`iaHeight`) and sizes the frame to it. Trusted Types aren't required in the page: in the board a default
+ * policy that lets every string through goes with them (to keep a javascript: frame from WebRTC), so its innerHTML
+ * works the same.
  */
 export const previewDocument = (html: string): string => {
   const csp = FRAME_CSP.split("; ")
     .filter((d) => !d.startsWith("require-trusted-types-for"))
     .join("; ")
-  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${htmlRenderPage(html)}`
+  const page = `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${htmlRenderPage(html)}\n<script>${FIT}</script>`
+  const wrapper = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src 'none'"
+  const take =
+    "addEventListener('message', (e) => { const f = document.querySelector('iframe'); " +
+    "if (f && e.source === f.contentWindow && typeof e.data?.iaHtmlHeight === 'number') { window.iaHeight = e.data.iaHtmlHeight; f.style.height = e.data.iaHtmlHeight + 'px' } })"
+  return (
+    `<!doctype html><meta http-equiv="Content-Security-Policy" content="${wrapper}">` +
+    "<style>html,body{margin:0;background:transparent}iframe{display:block;border:0;width:100%;height:40px}</style>" +
+    `<script>${take}</script>` +
+    `<iframe sandbox="allow-scripts allow-forms" referrerpolicy="no-referrer" srcdoc="${attribute(page)}"></iframe>`
+  )
 }
 
-/** Waits for the page's load, its fonts and two frames after, within 10 seconds. */
+/** Waits for the wrapper's load (its frame's included), the page's height and two frames after, within 10 seconds. */
 const SETTLE = `new Promise((done) => {
   const late = setTimeout(() => done(false), 10000)
-  const settle = () => (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => requestAnimationFrame(() => requestAnimationFrame(() => (clearTimeout(late), done(true)))))
+  const settle = () => {
+    const tries = Date.now() + 2000
+    const wait = () => (window.iaHeight !== undefined || Date.now() > tries ? requestAnimationFrame(() => requestAnimationFrame(() => (clearTimeout(late), done(true)))) : setTimeout(wait, 50))
+    wait()
+  }
   if (document.readyState === "complete") settle()
   else addEventListener("load", settle, { once: true })
 })`
 
-/** The page's height as the board's frame takes it (the body's extent: planTheme.ts' `fitFrame`). */
-const HEIGHT = "document.body ? Math.max(document.body.scrollHeight, Math.ceil(document.body.getBoundingClientRect().height)) : 0"
+/** The page's height as it reported it (the board's frame takes the same). */
+const HEIGHT = "window.iaHeight ?? 0"
 
 /** What a console call's arguments say. */
 const argsText = (args: unknown): string =>
@@ -144,21 +190,48 @@ export const consoleLine = (e: CdpEvent): string | null => {
 
 const BOARD_BACKGROUND = { r: 11, g: 11, b: 14, a: 1 }
 
+/** Follows the console of a frame attached under the preview's page, then lets it start (it waits for that). */
+const follow = (frame: CdpPage) =>
+  Effect.all([frame.send("Runtime.enable"), frame.send("Log.enable")], { concurrency: 1, discard: true }).pipe(
+    Effect.ensuring(frame.send("Runtime.runIfWaitingForDebugger").pipe(Effect.ignore)),
+    Effect.ignore,
+  )
+
 /** Loads `html` in `page` at `width`: its height, its console and a screenshot (base64 PNG). */
-const previewOn = (page: CdpPage, html: string, width: number) =>
+const previewOn = (page: CdpPage, session: (sessionId: string) => CdpPage, html: string, width: number) =>
   Effect.scoped(
     Effect.gen(function* () {
       const sub = yield* page.subscribe
       const said: Array<string> = []
+      const say = (line: string) => {
+        if (said.length < MAX_MESSAGES) said.push(line.length > MAX_MESSAGE ? `${line.slice(0, MAX_MESSAGE - 1)}…` : line)
+      }
+      // The page's frame, which Chrome runs in a process of its own (a sandboxed frame is isolated): its session, once
+      // attached, is read too. It waits to start until its console is followed.
+      const frames = new Set<string>()
       yield* PubSub.take(sub).pipe(
-        Effect.map((e) => {
-          const line = e.sessionId === page.sessionId ? consoleLine(e) : null
-          if (line !== null && said.length < MAX_MESSAGES) said.push(line.length > MAX_MESSAGE ? `${line.slice(0, MAX_MESSAGE - 1)}…` : line)
+        Effect.flatMap((e) => {
+          if (e.method === "Target.attachedToTarget" && e.sessionId === page.sessionId) {
+            const id = str(e.params, "sessionId")
+            frames.add(id)
+            return follow(session(id)).pipe(Effect.forkScoped, Effect.asVoid)
+          }
+          if (e.sessionId !== page.sessionId && (e.sessionId === undefined || !frames.has(e.sessionId))) return Effect.void
+          // The thread's frame has no allow-modals, so the page's dialogs are ignored there; one here (the wrapper's,
+          // should anything get one up) is dismissed rather than left holding the page.
+          if (e.method === "Page.javascriptDialogOpening") {
+            say(`[warning] The page opened a dialog (${str(e.params, "type")}: ${str(e.params, "message")}), which the thread's frame ignores.`)
+            return page.send("Page.handleJavaScriptDialog", { accept: false }).pipe(Effect.ignore)
+          }
+          const line = consoleLine(e)
+          if (line !== null) say(line)
+          return Effect.void
         }),
         Effect.forever,
         Effect.forkScoped,
       )
       yield* page.send("Log.enable")
+      yield* page.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true })
       yield* page.send("Emulation.setDeviceMetricsOverride", { width, height: 720, deviceScaleFactor: 1, mobile: false })
       yield* page.send("Emulation.setDefaultBackgroundColorOverride", { color: BOARD_BACKGROUND })
       const tree = yield* page.send("Page.getFrameTree")
@@ -224,7 +297,9 @@ export const htmlTools = Effect.gen(function* () {
     Effect.gen(function* () {
       const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, a.width ?? HTML_RENDER_COLUMN_WIDTH))
       const page = yield* preparePage(fs, a.html)
-      const shown = yield* browsers.scratch((p) => previewOn(p, page.html, width)).pipe(Effect.mapError((e) => `The preview failed: ${e.reason}`))
+      const shown = yield* browsers
+        .scratch((p, session) => previewOn(p, session, page.html, width))
+        .pipe(Effect.mapError((e) => `The preview failed: ${e.reason}`))
       return boardContent({
         content: [
           { type: "image", data: shown.png, mimeType: "image/png" },

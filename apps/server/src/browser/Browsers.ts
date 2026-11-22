@@ -90,9 +90,12 @@ export interface BrowsersShape {
   readonly reap: Effect.Effect<void>
   /**
    * HE-78: `use` on a page of its own in the headless Chrome (started if it isn't running), which nobody sees and which
-   * closes after: `html_preview`'s. Chrome stays up while one is open.
+   * closes after: `html_preview`'s. Chrome stays up while one is open. `use` is also given the page of a session
+   * attached under it (`Target.setAutoAttach`: a frame Chrome runs in a process of its own).
    */
-  readonly scratch: <A, E>(use: (page: CdpPage) => Effect.Effect<A, E>) => Effect.Effect<A, E | ChromeUnavailable | CdpError>
+  readonly scratch: <A, E, R>(
+    use: (page: CdpPage, session: (sessionId: string) => CdpPage) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | ChromeUnavailable | CdpError, R>
   /** The download of the headless Chrome going, if one is. */
   readonly installing: Effect.Effect<ChromeInstalling | null>
   /** A ticket for the task's browser's socket (single use, for a minute). */
@@ -479,7 +482,8 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
               return yield* Effect.gen(function* () {
                 const scratchPage = pageOf(cdp, str(yield* cdp.send("Target.attachToTarget", { targetId, flatten: true }), "sessionId"))
                 yield* preparePage(scratchPage)
-                return yield* use(scratchPage)
+                // `session`: a target attached under it (its frames in processes of their own), as a page to drive.
+                return yield* use(scratchPage, (sessionId) => pageOf(cdp, sessionId))
               }).pipe(Effect.ensuring(cdp.send("Target.closeTarget", { targetId }).pipe(Effect.ignore)))
             }),
           () => Ref.update(scratches, (n) => n - 1),

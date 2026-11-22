@@ -1,3 +1,4 @@
+import { createServer } from "node:http"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, FileSystem, Layer, Schema } from "effect"
@@ -15,6 +16,23 @@ import { SHOWN } from "./HtmlRender.ts"
 
 // HE-78: html_render and html_preview on the whole board, as a run calls them on the board's own server; the preview
 // in this machine's Chromium (skipped where there's none).
+
+/** A web server on a free port of 127.0.0.1 that counts the requests it gets, for as long as the scope lasts. */
+const counter = Effect.acquireRelease(
+  Effect.callback<{ readonly url: string; readonly hits: Array<string>; readonly close: () => void }>((resume) => {
+    const hits: Array<string> = []
+    const server = createServer((req, res) => {
+      hits.push(req.url ?? "")
+      res.writeHead(200, { "content-type": "text/html" }).end("<!doctype html><title>Got it</title><p>got it</p>")
+    })
+    server.listen(0, "127.0.0.1", () => {
+      const a = server.address()
+      const port = typeof a === "object" && a !== null ? a.port : 0
+      resume(Effect.succeed({ url: `http://127.0.0.1:${port}`, hits, close: () => server.close() }))
+    })
+  }),
+  (s) => Effect.sync(() => s.close()),
+)
 
 const board = (chromeBin = systemChrome ?? "") => TestBoard({ chromeBin, chromeSandbox: false }).pipe(Layer.provideMerge(NodeServices.layer))
 
@@ -102,5 +120,33 @@ describe.skipIf(systemChrome === null)("html_preview", () => {
         assert.isTrue(tall.error)
       }).pipe(Effect.provide(board())),
     60_000,
+  )
+
+  it.live(
+    "holds the page as the thread does: it can't load another address in the host's Chrome, open a window or a dialog",
+    () =>
+      Effect.gen(function* () {
+        const agent = yield* fakeAgent()
+        const site = yield* counter
+        const ways = [
+          `<script>location = "${site.url}/location?d=secret"</script>`,
+          `<script>top.location = "${site.url}/top"</script>`,
+          `<script>window.open("${site.url}/open")</script>`,
+          `<meta http-equiv="refresh" content="0;url=${site.url}/refresh">`,
+          `<iframe src="${site.url}/frame"></iframe>`,
+        ]
+        for (const way of ways) {
+          const said = yield* call(agent, "html_preview", { html: `<p style="margin:0;height:50px">hi</p>${way}` })
+          assert.isFalse(said.error, said.text)
+        }
+        // A dialog is ignored, as the thread's sandboxed frame ignores it, and the preview carries on.
+        const alerted = yield* call(agent, "html_preview", { html: '<p style="margin:0;height:50px">hi</p><script>alert("x"); console.log("after")</script>' })
+        assert.isFalse(alerted.error, alerted.text)
+        assert.include(alerted.text, "the page is 50px tall")
+        assert.include(alerted.text, "[log] after")
+        yield* Effect.sleep("500 millis")
+        assert.deepStrictEqual(site.hits, [])
+      }).pipe(Effect.scoped, Effect.provide(board())),
+    90_000,
   )
 })

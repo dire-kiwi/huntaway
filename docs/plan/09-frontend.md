@@ -776,8 +776,10 @@ once its answer names the kept page (`htmlRenderAttachment`), the page, read wit
 theme with the board's `--color-*` as the tint leaves them) and the page, then `fitFrame` (planTheme.ts', now exported:
 the frame takes the height the page reports, from the call's `height` until then, 40 to 20,000 px) and
 `linksInNewTabs`, whose `iaOpen` opens a link at once after the user's own input in the frame and otherwise asks with
-`OpenLinkBar`, as a document's frame does. Its buttons (shown on hover, always where there's no hover) download the page
-and open it full screen (a portal, wider, zoom 50 to 200 %, Escape closes it before the task view's own Escape). The
+`OpenLinkBar` (in the full-screen view while that's open, where the click was), as a document's frame does, and
+`escapeToBoard`, which passes Escape on (`iaKey`: a key pressed in the frame, another origin, never reaches the board).
+Its buttons (shown on hover, always where there's no hover) download the page and open it full screen (a portal, wider,
+zoom 50 to 200 %; Escape, on the board or in the page, closes it before the task view's own Escape). The
 tool rows call them "Previewed a page" and "Showed a page". The phone app shows the call as a tool call for now.
 
 ### Experiments (HE-22)

@@ -32,9 +32,20 @@ const liveTheme = (): Readonly<Record<string, string>> => {
   return { ...HTML_RENDER_THEME, ...Object.fromEntries(own), ...(accent === undefined ? {} : { "--chart-1": accent }) }
 }
 
+/**
+ * Passes Escape on to the board (iaKey), unless the page took it: the frame is of another origin, so a key pressed while
+ * it has the focus never reaches the board's own listeners, and Escape is how the full-screen view closes. The page's
+ * own listeners on the window run first (they were added before this). It runs in the page's frame, as source.
+ */
+function escapeToBoard() {
+  addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !e.defaultPrevented) parent.postMessage({ iaKey: "Escape" }, "*")
+  })
+}
+
 /** The frame's document: the policy and `noWebRtc` before anything of the page's, then the theme, the page, and the board's scripts. */
 export const pageDocument = (html: string, theme: Readonly<Record<string, string>>) =>
-  `<!doctype html><meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}"><script>(${String(noWebRtc)})()</script>\n${htmlRenderPage(html, theme)}\n<script>(${String(fitFrame)})();(${String(linksInNewTabs)})()</script>`
+  `<!doctype html><meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}"><script>(${String(noWebRtc)})()</script>\n${htmlRenderPage(html, theme)}\n<script>(${String(fitFrame)})();(${String(linksInNewTabs)})();(${String(escapeToBoard)})()</script>`
 
 const clampHeight = (h: number) => Math.min(HTML_RENDER_MAX_HEIGHT, Math.max(HTML_RENDER_MIN_HEIGHT, Math.ceil(h)))
 
@@ -71,7 +82,8 @@ function HtmlPage({
     )
   return (
     <div data-html-page className="group/page relative">
-      {asked && (
+      {/* While full screen is open, its own bar asks (the page asked from there, and this one is under it). */}
+      {asked && !full && (
         <div className="mb-1 overflow-hidden rounded-md">
           <OpenLinkBar what="page" url={asked} onDone={() => setAsked(null)} />
         </div>
@@ -85,7 +97,7 @@ function HtmlPage({
           <Maximize2 size={13} />
         </IconButton>
       </div>
-      {full && <FullScreen html={html} title={title} onAsk={setAsked} onClose={() => setFull(false)} />}
+      {full && <FullScreen html={html} title={title} asked={asked} onAsk={setAsked} onClose={() => setFull(false)} />}
     </div>
   )
 }
@@ -96,12 +108,15 @@ function PageFrame({
   title,
   initialHeight,
   onAsk,
+  onEscape,
   className,
 }: {
   html: string
   title: string
   initialHeight?: number | undefined
   onAsk: (url: string) => void
+  /** Escape pressed in the page (that the page didn't take). */
+  onEscape?: (() => void) | undefined
   className?: string | undefined
 }) {
   const frame = useRef<HTMLIFrameElement>(null)
@@ -109,8 +124,10 @@ function PageFrame({
   // The theme as it is when the page loads: a change of tint shows the next time it does.
   const [doc] = useState(() => pageDocument(html, liveTheme()))
   const ask = useRef(onAsk)
+  const escape = useRef(onEscape)
   useEffect(() => {
     ask.current = onAsk
+    escape.current = onEscape
   })
   useEffect(() => {
     trackBoardInput()
@@ -125,7 +142,9 @@ function PageFrame({
         else if (navigator.userActivation?.isActive) ask.current(url)
         return
       }
-      if (e.source === el.contentWindow && typeof e.data?.iaHtmlHeight === "number") setHeight(clampHeight(e.data.iaHtmlHeight))
+      if (e.source !== el.contentWindow) return
+      if (typeof e.data?.iaHtmlHeight === "number") setHeight(clampHeight(e.data.iaHtmlHeight))
+      else if (e.data?.iaKey === "Escape") escape.current?.()
     }
     window.addEventListener("message", onMessage)
     return () => window.removeEventListener("message", onMessage)
@@ -145,8 +164,20 @@ function PageFrame({
 
 const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
-/** The page over everything else, wider, with zoom. Escape closes it. */
-function FullScreen({ html, title, onAsk, onClose }: { html: string; title: string; onAsk: (url: string) => void; onClose: () => void }) {
+/** The page over everything else, wider, with zoom. Escape closes it, in the page too. `asked`: a link the page asks to open. */
+function FullScreen({
+  html,
+  title,
+  asked,
+  onAsk,
+  onClose,
+}: {
+  html: string
+  title: string
+  asked: string | null
+  onAsk: (url: string | null) => void
+  onClose: () => void
+}) {
   const [zoom, setZoom] = useState(1)
   const at = ZOOMS.indexOf(zoom)
   useEffect(() => {
@@ -183,9 +214,14 @@ function FullScreen({ html, title, onAsk, onClose }: { html: string; title: stri
           <X size={14} />
         </IconButton>
       </div>
+      {asked && (
+        <div className="w-[min(1200px,94vw)] shrink-0 overflow-hidden rounded-md bg-panel narrow:w-full">
+          <OpenLinkBar what="page" url={asked} onDone={() => onAsk(null)} />
+        </div>
+      )}
       <div className="min-h-0 w-[min(1200px,94vw)] flex-1 overflow-auto rounded-lg border border-line bg-bg p-4 shadow-2xl narrow:w-full narrow:rounded-none">
         <div style={{ zoom }}>
-          <PageFrame html={html} title={title} onAsk={onAsk} />
+          <PageFrame html={html} title={title} onAsk={onAsk} onEscape={onClose} />
         </div>
       </div>
     </div>,
