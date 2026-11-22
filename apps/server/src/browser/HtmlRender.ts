@@ -16,6 +16,7 @@ import { localToolHandler, McpServers } from "../mcp/McpServers.ts"
 import { BOARD_SERVER, boardContent } from "../mcp/tool.ts"
 import { Attachments, MAX_BYTES } from "../tasks/Attachments.ts"
 import { Browsers } from "./Browsers.ts"
+import { navigate } from "./page.ts"
 import { isRecord, num, str } from "./cdp.ts"
 import type { CdpPage } from "./cdp.ts"
 import { HtmlPreview, HtmlRender } from "./renderTools.ts"
@@ -134,6 +135,15 @@ const CONSOLE = `(() => {
     window[d] = (m) => (send("warning", "The page opened a dialog (" + d + ": " + (m ?? "") + "), which the thread's frame ignores."), d === "confirm" ? false : null)
 })()`
 
+/**
+ * The wrapper's policy: only that. A srcdoc frame inherits its parent's policy, so anything more would hold the page to
+ * it too (its data: images, the CDNs' scripts, eval), which the board's doesn't.
+ */
+const WRAPPER_CSP = "frame-src 'none'"
+
+/** Where the preview loads the wrapper from: an address nothing else answers (`.invalid`), which the preview does. */
+const PREVIEW_URL = "https://preview.huntaway.invalid/"
+
 /** `value` as a double-quoted attribute's value. */
 const attribute = (value: string) => value.replaceAll("&", "&amp;").replaceAll('"', "&quot;")
 
@@ -152,9 +162,7 @@ export const previewDocument = (html: string): string => {
     .filter((d) => !d.startsWith("require-trusted-types-for"))
     .join("; ")
   const page = `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}"><script>${CONSOLE}</script>${htmlRenderPage(html)}\n<script>${FIT}</script>`
-  // Only that: a srcdoc frame inherits its parent's policy, so anything more would hold the page to it too (its data:
-  // images, the CDNs' scripts, eval), which the board's doesn't.
-  const wrapper = "frame-src 'none'"
+  const wrapper = WRAPPER_CSP
   const take =
     `window.iaConsole = []; addEventListener('message', (e) => { const f = document.querySelector('iframe'); if (!f || e.source !== f.contentWindow) return; ` +
     "if (typeof e.data?.iaHtmlHeight === 'number') { window.iaHeight = e.data.iaHtmlHeight; f.style.height = e.data.iaHtmlHeight + 'px' } " +
@@ -203,11 +211,31 @@ const previewOn = (page: CdpPage, html: string, width: number) =>
     Effect.gen(function* () {
       const sub = yield* page.subscribe
       const dialogs: Array<string> = []
+      const body = Base64.encode(new TextEncoder().encode(previewDocument(html)))
       // The page's dialogs are its frame's, which ignores them (CONSOLE says so); one on the wrapper, should anything get
       // one up, is dismissed rather than left holding the page.
       yield* PubSub.take(sub).pipe(
         Effect.flatMap((e) => {
-          if (e.sessionId !== page.sessionId || e.method !== "Page.javascriptDialogOpening") return Effect.void
+          if (e.sessionId !== page.sessionId) return Effect.void
+          if (e.method === "Fetch.requestPaused") {
+            const requestId = str(e.params, "requestId")
+            const url = isRecord(e.params["request"]) ? str(e.params["request"], "url") : ""
+            // The wrapper; anything else at its address (a favicon) isn't there.
+            return (
+              url === PREVIEW_URL
+                ? page.send("Fetch.fulfillRequest", {
+                    requestId,
+                    responseCode: 200,
+                    responseHeaders: [
+                      { name: "Content-Type", value: "text/html; charset=utf-8" },
+                      { name: "Content-Security-Policy", value: WRAPPER_CSP },
+                    ],
+                    body,
+                  })
+                : page.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" })
+            ).pipe(Effect.ignore)
+          }
+          if (e.method !== "Page.javascriptDialogOpening") return Effect.void
           dialogs.push(`[warning] A dialog was dismissed (${str(e.params, "type")}: ${str(e.params, "message")}).`)
           return page.send("Page.handleJavaScriptDialog", { accept: false }).pipe(Effect.ignore)
         }),
@@ -216,9 +244,11 @@ const previewOn = (page: CdpPage, html: string, width: number) =>
       )
       yield* page.send("Emulation.setDeviceMetricsOverride", { width, height: 720, deviceScaleFactor: 1, mobile: false })
       yield* page.send("Emulation.setDefaultBackgroundColorOverride", { color: BOARD_BACKGROUND })
-      const tree = yield* page.send("Page.getFrameTree")
-      const frame = isRecord(tree["frameTree"]) && isRecord(tree["frameTree"]["frame"]) ? str(tree["frameTree"]["frame"], "id") : ""
-      yield* page.send("Page.setDocumentContent", { frameId: frame, html: previewDocument(html) })
+      // The wrapper is loaded from an address of its own (PREVIEW_URL), answered here, rather than written into the
+      // page's about:blank (`Page.setDocumentContent`): that document has no site, and Chrome can't place the sandboxed
+      // frame's process beside it (CI's Chromium failed `has_site_` in site_instance_impl.cc and aborted).
+      yield* page.send("Fetch.enable", { patterns: [{ urlPattern: `${PREVIEW_URL}*`, requestStage: "Request" }] })
+      yield* navigate(page, PREVIEW_URL)
       const settled = yield* page.send("Runtime.evaluate", { expression: SETTLE, awaitPromise: true, returnByValue: true }, "15 seconds")
       const measured = yield* page.send("Runtime.evaluate", { expression: HEIGHT, returnByValue: true })
       const height = isRecord(measured["result"]) ? Math.max(0, Math.ceil(num(measured["result"], "value"))) : 0

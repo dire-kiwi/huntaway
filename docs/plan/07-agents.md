@@ -1024,7 +1024,7 @@ reviewers; `html_preview` is rerunnable, `html_render` not (a second page would 
   task does. No table, no new RPC (`attachments.get` reads it).
 - **`html_preview { html, width? }`** loads the page in `Browsers.scratch` (a new method: a page of its own in the
   headless Chrome, closed after; `reap` keeps Chrome up while one is open) at `width` (240 to 1600, 760 unless given),
-  held as the thread holds it (`previewDocument`): a wrapper (`Page.setDocumentContent`) whose policy is only `frame-src
+  held as the thread holds it (`previewDocument`): a wrapper whose policy is only `frame-src
   'none'` (a srcdoc frame inherits its parent's policy, so anything more would hold the page to it too; a test checks an
   inlined image, eval and a blob: worker still work) holds a sandboxed srcdoc frame (`allow-scripts allow-forms`: no popups, no navigating the top, no dialogs)
   with the page under the documents' policy and theme. So a page can't make the host's Chrome load another address
@@ -1032,8 +1032,12 @@ reviewers; `html_preview` is rerunnable, `html_render` not (a second page would 
   (found in review; the test points every way out at a local server and checks it's never asked). The page's console
   reaches the wrapper by script (`CONSOLE`, first in the frame: its console calls, uncaught errors and rejections,
   `securitypolicyviolation` events, and its dialogs, which the thread's frame ignores), not over the protocol: Chrome
-  runs the sandboxed frame in a process of its own, and following that one (`Target.setAutoAttach`) crashed CI's
-  Chromium (it held `Page.setDocumentContent` while held for the debugger, and crashed the browser without). A Chrome
+  runs the sandboxed frame in a process of its own, which the protocol would have to follow
+  (`Target.setAutoAttach`). The wrapper loads from an address of its own, `https://preview.huntaway.invalid/`, whose
+  request the preview answers (`Fetch.enable` for it alone, `Fetch.fulfillRequest` with the wrapper and its policy as a
+  header), not written into the page's about:blank with `Page.setDocumentContent`: that document has no site, and CI's
+  Chromium aborted placing the sandboxed frame's process beside it (`Check failed: has_site_`,
+  site_instance_impl.cc), after hanging in `setDocumentContent`. A Chrome
   that exits other than cleanly logs the stderr kept (its last 4,000 characters), and its error names the line a crash's
   report starts with (`lastSaid`). The page reports its height to the wrapper as
   `fitFrame` does; the preview waits for the wrapper's load, that height, two frames and 200 ms for what the page logs as it starts (10 s at most), and answers a PNG
