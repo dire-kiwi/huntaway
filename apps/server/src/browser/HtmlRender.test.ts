@@ -123,6 +123,28 @@ describe.skipIf(systemChrome === null)("html_preview", () => {
   )
 
   it.live(
+    "the page gets what the board's policy allows, nothing stricter: an inlined local image, eval, a blob: worker",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const dir = yield* fs.makeTempDirectoryScoped()
+        yield* fs.writeFile(`${dir}/shot.png`, PNG)
+        const agent = yield* fakeAgent()
+        const html =
+          `<img src="${dir}/shot.png" onload="console.log('image loaded')" onerror="console.log('image FAILED')">` +
+          "<script>console.log('eval', eval('1 + 1'))</script>" +
+          "<script>const w = new Worker(URL.createObjectURL(new Blob(['postMessage(6 * 7)']))); w.onmessage = (e) => console.log('worker', e.data)</script>"
+        const said = yield* call(agent, "html_preview", { html })
+        assert.isFalse(said.error, said.text)
+        assert.include(said.text, "[log] image loaded")
+        assert.include(said.text, "[log] eval 2")
+        assert.include(said.text, "[log] worker 42")
+        assert.notInclude(said.text, "violates")
+      }).pipe(Effect.scoped, Effect.provide(board())),
+    60_000,
+  )
+
+  it.live(
     "holds the page as the thread does: it can't load another address in the host's Chrome, open a window or a dialog",
     () =>
       Effect.gen(function* () {

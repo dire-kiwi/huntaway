@@ -128,7 +128,9 @@ export const previewDocument = (html: string): string => {
     .filter((d) => !d.startsWith("require-trusted-types-for"))
     .join("; ")
   const page = `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}">${htmlRenderPage(html)}\n<script>${FIT}</script>`
-  const wrapper = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src 'none'"
+  // Only that: a srcdoc frame inherits its parent's policy, so anything more would hold the page to it too (its data:
+  // images, the CDNs' scripts, eval), which the board's doesn't.
+  const wrapper = "frame-src 'none'"
   const take =
     "addEventListener('message', (e) => { const f = document.querySelector('iframe'); " +
     "if (f && e.source === f.contentWindow && typeof e.data?.iaHtmlHeight === 'number') { window.iaHeight = e.data.iaHtmlHeight; f.style.height = e.data.iaHtmlHeight + 'px' } })"

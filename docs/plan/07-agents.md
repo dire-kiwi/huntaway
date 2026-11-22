@@ -1024,8 +1024,9 @@ reviewers; `html_preview` is rerunnable, `html_render` not (a second page would 
   task does. No table, no new RPC (`attachments.get` reads it).
 - **`html_preview { html, width? }`** loads the page in `Browsers.scratch` (a new method: a page of its own in the
   headless Chrome, closed after; `reap` keeps Chrome up while one is open) at `width` (240 to 1600, 760 unless given),
-  held as the thread holds it (`previewDocument`): a wrapper (`Page.setDocumentContent`) whose policy is `frame-src
-  'none'` holds a sandboxed srcdoc frame (`allow-scripts allow-forms`: no popups, no navigating the top, no dialogs)
+  held as the thread holds it (`previewDocument`): a wrapper (`Page.setDocumentContent`) whose policy is only `frame-src
+  'none'` (a srcdoc frame inherits its parent's policy, so anything more would hold the page to it too; a test checks an
+  inlined image, eval and a blob: worker still work) holds a sandboxed srcdoc frame (`allow-scripts allow-forms`: no popups, no navigating the top, no dialogs)
   with the page under the documents' policy and theme. So a page can't make the host's Chrome load another address
   (with its profile's cookies, or one on this machine) and get a screenshot of it back, which a top-level page could
   (found in review; the test points every way out at a local server and checks it's never asked). Chrome runs the
