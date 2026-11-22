@@ -1351,6 +1351,13 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   prompt says so. A steer, a stop or a new turn meanwhile leaves the run be. `DevServers.stopLeft(task, why)` (the old
   `stop_task_processes`) stops what a task's agents left running, from the reactor once the task is done with no agent
   left, or deleted. The banner's Stop buttons call `tasks.stopBackground` and `tasks.stopServer`.
+- **Forward port (HE-81, new)**: `tasks.forwardServer { id, port }` (`runs/PortForwards`) shares a server the task lists
+  with tailcat: `tailcat --json serve --key=new <port>` under the watchdog (`Proc.WATCHDOG`, as SSH links' tunnels), its
+  address (`PortForward`) read from stdout, one share per task and port in a `FiberMap`, ended when the task no longer
+  lists the port (looked at every `CHECK_EVERY`) or tailcat exits. `HUNTAWAY_TAILCAT` (`ServerConfig.tailcatBin`) names
+  it; test boards have none. The desktop app's `forwardPort` (preload, `main/forwards.ts`) runs
+  `tailcat forward <address> 0:<port>` and answers its `127.0.0.1` URL; a browser shows the command instead. Mobile has
+  no servers banner yet, so no Forward port.
 - **Also**: `tasks.waitForLimit { id }` (`Runs.waitForReset`, the old `wait_for_reset`); `Runs.created(task, input)`,
   which `tasks.create` calls: `start` starts the agent, and a task with only a description gets its title written
   first (`Titles.generateLater`, starting it after if asked); `tasks.create` can then fail as `tasks.send` does

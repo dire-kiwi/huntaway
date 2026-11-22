@@ -99,6 +99,13 @@ your next message at once.
   "localhost:4331" with **Open** and **Stop** (which signals that server's process group, never the agent's). A server
   that outlives its run (started with `nohup` or `setsid`) is still listed, as "outlives its run", until it stops. On
   macOS and Windows no servers are listed.
+- **Forward port** reaches a server from another computer, wherever the board's host is, with
+  [tailcat](https://tailscale.com/tailcat) (no Tailscale account, and nothing changes on either machine's network). The
+  host runs `tailcat serve` for that port, which needs tailcat installed there (or `HUNTAWAY_TAILCAT` naming it). In the
+  desktop app that's all: the app runs `tailcat forward` itself (tailcat on this computer too) and opens the server at a
+  `127.0.0.1` address. In a browser the banner shows the command to run on your computer, `tailcat forward tc… 4331`,
+  after which the server is `localhost:4331` there. The address is a key to the server, so keep it to yourself; each
+  share gets a new one, and it lasts until the server stops (or the board restarts).
 
 ## Pages in the thread
 
