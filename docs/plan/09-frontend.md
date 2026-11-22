@@ -562,7 +562,14 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   board's connected hosts that run agents and `hub.hosts.copyConfig`, whose `files` are now the archive's entries (it
   said how many) and which now copies through 6.11's archives (08-hosts.md). HE-6's row Update is the old one again:
   it sends the hub's checkout as it is (`hosts/useUpdateCommit.ts`, the hub's `admin.status`), a release host only a
-  newer version, follows the host's phases by polling it, and ends on its new boot.
+  newer version, follows the host's phases by polling it, and ends on its new boot. Since HE-76 it updates the whole
+  cluster: Update on one host is sent to every other host the hub links itself that it is offered for too (not a mesh
+  host, which its own neighbour links), a few at a time (the hub makes their bundles one at a time: `Updater`'s
+  `bundleSince`, in its one `outgoing.bundle`), and the button says how many (`· all 3 hosts`). Each host's
+  Update is followed to its end in the action that sent it (`hosts/hostUpdate.ts`: the host's `admin.status` polled,
+  and the hub's list for it back on what it was sent), not on its row, and kept per host (`hostUpdateAtom`), which the
+  rows show; so one started from a host's page ends for the hosts with no row shown too. A host whose server runs the
+  hub's commit or one after it (ahead of the hub) answers up to date rather than restarting (`Updater.runsAlready`).
 - **Dropped.** Settings → Server's database line and Copy again, and the threads' batch rebuild (docs/plan/14: the
   two-file database scheme, moving threads onto items). `Devices.tsx` and the paired phones under Network access, with
   device pairing (14, Deferred).
