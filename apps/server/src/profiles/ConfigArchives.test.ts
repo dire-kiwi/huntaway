@@ -13,8 +13,9 @@ import { ConfigArchives, decodeArchive } from "./ConfigArchives.ts"
 const fsDo = <A, E>(f: (fs: FileSystem.FileSystem) => Effect.Effect<A, E>) => Effect.flatMap(FileSystem.FileSystem, (fs) => f(fs).pipe(Effect.orDie))
 
 // HE-87: a Mac keeps Claude Code's logins in the keychain; this fake `security` keeps each item as a file in
-// `<home>/keychain`, read with `find-generic-password -a <account> -w -s <service>` and written through `-i`.
-const fakeSecurity = (home: string) => String.raw`#!/bin/sh
+// `<home>/keychain`, read with `find-generic-password -a <account> -w -s <service>` and written through `-i`. bash, as
+// its `printf` decodes the hex (`\xHH`), which dash's (`/bin/sh` on Ubuntu) leaves as it is.
+const fakeSecurity = (home: string) => String.raw`#!/usr/bin/env bash
 items='${home}/keychain'
 if [ "$1" = "find-generic-password" ]; then
   [ -f "$items/$6" ] || exit 44
