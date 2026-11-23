@@ -50,7 +50,7 @@ assistant (thread, memory workspace with git history, tracked work, morning brie
 - Per-config in-memory snapshot `Usage {config_id, limits[], plan, updated_at, error, out_until, accounts?}`; `UsageLimit {id: "session"|"weekly"|"weekly:<model>"|kind,
   label, percent 0-100, resets_at}`. Only configs with `show_usage=true` are fetched/listed (the endpoint's rate limit is per account).
 - `GET /usage[?refresh=true]`: refetch configs whose snapshot is older than `MAX_AGE` 4 min (or `MIN_GAP` 30 s when refresh asked), in parallel, return all.
-- Claude fetch: read `<dir>/.credentials.json` → `claudeAiOauth.accessToken`; refuse if `expiresAt <= now` ("Login expired; it refreshes on this config's next agent run");
+- Claude fetch: read `<dir>/.credentials.json` (on macOS the keychain first, HE-87) → `claudeAiOauth.accessToken`; refuse if `expiresAt <= now` ("Login expired; it refreshes on this config's next agent run");
   `GET https://api.anthropic.com/api/oauth/usage` with `authorization: Bearer`, `anthropic-beta: oauth-2025-04-20`, 10 s timeout. Plan = `subscriptionType`.
   **Never refreshes the token** (would rotate it under a running `claude`).
 - `parse_limits`: new shape `{limits:[{kind, percent, resets_at, group, scope.model.display_name}]}` (`session`→session, `weekly_all`→weekly, model+group weekly →

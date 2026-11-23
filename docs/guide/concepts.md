@@ -73,7 +73,7 @@
   weekly, per-model weekly) is left, for the configs the sidebar's profile and its projects use. It's off until
   _Show usage_ is ticked on a config in Settings → Agent configs: the endpoint's rate
   limit is per account, and every copy of a login (PR previews, test servers) would otherwise
-  ask too. Each host reads the config's login (`<config dir>/.credentials.json`) and asks
+  ask too. Each host reads the config's login (`<config dir>/.credentials.json`, or the keychain on a Mac) and asks
   Anthropic's usage endpoint every few minutes (for Codex configs it asks `codex app-server`),
   and agent runs update it live. The login is never refreshed by the board. An expired login
   shows its last numbers until the config's next agent run renews it. Each limit shows when it

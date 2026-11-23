@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem } from "effect"
+import { Effect, FileSystem, Layer } from "effect"
+import { Digest } from "effect/crypto"
 import { tempDir, TestBoard } from "@huntaway/testing"
+import { ServerConfig } from "../platform/ServerConfig.ts"
 import { AgentConfigs } from "./AgentConfigs.ts"
 import { ConfigArchives, decodeArchive } from "./ConfigArchives.ts"
 
@@ -9,6 +11,35 @@ import { ConfigArchives, decodeArchive } from "./ConfigArchives.ts"
 // archives, which the old suite only reached through its HTTP routes' auth checks).
 
 const fsDo = <A, E>(f: (fs: FileSystem.FileSystem) => Effect.Effect<A, E>) => Effect.flatMap(FileSystem.FileSystem, (fs) => f(fs).pipe(Effect.orDie))
+
+// HE-87: a Mac keeps Claude Code's logins in the keychain; this fake `security` keeps each item as a file in
+// `<home>/keychain`, read with `find-generic-password -a <account> -w -s <service>` and written through `-i`. bash, as
+// its `printf` decodes the hex (`\xHH`), which dash's (`/bin/sh` on Ubuntu) leaves as it is.
+const fakeSecurity = (home: string) => String.raw`#!/usr/bin/env bash
+items='${home}/keychain'
+if [ "$1" = "find-generic-password" ]; then
+  [ -f "$items/$6" ] || exit 44
+  cat "$items/$6"; echo; exit 0
+fi
+if [ "$1" = "-i" ]; then
+  read -r line
+  service=$(printf '%s' "$line" | cut -d'"' -f4)
+  data=$(printf '%s' "$line" | cut -d'"' -f6 | sed 's/../\\x&/g')
+  printf "$data" > "$items/$service"
+fi
+exit 0
+`
+
+/** A board on a "Mac", in a home folder of its own, with the fake keychain. */
+const macBoard = Layer.unwrap(
+  Effect.gen(function* () {
+    const home = yield* tempDir
+    const fs = yield* FileSystem.FileSystem
+    yield* fs.writeFileString(`${home}/security`, fakeSecurity(home))
+    yield* fs.chmod(`${home}/security`, 0o755)
+    return TestBoard({ home, platform: "mac-arm64", securityBin: `${home}/security` })
+  }).pipe(Effect.orDie),
+)
 
 describe("ConfigArchives", () => {
   it.live("copies a config's login and settings, and nothing else, into another config's folder", () =>
@@ -67,6 +98,61 @@ describe("ConfigArchives", () => {
       assert.isTrue(yield* fsDo((fs) => fs.exists(`${dir}/gemini2/antigravity-acp/acp_token.json`)))
       assert.strictEqual((yield* Effect.flip(archives.importArchive(acpTo.id, acpOut.archive, false)))._tag, "Conflict")
     }).pipe(Effect.provide(TestBoard()), Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+
+  it.live("on a Mac, copies a Claude login out of the keychain and into it, and tells a terminal's claude whose it is", () =>
+    Effect.gen(function* () {
+      const archives = yield* ConfigArchives
+      const configs = yield* AgentConfigs
+      const { home } = yield* ServerConfig
+      const digest = yield* Digest.Digest
+      const item = (dir: string | null) =>
+        dir === null
+          ? Effect.succeed(`${home}/keychain/Claude Code-credentials`)
+          : Effect.map(digest.digestHex(Digest.sha256, new TextEncoder().encode(dir)), (h) => `${home}/keychain/Claude Code-credentials-${h.slice(0, 8)}`)
+      const write = (f: string, text: string) => fsDo((fs) => fs.writeFileString(f, text))
+      const read = (f: string) => fsDo((fs) => fs.readFileString(f))
+      const login = `{"claudeAiOauth":{"accessToken":"new"}}`
+
+      // The work config's login is only in the keychain, as Claude Code keeps it on a Mac.
+      yield* fsDo((fs) => fs.makeDirectory(`${home}/keychain`, { recursive: true }))
+      yield* fsDo((fs) => fs.makeDirectory(`${home}/.claude-work`, { recursive: true }))
+      yield* write(yield* item(`${home}/.claude-work`), login)
+      yield* write(`${home}/.claude-work/.claude.json`, `{"oauthAccount":{"emailAddress":"me@work"},"hasCompletedOnboarding":true,"projects":{"w":1}}`)
+      yield* write(`${home}/.claude-work/settings.json`, "{}")
+      const work = yield* configs.create({ name: "work", config_dir: "~/.claude-work" })
+      const out = yield* archives.exportArchive(work.id)
+      assert.deepStrictEqual(out.files, [".credentials.json", ".claude.json", "settings.json"])
+
+      // Into ~/.claude, whose keychain item a plain `claude` in a terminal reads (it has an old login), and its agents'.
+      yield* write(yield* item(null), `{"claudeAiOauth":{"accessToken":"old"}}`)
+      yield* write(`${home}/.claude.json`, `{"oauthAccount":{"emailAddress":"old@home"},"projects":{"mine":1}}`)
+      const main = yield* configs.create({ name: "main", config_dir: "~/.claude" })
+      const refused = yield* Effect.flip(archives.importArchive(main.id, out.archive, false))
+      assert.strictEqual(refused._tag, "Conflict", "the keychain's login is a login there")
+      yield* archives.importArchive(main.id, out.archive, true)
+      assert.strictEqual(yield* read(yield* item(null)), login)
+      assert.strictEqual(yield* read(yield* item(`${home}/.claude`)), login)
+      assert.isFalse(yield* fsDo((fs) => fs.exists(`${home}/.claude/.credentials.json`)), "the login is in the keychain, not the file")
+      assert.include(yield* read(`${home}/.claude/.claude.json`), "me@work")
+      const terminal = yield* read(`${home}/.claude.json`)
+      assert.include(terminal, `"emailAddress":"me@work"`)
+      assert.include(terminal, `"hasCompletedOnboarding":true`)
+      assert.include(terminal, `"mine":1`, "the rest of it is this host's own")
+      assert.notInclude(terminal, `"w":1`)
+
+      // A config in a folder of its own has one item, its agents'; a terminal's claude and its .claude.json are left alone.
+      const other = yield* configs.create({ name: "other", config_dir: `${home}/other` })
+      yield* archives.importArchive(other.id, out.archive, false)
+      assert.strictEqual(yield* read(yield* item(`${home}/other`)), login)
+      assert.strictEqual(yield* read(`${home}/.claude.json`), terminal)
+
+      // A keychain that won't take it (locked, say) fails the copy, and says so.
+      yield* write(`${home}/security`, "#!/bin/sh\nexit 44\n")
+      const locked = yield* Effect.flip(archives.importArchive(other.id, out.archive, true))
+      assert.strictEqual(locked._tag, "ArchiveUnavailable")
+      assert.include(locked._tag === "ArchiveUnavailable" ? locked.reason : "", "keychain")
+    }).pipe(Effect.provide(macBoard), Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 
   it("takes standard base64 with its padding only", () => {

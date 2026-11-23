@@ -103,9 +103,12 @@ board merges them by name. Settings → Agent configs and Settings → Profiles 
 have each. **Copy login** copies a Claude config's credentials, `.claude.json`, settings,
 `CLAUDE.md`, skills, agents, commands, plugins and hooks (for a Codex config: `auth.json`,
 `config.toml`, `AGENTS.md`, skills, rules and prompts) to another host, creating the config
-there if needed. Session history and caches are not copied. (On macOS, Claude may keep
-credentials in the keychain rather than `.credentials.json`; in that case log in on the target
-host instead.)
+there if needed. Session history and caches are not copied. On a Mac, where Claude Code keeps
+its login in the keychain rather than `.credentials.json`, the login is copied out of the keychain and into it (both
+the config's own item and, for a config in `~/.claude`, the one a plain `claude` in a terminal reads). Copying into a
+config in `~/.claude` also tells a terminal's `claude` whose login it is (`oauthAccount` in `~/.claude.json`). A login
+already there, in the folder or the keychain, is only replaced with **Overwrite**. If the keychain is locked (on a Mac
+reached over SSH with no one logged in, say), the copy fails and says so.
 
 **Versions.** Each host reports its version, the protocol it speaks (one number, which changes only when the way
 hosts and boards talk changes) and its capabilities (the features it has, by name). A host on another protocol than

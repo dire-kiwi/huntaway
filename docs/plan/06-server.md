@@ -132,6 +132,16 @@ tail and publishes it. A subscriber that cannot keep up is cut off with `resync`
   `copyConfig`) exports on one and imports on the other. **Decided**: an archive is bounded by the RPC's 16 MiB message
   (about 12 MiB of tar), not the old route's 256 MiB; the old profile archive (`/profiles/{id}/claude-config`, a
   profile's own `claude_config_dir`) is gone with that column (configs have it).
+- **Claude logins on a Mac** (HE-87): `profiles/claudeLogin.ts` reads and saves a Claude config's login where Claude
+  Code keeps it. On macOS that is the login keychain (`security`, `$HUNTAWAY_SECURITY`, default `/usr/bin/security`),
+  item `Claude Code-credentials` with no `CLAUDE_CONFIG_DIR`, else `Claude Code-credentials-<first 8 hex of the
+  folder's sha256>` (Claude Code 2.1's naming); `.credentials.json` is only its fallback, which it deletes once the login
+  is in the keychain. So a Mac's export takes the login from the keychain (staged as `.credentials.json`), a Mac's import
+  saves it there (read back to check; `security -i` exits 0 on a failed command) and removes the file, the `in_use`
+  check counts a keychain login, and usage reads it from there. A config in `~/.claude`, which a terminal's plain
+  `claude` uses too, saves both items, exports `~/.claude.json` when the folder has no `.claude.json`, and on import
+  copies `oauthAccount` and `hasCompletedOnboarding` into `~/.claude.json`, keeping the rest of that file. Tests run as
+  `linux-x64`; the Mac path is tested with a fake `security`.
 
 ### Projects — [inventory 07](inventory/07-server-root-api.md), [04](inventory/04-git-review.md)
 
