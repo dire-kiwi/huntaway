@@ -68,7 +68,7 @@ if (process.isMainFrame) {
      * HE-81: forwards the dev server a task's host shares with tailcat (its tailcat `address`, the server's `port`) to a
      * free port on this computer. Resolves `{url}` (`http://127.0.0.1:<port>/`) or `{error}`.
      */
-    forwardPort: (address: unknown, port: unknown): Promise<unknown> => ipcRenderer.invoke("huntaway:forward-port", address, port),
+    forwardPort: (address: unknown, port: unknown, host?: unknown): Promise<unknown> => ipcRenderer.invoke("huntaway:forward-port", address, port, host),
     /** Opens page `path` of the board (`/profile/work`) in a new window of the app (HA-298). */
     openWindow: (path: unknown) => ipcRenderer.send("huntaway:open-window", String(path)),
     /** Brings the window to the front, as clicking a notification does. */

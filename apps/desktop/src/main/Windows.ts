@@ -421,10 +421,10 @@ export const runWindows = Effect.gen(function* () {
   ipcMain.handle("huntaway:update-shell", (event) => runPromise(updateOwnPackage(event)))
   // HE-81: a task's dev server, shared by the board's host with tailcat, forwarded to a port on this computer.
   const forwards = yield* makeForwards
-  ipcMain.handle("huntaway:forward-port", (event, address: unknown, port: unknown) => {
+  ipcMain.handle("huntaway:forward-port", (event, address: unknown, port: unknown, host: unknown) => {
     const board = origin()
     if (board === null || senderOrigin(event) !== board) return { error: "Only the board can forward a port." }
-    return runPromise(forwards.forward(address, port))
+    return runPromise(forwards.forward(board, address, port, host))
   })
   // HE-62: the browser pane's <webview>, given to the server to drive for the task's agent.
   const unregisterPane = registerPaneDebugger(origin, senderOrigin, runPromise, paneIsLocal(desktop.file))

@@ -103,7 +103,8 @@ your next message at once.
   [tailcat](https://tailscale.com/tailcat) (no Tailscale account, and nothing changes on either machine's network). The
   host runs `tailcat serve` for that port, which needs tailcat installed there (or `HUNTAWAY_TAILCAT` naming it). In the
   desktop app that's all: the app runs `tailcat forward` itself (tailcat on this computer too) and opens the server at a
-  `127.0.0.1` address. In a browser the banner shows the command to run on your computer, `tailcat forward tc… 4331`,
+  `127.0.0.1` address. It keeps the forward until the app quits (or the server is shared again, with a new address,
+  which it forwards instead). In a browser the banner shows the command to run on your computer, `tailcat forward tc… 4331`,
   after which the server is `localhost:4331` there. The address is a key to the server, so keep it to yourself; each
   share gets a new one, and it lasts until the server stops (or the board restarts). While it lasts, the server's row
   says "Shared with tailcat", on every computer and tab looking at the task; once it ends that goes, and so does the

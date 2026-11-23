@@ -1414,9 +1414,13 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   with tailcat: `tailcat --json serve --key=new <port>` under the watchdog (`Proc.WATCHDOG`, as SSH links' tunnels), its
   address (`PortForward`) read from stdout, one share per task and port in a `FiberMap`, ended when the task no longer
   lists the port (looked at every `CHECK_EVERY`) or tailcat exits. `HUNTAWAY_TAILCAT` (`ServerConfig.tailcatBin`) names
-  it; test boards have none. The desktop app's `forwardPort` (preload, `main/forwards.ts`) runs
-  `tailcat forward <address> 0:<port>` and answers its `127.0.0.1` URL; a browser shows the command instead. Mobile has
-  no servers banner yet, so no Forward port.
+  it; test boards have none. The desktop app's `forwardPort(address, port, host)` (preload, `main/forwards.ts`) runs
+  `tailcat forward <address> 0:<port>` and answers its `127.0.0.1` URL; a browser shows the command instead. HE-82: the
+  app keeps one forward per board, task host (`host_id`) and port, so the host's next share of the port (a new address,
+  once the server or the board restarted) stops the forward of the last one, which leads nowhere: tailcat prints
+  nothing when its peer is gone (only `--verbose` logs, a failed dial on each connection), so that is the only sign. A
+  board that gives no host gets a forward per address and port, as before. Each runs under the same watchdog (bash, not
+  on Windows), so they die with the app, even when it crashes. Mobile has no servers banner yet, so no Forward port.
 - **Shown shared (HE-83, new)**: while a share lasts, the task's server says so: `TaskServer.forwarded`, the time the
   share started (`PortForward.since` too), written by `PortForwards` as tailcat prints its address and cleared by the
   share's finalizer, however it ends (tailcat exits, the server goes, the board stops), each as a `task` event. A scan

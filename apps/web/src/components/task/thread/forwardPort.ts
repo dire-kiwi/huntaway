@@ -24,12 +24,15 @@ const answerOf = (answer: unknown): DesktopForward => {
   return { error: "The desktop app didn't say where it forwarded the port." }
 }
 
-/** The desktop app's forward of the share at `address` (port `port` on its host), or null outside the app. Never rejects. */
-export function desktopForward(address: string, port: number): Promise<DesktopForward | null> {
+/**
+ * The desktop app's forward of the share at `address` (port `port` on host `host`), or null outside the app. Never
+ * rejects. The app stops its forward of the host's last share of the port (HE-82), which a new one replaces.
+ */
+export function desktopForward(address: string, port: number, host: string): Promise<DesktopForward | null> {
   const bridge: unknown = Reflect.get(window, "huntawayDesktop")
   const forward: unknown = typeof bridge === "object" && bridge !== null ? Reflect.get(bridge, "forwardPort") : undefined
   if (typeof forward !== "function") return Promise.resolve(null)
   return Promise.resolve()
-    .then((): unknown => Reflect.apply(forward, bridge, [address, port]))
+    .then((): unknown => Reflect.apply(forward, bridge, [address, port, host]))
     .then(answerOf, (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }))
 }
