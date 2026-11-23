@@ -6,7 +6,7 @@ import { AsyncResult } from "effect/reactivity"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, View } from "react-native"
 import { type FrameContext, frameDocument, frameMessage } from "../logic/frame"
-import { frameBase, frameLink, type PageRef, pagePath, targetOfPath } from "../logic/links"
+import { frameBase, frameLink, type PageRef, pagePath, queryOf, targetOfBoardPath } from "../logic/links"
 import { errorText, exitError, runExit } from "../state/action"
 import { nowMillis } from "../state/clock"
 import { openTarget } from "../state/open"
@@ -17,11 +17,6 @@ import { Empty } from "./ui"
 // One of a plugin's pages in its frame (HE-99; docs/plan/15-plugins.md, Pages), as the web board's PluginFrame:
 // rendered by the plugin on its host (`plugins.page`, read again on its events that say `reload`), and the app's end of
 // the frame's bridge. The documents are the docs plugin's pages.
-
-const NO_QUERY: Readonly<Record<string, string>> = {}
-
-/** A query string (without its `?`) as `plugins.page` takes it. */
-const queryOf = (search: string): Readonly<Record<string, string>> => (search === "" ? NO_QUERY : Object.fromEntries(new URLSearchParams(search)))
 
 /** How long after one move of the app a frame's page may ask for the next: a page can't run the app away from the user. */
 const MOVE_EVERY_MS = 700
@@ -151,12 +146,4 @@ function Frame({
       <FrameView ref={frame} html={doc} title={title} height={fill ? null : height} onMessage={onMessage} />
     </View>
   )
-}
-
-/** Where a board path a page asked to go to leads (`/docs/<profile id>/d/<slug>/?details=1`). */
-const targetOfBoardPath = (path: string) => {
-  const at = path.indexOf("?")
-  const hash = path.indexOf("#")
-  const end = hash < 0 ? path.length : hash
-  return at < 0 || at > end ? targetOfPath(path.slice(0, end)) : targetOfPath(path.slice(0, at), path.slice(at + 1, end))
 }

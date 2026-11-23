@@ -61,12 +61,54 @@ export const FRAME_ORIGIN = "http://board.invalid"
 /** The address of a plugin's page in its frame. */
 export const frameBase = (page: PageRef): string => `${FRAME_ORIGIN}${pageHref(page)}`
 
-const parseUrl = (url: string, base?: string): URL | null => {
-  try {
-    return new URL(url, base)
-  } catch {
-    return null
-  }
+/**
+ * An address in its parts, parsed by hand as logic/link.ts does: React Native's own `URL` leaves most of its getters
+ * unimplemented. `origin` is `scheme://host[:port]` in lower case; `path` starts with `/` (or is empty).
+ */
+interface Parts {
+  readonly origin: string
+  /** The host, without a port. */
+  readonly host: string
+  readonly path: string
+  /** Its query string, without the `?`. */
+  readonly search: string
+}
+
+const WEB = /^(https?):\/\/([^/?#\s@]+)((?:\/[^?#\s]*)?)(?:\?([^#\s]*))?(?:#\S*)?$/i
+const LOCAL = /^(\/[^?#\s]*)(?:\?([^#\s]*))?(?:#\S*)?$/
+
+/** A web address's parts, or null for anything else (another scheme, a name and password before the host, spaces). */
+const webParts = (url: string): Parts | null => {
+  const m = WEB.exec(url.trim())
+  if (!m) return null
+  const [, scheme = "", authority = "", path = "", search = ""] = m
+  const host = authority.toLowerCase()
+  return { origin: `${scheme.toLowerCase()}://${host}`, host: host.replace(/:\d+$/, ""), path, search }
+}
+
+/** A board path's parts (`/docs/x?y#z`), or null for anything that doesn't start with one `/`. */
+const pathParts = (path: string): Pick<Parts, "path" | "search"> | null => {
+  const m = path.startsWith("//") ? null : LOCAL.exec(path.trim())
+  return m ? { path: m[1] ?? "", search: m[2] ?? "" } : null
+}
+
+/** A query string (without its `?`) as names and values, decoded; a name given twice keeps its last value. */
+export const queryOf = (search: string): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    search
+      .split("&")
+      .filter((pair) => pair !== "")
+      .map((pair) => {
+        const at = pair.indexOf("=")
+        const [name, value] = at < 0 ? [pair, ""] : [pair.slice(0, at), pair.slice(at + 1)]
+        return [decode(name.replaceAll("+", " ")), decode(value.replaceAll("+", " "))]
+      }),
+  )
+
+/** Where a board path a page asked to go to leads (`/docs/<profile id>/d/<slug>/?details=1`); null for no board path. */
+export const targetOfBoardPath = (path: string): Target | null => {
+  const parts = pathParts(path)
+  return parts && targetOfPath(parts.path, parts.search)
 }
 
 /** Whether a URL is one the phone may hand to the browser: a web or mail link. */
@@ -74,10 +116,10 @@ export const openable = (url: string): boolean => /^(https?|mailto):/i.test(url)
 
 /** Where a link of a frame's page leads (`url` as the page resolved it against its `frameBase`); null for one that leads nowhere. */
 export function frameLink(url: string): Target | null {
-  const u = parseUrl(url)
-  if (u === null) return null
-  if (u.origin === FRAME_ORIGIN) return targetOfPath(u.pathname, u.search.slice(1))
-  return openable(u.href) ? { kind: "external", url: u.href } : null
+  const given = url.trim()
+  const u = webParts(given)
+  if (u?.origin === FRAME_ORIGIN) return targetOfPath(u.path === "" ? "/" : u.path, u.search)
+  return openable(given) && (u !== null || /^mailto:\S+$/i.test(given)) ? { kind: "external", url: given } : null
 }
 
 /** A document's path on the board, from its `/docs/` on, with its slug and version (none: its latest). */
@@ -109,27 +151,29 @@ export function publishedDoc(content: string): DocRef | null {
   const out: Readonly<Record<string, unknown>> = typeof parsed === "object" && parsed !== null ? Object.fromEntries(Object.entries(parsed)) : {}
   const url = typeof out["version_url"] === "string" ? out["version_url"] : out["url"]
   if (typeof url !== "string") return null
-  const doc = docIn(parseUrl(url, FRAME_ORIGIN)?.pathname ?? "")
+  const doc = docIn(webParts(url)?.path ?? pathParts(url)?.path ?? "")
   return doc && { ...doc, version: doc.version ?? (typeof out["version"] === "number" ? out["version"] : null) }
 }
 
-/** Whether a URL is the board's: of its address, or of a host's own (an agent's links have 127.0.0.1). */
-const ofBoard = (u: URL, board: URL | null): boolean =>
-  u.origin === board?.origin || u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "[::1]"
+/** A host's own names for itself: an agent's links to the board have them, since that is where the agent runs. */
+const OWN_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"])
 
 /**
  * Where a link in a message leads: a document of this board opens in the app, whatever address the agent knew the board
- * by; a link to the board's own address opens what it names; anything else the browser. null for one that isn't a link
- * the phone follows.
+ * by; a link to the board's own address (`boardUrl`, as logic/link.ts gives it), or a path alone, opens what it names;
+ * anything else the browser. null for one that isn't a link the phone follows.
  */
 export function messageLink(link: string, boardUrl: string): Target | null {
-  const board = parseUrl(boardUrl)
-  const u = parseUrl(link, board?.href ?? FRAME_ORIGIN)
-  if (u === null) return null
-  if (/^https?:$/.test(u.protocol) && (u.origin === FRAME_ORIGIN || ofBoard(u, board))) {
-    const doc = docIn(u.pathname, u.search.slice(1))
+  const given = link.trim()
+  const local = pathParts(given)
+  if (local !== null) return targetOfPath(local.path, local.search)
+  const u = webParts(given)
+  if (u === null) return /^mailto:\S+$/i.test(given) ? { kind: "external", url: given } : null
+  const ours = u.origin === boardUrl.toLowerCase()
+  if (ours || OWN_HOSTS.has(u.host)) {
+    const doc = docIn(u.path, u.search)
     if (doc !== null) return { kind: "page", ...doc.page }
-    if (u.origin === FRAME_ORIGIN || u.origin === board?.origin) return targetOfPath(u.pathname, u.search.slice(1))
+    if (ours) return targetOfPath(u.path === "" ? "/" : u.path, u.search)
   }
-  return openable(u.href) ? { kind: "external", url: u.href } : null
+  return { kind: "external", url: given }
 }

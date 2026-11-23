@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import { transformWithOxc } from "vite"
 import { FRAME_CSP } from "@huntaway/shared"
 import { deliverScript, frameDocument, frameMessage } from "../src/logic/frame"
-import { frameBase, frameLink, FRAME_ORIGIN, messageLink, pageHref, pagePath, publishedDoc, targetOfPath } from "../src/logic/links"
+import { frameBase, frameLink, FRAME_ORIGIN, messageLink, pageHref, pagePath, publishedDoc, queryOf, targetOfBoardPath, targetOfPath } from "../src/logic/links"
 
 // HE-99: a plugin's page on the phone (the documents): where its links lead, the page its frame loads, and what the
 // frame may ask of the app.
@@ -27,6 +27,15 @@ describe("where a link leads", () => {
     expect(targetOfPath("/settings/network")).toEqual({ kind: "web", path: "/settings/network" })
     expect(targetOfPath("/p/x/settings", "tab=git")).toEqual({ kind: "web", path: "/p/x/settings?tab=git" })
     expect(targetOfPath("/")).toEqual({ kind: "web", path: "/" })
+  })
+
+  it("takes a board path a page asks for, with its query, and nothing that isn't one", () => {
+    expect(targetOfBoardPath("/docs/p1/d/plan/?details=1#top")).toEqual({ kind: "page", ...doc, search: "details=1" })
+    expect(targetOfBoardPath("/t/abc")).toEqual({ kind: "task", id: "abc" })
+    expect(targetOfBoardPath("//example.com/docs/p1")).toBeNull()
+    expect(targetOfBoardPath("https://example.com/")).toBeNull()
+    expect(queryOf("")).toEqual({})
+    expect(queryOf("details=1&q=a+b%20c&flag")).toEqual({ details: "1", q: "a b c", flag: "" })
   })
 
   it("keeps a page's path as its link had it, and gives the plugin its segments", () => {
@@ -55,6 +64,10 @@ describe("where a link leads", () => {
     // A dev server on the host's own address is no page of the board's.
     expect(messageLink("http://localhost:5173/docs/intro", board)).toEqual({ kind: "external", url: "http://localhost:5173/docs/intro" })
     expect(messageLink("https://docs.example.com/docs/p1/d/plan/", board)).toEqual({ kind: "external", url: "https://docs.example.com/docs/p1/d/plan/" })
+    expect(messageLink("HTTP://192.168.1.5:7879/settings", board)).toEqual({ kind: "web", path: "/settings" })
+    expect(messageLink("mailto:a@example.com", board)).toEqual({ kind: "external", url: "mailto:a@example.com" })
+    // A name before the host is how one address is dressed up as another: no link of the board's has one.
+    expect(messageLink("http://192.168.1.5:7879@example.com/docs/p1/d/plan/", board)).toBeNull()
     expect(messageLink("javascript:alert(1)", board)).toBeNull()
   })
 

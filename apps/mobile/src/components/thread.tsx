@@ -48,7 +48,7 @@ const TOOLS_BOX = {
 /** A run of tool calls: how many and the last one, opening to every one of them. */
 function Tools({ calls, open, onToggle }: { readonly calls: ReadonlyArray<ToolRow>; readonly open: boolean; readonly onToggle: () => void }) {
   const { label, running, failed } = toolsSummary(calls)
-  const last = calls.at(-1)
+  const last = calls[calls.length - 1]
   const mark = running ? (
     <ActivityIndicator size="small" color={colors.blue} />
   ) : (
