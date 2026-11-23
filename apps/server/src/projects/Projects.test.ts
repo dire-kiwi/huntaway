@@ -106,13 +106,35 @@ describe("Projects", () => {
     }).pipe(Effect.scoped, Effect.provide(TestBoard())),
   )
 
-  it.live("makes a folder that doesn't exist yet, only for an absolute path, and refreshes the git facts when asked", () =>
+  // HE-94
+  it.live("makes a folder that doesn't exist yet, only for an absolute path, as a repository with a README committed on its branch", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
       const { projects, profile, dir } = yield* setup
       const p = yield* projects.create({ profile_id: profile.id, repo_path: `${dir}/new/folder`, key: " nf " })
-      assert.deepStrictEqual([p.name, p.key, p.is_git, p.has_commits, p.base_branch], ["folder", "NF", false, false, null])
+      assert.deepStrictEqual([p.name, p.key, p.is_git, p.has_commits, p.base_branch], ["folder", "NF", true, true, "main"])
+      assert.strictEqual(yield* fs.readFileString(`${p.repo_path}/README.md`), "# folder\n")
+      assert.strictEqual(yield* git(p.repo_path, ["log", "--format=%s", "main"]), "Initial commit")
+      assert.strictEqual(yield* git(p.repo_path, ["status", "--porcelain"]), "")
+      const named = yield* projects.create({ profile_id: profile.id, name: "Kiwi", repo_path: `${dir}/kiwi`, base_branch: "trunk" })
+      assert.deepStrictEqual([named.base_branch, yield* git(named.repo_path, ["symbolic-ref", "--short", "HEAD"])], ["trunk", "trunk"])
+      assert.strictEqual(yield* fs.readFileString(`${named.repo_path}/README.md`), "# Kiwi\n")
       assert.strictEqual(yield* tag(projects.create({ profile_id: profile.id, repo_path: "relative/missing" })), "Invalid")
       assert.strictEqual(yield* tag(projects.create({ profile_id: ProfileId.make("nope"), repo_path: dir })), "ProfileNotFound")
+      // A bad base branch is refused before the folder is made.
+      assert.strictEqual(yield* tag(projects.create({ profile_id: profile.id, repo_path: `${dir}/bad`, base_branch: "no..pe" })), "Invalid")
+      assert.isFalse(yield* fs.exists(`${dir}/bad`))
+    }).pipe(Effect.scoped, Effect.provide(TestBoard())),
+  )
+
+  it.live("leaves a folder that exists as it is, and refreshes the git facts when asked", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const { projects, profile, dir } = yield* setup
+      yield* fs.makeDirectory(`${dir}/plain`)
+      const p = yield* projects.create({ profile_id: profile.id, repo_path: `${dir}/plain` })
+      assert.deepStrictEqual([p.is_git, p.has_commits, p.base_branch], [false, false, null])
+      assert.isFalse(yield* fs.exists(`${p.repo_path}/README.md`))
       yield* git(p.repo_path, ["init", "-q", "-b", "trunk"])
       assert.deepStrictEqual(yield* Effect.map(projects.refreshGit(p.id), (q) => [q.is_git, q.has_commits]), [true, false])
       yield* git(p.repo_path, ["commit", "-q", "--allow-empty", "-m", "first"])
@@ -124,8 +146,11 @@ describe("Projects", () => {
   // facts again after a project was made, so a folder that became a repository never got worktrees.
   it.live("the git sweep reads again the folders not ready for worktrees, or every project's, and says what changed", () =>
     Effect.gen(function* () {
-      const { projects, profile, dir, make } = yield* setup
-      const later = yield* make("later")
+      const { projects, profile, dir } = yield* setup
+      const fs = yield* FileSystem.FileSystem
+      yield* fs.makeDirectory(`${dir}/later`)
+      yield* fs.makeDirectory(`${dir}/plain`)
+      const later = yield* projects.create({ profile_id: profile.id, repo_path: `${dir}/later` })
       const plain = yield* projects.create({ profile_id: profile.id, repo_path: `${dir}/plain`, use_worktrees: false })
       for (const p of [later, plain]) {
         yield* git(p.repo_path, ["init", "-q"])

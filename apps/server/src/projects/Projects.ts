@@ -62,8 +62,9 @@ export interface ProjectsShape {
   readonly list: (profileId: ProfileId, archived: boolean) => Effect.Effect<ReadonlyArray<Project>, ProfileNotFound>
   readonly get: (id: ProjectId) => Effect.Effect<Project, ProjectNotFound>
   /**
-   * A project on a folder of this host, made if missing (an absolute path only). Its key is the one given or derived
-   * from its name; its base branch the one given or the branch checked out. Emits `project`.
+   * A project on a folder of this host, made if missing (an absolute path only) as a git repository on its base branch
+   * (`main` by default) with a placeholder README committed. Its key is the one given or derived from its name; its base
+   * branch the one given or the branch checked out. Emits `project`.
    */
   readonly create: (input: NewProject) => Effect.Effect<Project, ProfileNotFound | Invalid | Conflict>
   /** Changes its settings under its lock. `archived` archives it (refused while one of its agents runs) or brings it back. Emits `project`. */
@@ -165,6 +166,28 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
           if (!ok) return yield* new Invalid({ field: "base_branch", reason: `base_branch "${name}" isn't a valid branch name` })
           return name
         })
+      /**
+       * HE-94: a folder made for a new project becomes a repository on `branch`, with a placeholder README as its first
+       * commit, so its tasks have a branch to start from. Best effort: a git that can't do it leaves the folder as it is,
+       * and the project is made on it all the same.
+       */
+      const initRepository = (dir: string, name: string, branch: string) =>
+        Effect.gen(function* () {
+          const step = (args: ReadonlyArray<string>) =>
+            Effect.flatMap(git(dir, args), (out) =>
+              out.code === 0 ? Effect.void : Effect.fail(`git ${args.join(" ")}: ${out.stderr.trim() || `exit ${out.code}`}`),
+            )
+          yield* step(["init", "-q", "-b", branch])
+          yield* fs.writeFileString(path.join(dir, "README.md"), `# ${name}\n`).pipe(Effect.mapError((e) => `writing README.md: ${e.message}`))
+          yield* step(["add", "README.md"])
+          // Who git says made it, else the board: a host without a git identity still gets its first commit.
+          const unset = (k: string) => Effect.map(git(dir, ["config", k]), (out) => out.code !== 0 || out.stdout.trim() === "")
+          const identity = [
+            ...((yield* unset("user.name")) ? ["-c", "user.name=Huntaway"] : []),
+            ...((yield* unset("user.email")) ? ["-c", "user.email=huntaway@localhost"] : []),
+          ]
+          yield* step([...identity, "commit", "-q", "-m", "Initial commit"])
+        }).pipe(Effect.catch((why) => Effect.logWarning(`couldn't make ${dir} a git repository: ${why}`)))
       const newId = Effect.map(random.uuidV4(), (id) => ProjectId.make(id)).pipe(Effect.orDie)
 
       const list = Effect.fn("Projects.list")(function* (profileId: ProfileId, archived: boolean) {
@@ -176,7 +199,9 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
         yield* requireProfile(input.profile_id)
         let repoPath = expandTilde(input.repo_path, config.home)
         if (repoPath === "") return yield* new Invalid({ field: "repo_path", reason: "repo_path is required" })
-        if (!(yield* exists(repoPath))) {
+        const asked = yield* checkBaseBranch(input.base_branch)
+        const made = !(yield* exists(repoPath))
+        if (made) {
           // A new project folder: made, but only somewhere unambiguous.
           if (!path.isAbsolute(repoPath)) return yield* new Invalid({ field: "repo_path", reason: `${repoPath} does not exist` })
           yield* fs
@@ -185,11 +210,11 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
         }
         if (!(yield* isDir(repoPath))) return yield* new Invalid({ field: "repo_path", reason: `${repoPath} is not a directory` })
         repoPath = yield* canonical(repoPath)
-        const asked = yield* checkBaseBranch(input.base_branch)
+        const name = blank(input.name) ?? (path.basename(repoPath) || "Project")
+        if (made) yield* initRepository(repoPath, name, asked ?? "main")
         const facts = yield* gitFacts(repoPath)
         const current = yield* git(repoPath, ["symbolic-ref", "--short", "HEAD"])
         const baseBranch = asked ?? (current.code === 0 && current.stdout.trim() !== "" ? current.stdout.trim() : null)
-        const name = blank(input.name) ?? (path.basename(repoPath) || "Project")
         const repoRoot = yield* fingerprint(repoPath, facts)
         const id = yield* newId
         const scratch = path.join(dataDir.projectDir(id), "scratch")

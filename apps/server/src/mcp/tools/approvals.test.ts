@@ -228,13 +228,13 @@ describe("update_project", () => {
       yield* setTask(caller.id, { permission_mode: "bypassPermissions" })
       const me = yield* agentOn(caller)
       const projects = yield* Projects
-      const change = { permission_mode: "bypassPermissions", setup_script: "npm ci", base_branch: "main", reason: "Faster setup" }
+      const change = { permission_mode: "bypassPermissions", setup_script: "npm ci", base_branch: "develop", reason: "Faster setup" }
 
       // Denied: nothing changes, and the agent hears why.
       let { result, approval } = yield* answered(me, "update_project", change, "c1", false)
       assert.include(err(result), "didn't approve changing setup_script, permission_mode, so nothing was changed")
       let stored = yield* projects.get(kiw.id)
-      assert.deepStrictEqual([stored.permission_mode, stored.setup_script, stored.base_branch], [null, "", null])
+      assert.deepStrictEqual([stored.permission_mode, stored.setup_script, stored.base_branch], [null, "", "main"])
       assert.deepStrictEqual([approval.kind, approval.tool_name, approval.task_id], ["project", "update_project", caller.id])
       const shown = input(approval)
       assert.deepStrictEqual([at(shown, "project", "key"), at(shown, "task", "key"), at(shown, "reason")], ["KIW", "KIW-1", "Faster setup"])
@@ -250,7 +250,7 @@ describe("update_project", () => {
       yield* (yield* Permissions).applyMode(caller.id)
       yield* answer(a2.request_id, true)
       const v = ok(yield* Fiber.join(running))
-      assert.deepStrictEqual([v["permission_mode"], v["setup_script"], v["base_branch"]], ["bypassPermissions", "npm ci", "main"])
+      assert.deepStrictEqual([v["permission_mode"], v["setup_script"], v["base_branch"]], ["bypassPermissions", "npm ci", "develop"])
       assert.deepStrictEqual((yield* (yield* TaskRepo).get(caller.id))?.auto_allow, [])
 
       // Only what differs is shown and made: a setting the call leaves as it was isn't written back over a change made
