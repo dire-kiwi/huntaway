@@ -5,7 +5,7 @@ import { noTurnsAtom, turnsAtom, type HostTask as Task, type TurnsView } from "@
 import type { Turn } from "@huntaway/contracts"
 
 /** Whether a task keeps checkpoints of its turns: a task with a worktree of its own. */
-const hasTurns = (task: Task) => task.kind === "task" && task.use_worktree
+export const hasTurns = (task: Task) => task.kind === "task" && task.use_worktree
 
 /** A task's turns, followed while shown. Null until loaded, and when `enabled` is false or the task has none. */
 export function useTurns(task: Task, enabled = true): { data: TurnsView["data"]; error: string | null } {

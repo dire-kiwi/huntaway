@@ -5,12 +5,13 @@ import { Layers, Loader2, Sparkles } from "lucide-react"
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
 import { query as hostQuery, type HostTask as Task, type QueryResult } from "@huntaway/client"
 import { resultError, resultValue } from "../ui"
+import { hasTurns } from "./turns"
 
 // The composer's `/` menu (6.4; huntaway's task/SkillMenu.tsx): the skills a task's agent can be asked to use (the
 // host's `tasks.skills`, a query read again when the task's config changes and kept ten seconds after the composer) and the board's own `/compact`, `/plan` and `/new`. Every host here handles
-// them all, so the old API checks are gone.
+// them all, so the old API checks are gone. `/rewind` (HE-101) is the composer's own: picking it runs it.
 
-/** Something the composer's `/` menu offers: a skill, or `/compact`, `/plan` or `/new`, which the board handles itself. */
+/** Something the composer's `/` menu offers: a skill, or `/compact`, `/plan`, `/new` or `/rewind`, which the board handles itself. */
 export interface SkillItem {
   name: string
   description: string
@@ -19,14 +20,16 @@ export interface SkillItem {
   builtin?: boolean | undefined
   /** What a builtin takes after its name, for the hint. */
   args?: string | undefined
+  /** Picking it runs it (`/rewind`), rather than putting it in the message. */
+  run?: (() => void) | undefined
 }
 
 /** No skills asked for yet. */
 const notAsked: Atom.Atom<QueryResult<"tasks.skills">> = Atom.make<QueryResult<"tasks.skills">>(AsyncResult.initial())
 
 /** The `/` menu: typing `/` (or `$` for Codex) at the start of a message lists the skills its agent
- *  can be asked to use, and picking one puts `/name ` in the message. */
-export function useSkillMenu(task: Task, text: string, setText: (t: string) => void) {
+ *  can be asked to use, and picking one puts `/name ` in the message. `rewind` runs `/rewind`. */
+export function useSkillMenu(task: Task, text: string, setText: (t: string) => void, rewind?: () => void) {
   const plans = task.kind === "task"
   // The task's config decides its skills, and whether they're `/name` or `$name`.
   const key = `${task.host_id}/${task.id}/${task.claude_config_id ?? ""}`
@@ -87,6 +90,21 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
       builtin: true,
       args: "[first message]",
     },
+    // Only a task with a worktree of its own keeps the checkpoints a rewind goes back to.
+    ...(rewind && hasTurns(task)
+      ? [
+          {
+            name: "rewind",
+            description: task.running
+              ? "Stop the agent first: then go back to before one of your messages, to reword it"
+              : "Go back to before one of your messages, to reword it and send it again",
+            prefix: "/" as const,
+            builtin: true,
+            args: "",
+            run: rewind,
+          },
+        ]
+      : []),
   ]
   // A skill named like a builtin can't be called with `/`: the board takes the message.
   all.push(
@@ -109,7 +127,7 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
   const command = text.trimStart().split(/\s/)[0] ?? ""
   const hint = !open && command.length > 1 ? all.find((i) => i.prefix + i.name === command) : undefined
 
-  const pick = (i: SkillItem) => setText(`${i.prefix}${i.name} `)
+  const pick = (i: SkillItem) => (i.run ? i.run() : setText(`${i.prefix}${i.name} `))
 
   /** Handles the menu's keys; true when the key was its. */
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {

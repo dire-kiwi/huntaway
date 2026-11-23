@@ -410,7 +410,8 @@ MCP tools whose effect lands here: `request_user_input` (sets `runs.attention`),
 CLI subcommands: `huntaway codex-run <codex.json>` (adapter), `huntaway gh-hook`, `huntaway approval-hook '<rules>'`
 (Claude PreToolUse hooks; they load only their own modules because agents start them often).
 
-Slash commands handled by the board: `/new`, `/compact`, `/plan`.
+Slash commands handled by the board: `/new`, `/compact`, `/plan`; the web composer's own `/rewind` (HE-101) is never
+sent (it opens the rewind list, docs/plan/09-frontend.md).
 
 ## 8. Events
 

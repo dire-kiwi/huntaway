@@ -19,15 +19,14 @@ import { Cause } from "effect"
 import { ArrowUp, Clock, Loader2, MessageSquare, Square, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useTouch } from "../../../narrow"
-import type { RewindResult } from "@huntaway/contracts"
 import { composerDraftAtom, composerDraftKey, composerUnsavedAtom } from "../../../state/drafts"
-import { registry } from "../../../state/registry"
 import { exitError, useMutation } from "../../../state/mutation"
 import { errorText } from "../../ui"
 import { lineRange, removeComments, useReview, withComments, type LineComment } from "../../changes/lineComments"
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "../Attachments"
 import { Dictation } from "../Dictation"
-import { RewindNote } from "../Rewind"
+import { RewindCommand, RewindNote } from "../Rewind"
+import { isRewindCommand } from "../rewindCommand"
 import { RefChips, RefMenu, useRefCompletion, useRefMentions } from "../RefCompletion"
 import { SkillHint, SkillMenu, useSkillMenu } from "../SkillMenu"
 import { ModeSelect, useModeControl } from "./ModeSelect"
@@ -94,18 +93,6 @@ function failureOf(result: { readonly _tag: string; readonly cause?: Cause.Cause
   return result._tag === "Failure" && result.cause ? errorText(Cause.squash(result.cause)) : null
 }
 
-/**
- * After a rewind that took the conversation back: the message rewound to goes into the task's composer (ahead of what's
- * there), to edit and send again. Not the board's own messages (a review's issues, say).
- */
-export function rewound(task: Task, r: RewindResult, conversation: boolean) {
-  if (!conversation || r.message.auto || !r.message.text?.trim()) return
-  const { text, files } = splitAttachments(r.message.text.trim())
-  const atom = composerDraftAtom(composerDraftKey(task))
-  const d = registry.get(atom)
-  registry.set(atom, { text: d?.text.trim() ? `${text}\n\n${d.text}` : text, files: [...files, ...(d?.files ?? [])] })
-}
-
 /** `onSend` is called as a message starts to send: a tab other than the thread goes to the thread with it (HA-334). */
 export function Composer({ task, placeholder, onSend }: { task: Task; placeholder?: string | undefined; onSend?: (() => void) | undefined }) {
   const draftKey = composerDraftKey(task)
@@ -139,7 +126,13 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
   // above has the background work's Stop, so the composer is as it is between runs.
   const working = task.running && !backgroundIdle(task)
   const attach = useAttachmentDraft(task.host_id, draftAtom)
-  const skills = useSkillMenu(task, text, setText)
+  // `/rewind` (HE-101): the list of messages to go back to before, open.
+  const [rewinding, setRewinding] = useState(false)
+  const rewind = () => {
+    setText("")
+    setRewinding(true)
+  }
+  const skills = useSkillMenu(task, text, setText, rewind)
   // `@` lists projects and tasks to put the key of (HA-303). The caret is null while the field isn't focused.
   const [caret, setCaret] = useState<number | null>(null)
   const caretTo = useRef<number | null>(null)
@@ -186,6 +179,7 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
   }, [])
 
   const send = () => {
+    if (isRewindCommand(text)) return rewind()
     const files = attach.files
     const body = withAttachments(withComments(text, comments), files)
     if (blocked || busy || attach.uploading) return
@@ -211,6 +205,7 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
     <div className="shrink-0 px-5 pb-4 narrow:px-2 narrow:pb-2">
       <div className="mx-auto w-full max-w-3xl">
         <RewindNote task={task} />
+        {rewinding && <RewindCommand task={task} onClose={() => setRewinding(false)} />}
         {shownErr && <div className="mb-2 text-xs text-red-400">{shownErr}</div>}
         {unsaved && (
           <div className="mb-2 text-xs text-amber-400">
