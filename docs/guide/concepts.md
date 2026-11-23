@@ -872,42 +872,27 @@
     level (_Merges into_) has to be done before the stack can go.
 - **Subprojects** are gone: new work merges into another task instead (see _Merging into another
   task_ above). An old board's subprojects and their tasks import as ordinary tasks.
-- **Changes**: a task's _Changes_ tab works like lazygit, in its worktree (or its
-  project's repository when it has none). Panels on the left list the branch (_Status_: its
-  commits since the base branch, and against its upstream), the changed files (a tree, or a
-  list with `` ` ``), the commits (the branch's, then a few from its base) and the stashes; the
-  main panel shows what's selected: the branch's whole diff against its base, a file's unstaged
-  and staged changes, or a commit's or stash's. A task in a worktree of its own has a fifth panel,
-  _Turns_: its agent's turns, latest first, each showing what that turn changed (see
-  _Checkpoints_ below); `g` rewinds to before one. `1`–`5` or ←/→ move between panels, ↑/↓ (or
-  `j`/`k`) through a list, and the bar at the bottom shows the keys for where you are (each one
-  can be clicked; `?` lists them all). In the files, space stages or unstages a file or folder,
-  `a` everything, `d` discards, `c` commits (with a summary and description; a message not
-  committed is kept for the next try), `A` amends the last commit and `s`/`S` stash. Enter goes
-  into a file's diff to stage single lines: space stages (in the staged changes, unstages) the
-  line under the cursor, `v` or shift+↑/↓ select a range, `a` the whole hunk, `d` discards
-  them, Tab switches between the unstaged and staged changes and Esc goes back; clicking,
-  shift+clicking and dragging over lines selects them too, and each hunk has buttons. In the
-  commits, `g` resets the branch (soft, mixed or hard) and `r` rewords the last commit; in the
-  stashes, space applies, `g` pops and `d` drops. Right-clicking a file, commit or stash shows
-  its menu. The view checks for changes every few seconds (the agent may be making them), and
-  keys pressed while a change is being made wait for it, so pressing space again stages the next
-  line. The staged lines are a patch the UI makes from the diff it shows (`apps/web/src/components/changes/diffs.ts`),
-  applied with `git apply --cached`; if the file has changed since, git refuses it and the view
-  shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
-  discarded whole, as a patch made from the text the view shows would write its other bytes back
-  wrong.
+- **Changes**: a task's _Changes_ tab is laid out as its _Code_ tab is, over what the task
+  changed: its own work against where it started on its base branch, its commits and its
+  uncommitted and untracked files together (in its worktree, or its project's repository when it
+  has none). On the left is the Code tab's tree with only the changed files in it, each marked
+  A (added), D (deleted), R (renamed) or M (changed), its folders open (a click folds one) and
+  `t` finding a file in it. On the right is the diff of the file picked, or all of them, under the
+  branch's commits, until one is; Esc goes back to all of them, and `j`/`k` go to the next or
+  previous file. _Open in the Code tab_ (in the file's title bar, and on each file's header)
+  shows the whole file in the Code tab, at its first changed line. The tab reads the changes again
+  every few seconds, as the agent may be making them. Staging, committing, stashing and the like
+  are left to the agent or a terminal.
 - **Diffs and comments for the agent:** the Changes tab's diffs are highlighted for their
   file's language (by extension or name; the theme is the board's own colours), with
   [Shiki](https://shiki.style)'s TextMate grammars in a web worker (`apps/web/src/components/changes/highlight.worker.ts`),
   so a big diff doesn't hold up the page. Each language's grammar is fetched the first time a
   file in it is shown; a file's diff is highlighted once it's scrolled near, each hunk on its own
   (lines show plain until then), and files with more than 5000 lines in their diff, and lines over
-  1000 characters, are left plain. `|` (or _unified_/_split_ in the main panel's title) shows
+  1000 characters, are left plain. `|` (or _unified_/_split_ in the title bar) shows
   diffs side by side or unified, and the choice is kept in the browser. Lines can be commented on
-  for the agent: `n` comments on the line under the cursor or the range or hunk picked (when
-  staging), or on the lines picked by their numbers in a commit's, a turn's, the branch's or a folder's diff
-  (click, shift-click or drag over them); a line's comment button (on hover) does the same for it,
+  for the agent: `n` comments on the lines picked by their numbers (click, shift-click or drag
+  over them); a line's comment button (on hover) does the same for it,
   or for what's picked if it's one of those lines. The note is written under the lines (Enter adds
   it, Esc leaves it for later), and the comments wait there, in a bar at the bottom of the tab (a
   list that goes to each one, _Send to the agent_ and _Discard_) and as chips in the thread's
@@ -929,8 +914,8 @@
   number and the message that started it. A task keeps its last 200, and they're deleted (refs
   and rows) when its worktree is removed. Tasks working in their project's repository, review
   threads, documents and scratch tasks have none.
-  - **What each turn changed:** the _Turns_ panel of the _Changes_ tab shows the difference
-    between the checkpoint a turn started from and its own. Files git brought in during the turn
+  - **What each turn changed:** a turn's changes are the difference between the checkpoint it
+    started from and its own (`checkpoints.turnDiff`; the _Changes_ tab no longer lists turns). Files git brought in during the turn
     are left out (and listed) unless the turn changed them itself: those changed by commits HEAD
     moved to rather than made in the worktree (a pull or fast-forward, the commits a rebase went
     onto, told apart by the worktree's HEAD reflog) and by merges made there, except where the
@@ -938,8 +923,7 @@
     task's _Review_ tab lists what each round of fixes a review sent back changed (the turns of
     the run it started, whose message is marked with `review_round`). A turn from before
     checkpoints were kept has none to start from, so its changes aren't shown.
-  - **Rewinding:** hovering one of your messages in the thread shows _Rewind to here_ (or `g` in
-    the _Turns_ panel). It puts the worktree's files back to the checkpoint taken before that
+  - **Rewinding:** hovering one of your messages in the thread shows _Rewind to here_. It puts the worktree's files back to the checkpoint taken before that
     message's turn: only the files that differ are written or removed (never through a symlink),
     files git ignores (build output) are left alone, and so are submodules and other repositories,
     files marked `skip-worktree` or `assume-unchanged`, and whatever the checkpoints don't have

@@ -3,11 +3,11 @@ import { execFileSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, routeRpc, startServer, withBrowser } from "./harness.mjs"
+import { eventually, startServer, withBrowser } from "./harness.mjs"
 
 // Comments on a diff's lines for the agent (the old lineComments.test.mjs), on a test server whose agent is the fake
-// `claude`, which logs the prompts it is given. The old checks slowed the page's `/git/show` requests with
-// `page.route`; these hold the `git.show` RPC (`routeRpc`). The old reviewer-prompt filter is gone with reviews (M4).
+// `claude`, which logs the prompts it is given. The old reviewer-prompt filter is gone with reviews (M4). HE-96: the
+// Changes tab shows the branch's changes (uncommitted ones too), whose lines are picked by their numbers.
 
 let server
 let task
@@ -55,65 +55,64 @@ beforeAll(async () => {
 afterAll(() => server?.stop())
 
 const DRAFT = "What should the agent know"
-/** Into app.ts's unstaged diff (its folder is the first row), with the cursor on its first change. */
-const openFile = () => [`goto /t/${task.id}`, "click Changes", "wait app.ts", "press j", "press Enter", "wait Unstaged changes"]
-/** A commit's patch comes a little after its subject is listed, as it can from a slow host. */
-const slowPatches = (ui) => routeRpc(ui.page, (request) => (request.tag === "git.show" ? new Promise((r) => setTimeout(() => r(undefined), 400)) : undefined))
-/**
- * The rows of the commit's diff of app.ts (its index and text), once its patch has come: its subject is in the
- * Commits list before then, so it's waited for by a line only the patch has.
- */
-async function commitRows(ui) {
+const BRANCH = "the branch's changes against main, uncommitted ones too"
+/** To app.ts's diff: the branch's, with the commit's line 10 and the uncommitted line 3. */
+const openFile = () => [`goto /t/${task.id}`, "click Changes", "click role=treeitem[name='app.ts']", "wait css=[data-testid=changes-path][title='src/app.ts']"]
+/** The rows of app.ts's diff (their index and text), once it has come. */
+async function diffRows(ui) {
   const rowsOf = ui.page.locator('[data-diff="src/app.ts"] [data-i]')
   await rowsOf.filter({ hasText: "export const ten" }).first().waitFor()
   const rows = await rowsOf.evaluateAll((els) => els.map((e) => [e.dataset.i, e.textContent]))
   return (re) => {
     const row = rows.find(([, t]) => re.test(t))
-    assert.ok(row, `no row of the commit's diff matches ${re}: ${JSON.stringify(rows)}`)
+    assert.ok(row, `no row of the diff matches ${re}: ${JSON.stringify(rows)}`)
     return row[0]
   }
 }
+/** A row's line number, which picks it (shift-click: the lines from the last one picked). */
+const number = (ui, i) => ui.page.locator(`[data-diff="src/app.ts"] [data-i="${i}"] > span`).first()
+/** Picks the removed line 3. */
+const pickThree = async (ui) => number(ui, (await diffRows(ui))(/^\s*3\s*-export const line3/)).click()
 
 async function waitIdle() {
   await waitFor(async () => !(await server.rpc("tasks.get", { id: task.id })).running, 15000)
 }
 
-// HA-10: lines picked in a file's diff and in a commit's, each with a note, go to the agent as one message.
-test("comments on a file's lines and a commit's reach the agent in one message", async () => {
+// HA-10: lines picked in a file's diff, each with a note, go to the agent as one message.
+test("comments on a file's lines reach the agent in one message", async () => {
   await withBrowser(server, {}, async (ui) => {
-    await slowPatches(ui)
-    // The cursor's line (the removed line 3): n, a note, Enter.
-    await ui.run([
-      ...openFile(),
-      "press n",
-      `wait ${DRAFT}`,
-      "type Name it after its value.",
-      "press Enter",
-      `gone ${DRAFT}`,
-      "wait Comment for the agent on removed line 3",
-    ])
-    // The commit's lines 10 (removed and added), picked by their numbers: a click, then a shift-click.
-    await ui.run(["press 3", "press Enter"])
-    const row = (i) => ui.page.locator(`[data-diff="src/app.ts"] [data-i="${i}"] > span`).first()
-    const at = await commitRows(ui)
-    await row(at(/^10\s*-export const line10/)).click()
-    await row(at(/^\s*10\s*\+export const ten/)).click({ modifiers: ["Shift"] })
+    await ui.run(openFile())
+    const at = await diffRows(ui)
+    // The removed line 3: its number, n, a note, Enter.
+    await pickThree(ui)
+    await ui.run(["press n", `wait ${DRAFT}`, "type Name it after its value.", "press Enter", `gone ${DRAFT}`, "wait Comment for the agent on removed line 3"])
+    // Line 10 (removed and added): a click, then a shift-click.
+    await number(ui, at(/^\s*10\s*-export const line10/)).click()
+    await number(ui, at(/^\s*10\s*\+export const ten/)).click({ modifiers: ["Shift"] })
     await ui.run(["press n", `wait ${DRAFT}`, "type Keep the old name too.", "press Enter", `gone ${DRAFT}`, "wait 2 comments for the agent"])
     await ui.run(["click Send to the agent", "gone 2 comments for the agent"])
     await waitFor(() => prompts().some((p) => p.includes("Keep the old name too.")))
     const prompt = prompts().find((p) => p.includes("Keep the old name too."))
     assert.match(prompt, /2 comments on the diff:/)
-    assert.match(prompt, /\*\*src\/app\.ts\*\*, removed line 3 \(unstaged changes\):\n```diff\n-export const line3 = 3;\n```\nName it after its value\./)
-    assert.match(
+    const fence = "```"
+    assert.ok(
+      prompt.includes(`**src/app.ts**, removed line 3 (${BRANCH}):\n${fence}diff\n-export const line3 = 3;\n${fence}\nName it after its value.`),
       prompt,
-      /\*\*src\/app\.ts\*\*, line 10 \(commit [0-9a-f]{8}\):\n```diff\n-export const line10 = 10;\n\+export const ten = 10;\n```\nKeep the old name too\./,
+    )
+    assert.ok(
+      prompt.includes(
+        `**src/app.ts**, line 10 (${BRANCH}):\n${fence}diff\n-export const line10 = 10;\n+export const ten = 10;\n${fence}\nKeep the old name too.`,
+      ),
+      prompt,
     )
   })
 })
 
 test("unsent comments and drafts survive switching tabs and a reload, and show in the composer", async () => {
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([...openFile(), "press n", `wait ${DRAFT}`, "type Half a thought"])
+    await ui.run(openFile())
+    await pickThree(ui)
+    await ui.run(["press n", `wait ${DRAFT}`, "type Half a thought"])
     // Away to the thread and back: the draft's still there.
     await ui.run(["click Thread", "click Changes", "wait Half a thought"])
     // A reload: still there. Finished and added.
@@ -130,7 +129,7 @@ test("unsent comments and drafts survive switching tabs and a reload, and show i
     await ui.run(["wait 1 comment for the agent"])
     // In the thread's composer, which can take it off again.
     await ui.run(["click Thread", "wait A comment on the diff, sent with this message", "wait app.ts:3", "click Remove the comment", "gone app.ts:3"])
-    // Back in the Changes tab (on the folder's diff, as it opens on its first row): gone there too.
+    // Back in the Changes tab (on all the diffs, as it opens): gone there too.
     await ui.run(["click Changes", "wait app.ts", "wait export const three", "gone 1 comment for the agent", "gone Half a thought"])
   })
 })
@@ -138,20 +137,24 @@ test("unsent comments and drafts survive switching tabs and a reload, and show i
 test("the composer sends the comments with what's typed", async () => {
   await waitIdle()
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([...openFile(), "press n", `wait ${DRAFT}`, "type Use a better name.", "press Enter", "wait 1 comment for the agent"])
+    await ui.run(openFile())
+    await pickThree(ui)
+    await ui.run(["press n", `wait ${DRAFT}`, "type Use a better name.", "press Enter", "wait 1 comment for the agent"])
     await ui.run(["click Thread", "wait app.ts:3", "click Add a message to the comment", "type Two things:", "press Enter", "gone app.ts:3"])
     await waitFor(() => prompts().some((p) => p.includes("Use a better name.")))
     const prompt = prompts().find((p) => p.includes("Use a better name."))
-    assert.match(prompt, /Two things:\n\nA comment on the diff:\n\n\*\*src\/app\.ts\*\*, removed line 3 \(unstaged changes\):/)
+    assert.match(
+      prompt,
+      /Two things:\n\nA comment on the diff:\n\n\*\*src\/app\.ts\*\*, removed line 3 \(the branch's changes against main, uncommitted ones too\):/,
+    )
   })
 })
 
 test("a line's comment button comments on that line, or on the lines picked if it's one of them", async () => {
   await withBrowser(server, {}, async (ui) => {
-    await slowPatches(ui)
-    await ui.run([`goto /t/${task.id}`, "click Changes", "wait app.ts", "press 3", "press Enter"])
+    await ui.run(openFile())
     const diff = '[data-diff="src/app.ts"]'
-    const at = await commitRows(ui)
+    const at = await diffRows(ui)
     const button = async (i) => {
       await ui.page.locator(`${diff} [data-i="${i}"]`).hover()
       await ui.page.locator(`${diff} button[title^="Comment for the agent"]`).click()
@@ -188,7 +191,7 @@ test("a line's comment button comments on that line, or on the lines picked if i
 
 test("diffs are highlighted, and the split layout is remembered", async () => {
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([...openFile()])
+    await ui.run(openFile())
     // Coloured runs, once the worker has the grammar.
     await waitFor(async () => (await ui.page.locator('[data-diff="src/app.ts"] span[style*="color"]').count()) > 0, 10000)
     const keyword = await ui.page
@@ -205,7 +208,7 @@ test("diffs are highlighted, and the split layout is remembered", async () => {
     const pair = ui.page.locator('[data-diff="src/app.ts"] > div.flex:has(> div.w-1\\/2)', { hasText: "export const three" })
     await pair.waitFor()
     assert.match(await pair.textContent(), /line3 = 3;.*three = 3;/)
-    await ui.run([`goto /t/${task.id}`, "click Changes", "wait app.ts", "press j", "press Enter", "wait Unstaged changes"])
+    await ui.run(openFile())
     await ui.page.locator('[data-diff="src/app.ts"] > div.flex:has(> div.w-1\\/2)', { hasText: "export const three" }).waitFor()
   })
 })
