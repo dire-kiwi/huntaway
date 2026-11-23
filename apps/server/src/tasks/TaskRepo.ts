@@ -191,6 +191,7 @@ export const TaskRow = Schema.Struct({
   model: Text,
   effort: Schema.NullOr(Effort),
   permission_mode: Schema.NullOr(PermissionMode),
+  output_style: Text,
   claude_config_id: Schema.NullOr(AgentConfigId),
   auto_allow: JsonColumn(Schema.Array(Schema.String), []),
   review: JsonColumn(Schema.NullOr(Review), null),

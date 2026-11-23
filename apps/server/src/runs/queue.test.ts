@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { combine, decideSend, isCompact, newCommand } from "./queue.ts"
+import { combine, decideSend, isCompact, newCommand, outputStyleCommand } from "./queue.ts"
 import type { SendFacts } from "./queue.ts"
 
 // What happens to a message (huntaway's runner/send.ts and queue.ts), as plain functions: the decisions the service
@@ -136,5 +136,14 @@ describe("the queue", () => {
   it("knows the board's commands, and not what only starts the same way", () => {
     assert.deepStrictEqual([isCompact("/compact"), isCompact(" /compact keep notes"), isCompact("/compactly")], [true, true, false])
     assert.deepStrictEqual([newCommand("/new"), newCommand("/new  fix it "), newCommand("/newer")], ["", "fix it", null])
+    assert.deepStrictEqual(
+      [
+        outputStyleCommand("/output-style"),
+        outputStyleCommand(" /output-style  Explanatory "),
+        outputStyleCommand("/output-styles"),
+        outputStyleCommand("use /output-style"),
+      ],
+      ["", "Explanatory", null, null],
+    )
   })
 })

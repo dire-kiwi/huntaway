@@ -123,6 +123,8 @@ export interface ClaudeLaunchInput {
   /** The task's or the host's, as given (`ultra` and `minimal` are mapped to Claude's). */
   readonly effort: string | null
   readonly permissionMode: PermissionMode
+  /** HE-102: the task's output style (`/output-style`), given as a setting; null (or left out) for Claude Code's own settings'. */
+  readonly outputStyle?: string | null | undefined
   /** The thread's approval rules (all modes'), if it has any. */
   readonly rules: Rules | null
   /** The project's own skills and MCP servers, and those it turns off. */
@@ -244,7 +246,9 @@ export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec
       const rulesHook = rules === null ? null : yield* claudeHook(input.exe, rules)
       if (rulesHook !== null) hooks.push(rulesHook)
     }
-    if (hooks.length > 0) args.push("--settings", yield* hookSettings(hooks))
+    // The hooks and the task's output style, which outranks the user's and the project's settings files.
+    const outputStyle = input.outputStyle ?? null
+    if (hooks.length > 0 || outputStyle !== null) args.push("--settings", yield* hookSettings(hooks, outputStyle))
     // The board's tools never need approval, nor do some of the gh server's, nor the desktop's that only look, nor a
     // plugin's whose tools only touch its own data (the docs plugin's).
     args.push("--allowedTools", ...boardToolsAllowed(input.permissionMode, toolNames(input.mcp.manifest)))

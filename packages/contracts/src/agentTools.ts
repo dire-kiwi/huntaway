@@ -179,8 +179,17 @@ export const TaskSkill = Schema.Struct({
 })
 export interface TaskSkill extends Schema.Schema.Type<typeof TaskSkill> {}
 
-/** The skills a task's agent can be asked to use, and which agent that is. */
-export const TaskSkills = Schema.Struct({ agent: Agent, skills: Schema.Array(TaskSkill) })
+/**
+ * The skills a task's agent can be asked to use, and which agent that is. A Claude task's also has its output styles
+ * (HE-102, `/output-style`): those its last run listed, else Claude Code's built-in ones and the files'; and the style
+ * its last run had, if one has said. Both absent from older servers.
+ */
+export const TaskSkills = Schema.Struct({
+  agent: Agent,
+  skills: Schema.Array(TaskSkill),
+  output_styles: Schema.optionalKey(Schema.Array(TaskSkill)),
+  output_style: Schema.optionalKey(Schema.NullOr(Schema.String)),
+})
 export interface TaskSkills extends Schema.Schema.Type<typeof TaskSkills> {}
 
 /** The owner of a skill or server: a project, or null for the host's global ones. */

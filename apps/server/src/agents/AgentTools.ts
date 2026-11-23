@@ -1,4 +1,4 @@
-import { Config, Context, DateTime, Effect, FileSystem, Layer, Option, Schema, Semaphore, Stream } from "effect"
+import { Config, Context, DateTime, Effect, FileSystem, Layer, MutableHashMap, Option, Schema, Semaphore, Stream } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { McpServerId, SkillId, SkillSourceId, threadKindOf } from "@huntaway/contracts"
 import type {
@@ -34,6 +34,8 @@ import type { InitTools, Inventory, SkillRow } from "./agentTools/effective.ts"
 import { discover, SourceFailed, syncSkills } from "./agentTools/files.ts"
 import type { Found } from "./agentTools/files.ts"
 import { planSource } from "./agentTools/sourcePlan.ts"
+import { fileStyles, outputStyles } from "./agentTools/outputStyles.ts"
+import type { ReportedStyles } from "./agentTools/outputStyles.ts"
 import { claudeSkills } from "./agentTools/taskSkills.ts"
 import {
   checkDisabledSkills,
@@ -115,8 +117,10 @@ export interface AgentToolsShape {
   readonly preview: (task: ToolTask) => Effect.Effect<RunTools>
   /** A run's `init` line: what its agent had, kept per config for the project's settings. Database only: in the line's transaction. */
   readonly recordSeen: (task: TaskId, init: InitTools) => Effect.Effect<void>
-  /** The skills a task's agent can be asked to use, for the composer's `/` menu. */
+  /** The skills a task's agent can be asked to use, for the composer's `/` menu (a Claude task's output styles too). */
   readonly taskSkills: (task: TaskId) => Effect.Effect<TaskSkills, TaskNotFound>
+  /** HE-102: the output styles a Claude run's `initialize` answer listed, kept (in memory) for its task's `/output-style` menu. */
+  readonly recordOutputStyles: (task: TaskId, reported: ReportedStyles) => Effect.Effect<void>
   /** A deleted review or summary thread's skills folder goes with it. */
   readonly removeThreadSkills: (project: ProjectId, thread: TaskId) => Effect.Effect<void>
   /**
@@ -649,6 +653,11 @@ export class AgentTools extends Context.Service<AgentTools, AgentToolsShape>()("
         return { cwd: expand(cwd), addDirs: addDirs.map(expand) }
       })
 
+      // HE-102: what each task's last Claude run listed of output styles. Lost on a restart: the menu then has the
+      // built-in ones and the files' until a run lists them again.
+      const styles = MutableHashMap.empty<TaskId, ReportedStyles>()
+      const recordOutputStyles = (id: TaskId, reported: ReportedStyles) => Effect.sync(() => void MutableHashMap.set(styles, id, reported))
+
       const taskSkills = Effect.fn("AgentTools.taskSkills")(function* (id: TaskId) {
         const task = yield* tasks.get(id)
         if (task === null) return yield* new TaskNotFound({ id })
@@ -689,6 +698,16 @@ export class AgentTools extends Context.Service<AgentTools, AgentToolsShape>()("
           // The board's own skills the last run had that are off now aren't given to runs any more.
           const seen = reportedSkills(o.seen[cfg?.id ?? ""], board, off)
           found = yield* claudeSkills(fs, dir, [cwd, ...addDirs], project === null ? null : expand(project.repo_path), seen)
+          // HE-102: the user's styles, then the project's, which replace them.
+          const reported = Option.getOrNull(MutableHashMap.get(styles, id))
+          const files = yield* fileStyles(fs, [`${dir}/output-styles`, `${cwd}/.claude/output-styles`])
+          const result: TaskSkills = {
+            agent: "claude",
+            skills: withBoardSkills(found, board, false, o.disabled_skills),
+            output_styles: outputStyles(reported, files),
+            output_style: reported?.current ?? null,
+          }
+          return result
         }
         const result: TaskSkills = { agent: isCodex ? "codex" : "claude", skills: withBoardSkills(found, board, isCodex, o.disabled_skills) }
         return result
@@ -717,6 +736,7 @@ export class AgentTools extends Context.Service<AgentTools, AgentToolsShape>()("
         preview: forTask(false),
         recordSeen,
         taskSkills,
+        recordOutputStyles,
         removeThreadSkills: (project, thread) => removeDir(threadSkillsRoot(project, thread)),
         catchUp: Effect.gen(function* () {
           for (const s of yield* repo.sources) {

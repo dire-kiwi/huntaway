@@ -42,6 +42,14 @@ export const newCommand = (text: string): string | null => {
   return rest === "" || /^\s/u.test(rest) ? rest.trim() : null
 }
 
+/** HE-102: `/output-style [name]`: the name (perhaps "", to say which there are), or null for any other message. */
+export const outputStyleCommand = (text: string): string | null => {
+  const t = text.trim()
+  if (!t.startsWith("/output-style")) return null
+  const rest = t.slice("/output-style".length)
+  return rest === "" || /^\s/u.test(rest) ? rest.trim() : null
+}
+
 /** What a run starts with: the messages it takes from the queue and its own, as one (the old `Queued`). */
 export interface Combined {
   readonly text: string

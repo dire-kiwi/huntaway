@@ -1480,6 +1480,30 @@ Claude Code can move a session to another model: when Opus 5.5's safeguards flag
   as people say it (`claude-opus-4-8` is `Opus 4.8`).
 - Codex has no such line; its tasks never have the mark.
 
+### Output styles (HE-102)<a id="output-styles"></a>
+
+Claude Code's `/output-style` picks how the agent writes its replies (`default`, `Explanatory`, `Learning`, a user's
+`<config>/output-styles/*.md`, a project's `.claude/output-styles/*.md`, a plugin's). In `-p` it is not a command, so the
+board has its own, for a Claude task:
+
+- **`/output-style <name>`** (`queue.ts` `outputStyleCommand`, handled in `Runs.send` like `/new`, under the task's
+  lock) sets the task's `output_style` (a text column, `2026-11-24-output-style.ts`; null is whatever Claude Code's
+  settings say) and writes an info notice. It is no message for the agent and starts no run. Every later launch gives
+  it as a setting (`--settings '{"outputStyle": …}'`, with the hooks when there are any), which outranks the settings
+  files; a running agent is also sent `apply_flag_settings { outputStyle }` on its input, which Claude Code takes for
+  its next turn (a run whose input has closed is ended, and the next is launched with it).
+- **The name** is matched to the styles the task's last run listed, exactly, else in any case (`styleNamed`); one not
+  among them gets a warning notice with the list, and nothing changes. Before a run has listed them, any name is
+  taken as it is (a plugin's style isn't in the board's own list).
+- **`/output-style`** alone says the task's style (or its last run's) and lists them.
+- **The list.** Claude Code's answer to the board's `initialize` has `output_style` and `available_output_styles`; the
+  line handler keeps them per task in memory (`AgentTools.recordOutputStyles`, lost on a restart). `tasks.skills`
+  gives a Claude task's `output_styles` (that list, else Claude Code 2.1's built-in ones and the files'; descriptions
+  from the built-ins and the files' frontmatter, `agentTools/outputStyles.ts`) and its last run's `output_style`. Codex
+  and ACP tasks have none: the command says so in a warning notice there.
+- **The composer** (`task/SkillMenu.tsx`) offers `/output-style` (with the style it has now), and once its name is
+  being typed lists the styles, the current one marked; picking one fills in `/output-style <name>`, and Enter sends it.
+
 ### As built in 4.8 (HE-5): stack titles
 
 - **`agents/StackTitles.ts`** (the old `agent/stack_title.ts`, HA-387) writes a stack's title and description with the
