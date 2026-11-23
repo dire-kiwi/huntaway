@@ -37,13 +37,11 @@ export function desktopForward(address: string, port: number, host: string): Pro
     .then(answerOf, (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }))
 }
 
-/** Whether `hostname` (the page's `location.hostname`) is this machine's loopback. */
-const isLoopback = (hostname: string): boolean =>
-  hostname === "localhost" || hostname === "[::1]" || hostname === "::1" || /^127\.\d+\.\d+\.\d+$/.test(hostname)
-
 /**
  * HE-92: whether the page runs on the task's host, so its servers are already localhost here and Forward port has
- * nothing to do: the task is the page's own server's (`localHostId`, not a linked host's) and the page was opened on
- * loopback (a browser at `localhost`, or the desktop app with its board on this machine).
+ * nothing to do: the page is the desktop app's with its board's server on this machine (`appServerHere`: no
+ * `serverUrl` in desktop.json, so the app hands out its browser pane, `paneDebugger`), and the task is that server's
+ * (`localHostId`), not a linked host's. A browser can't tell: `localhost` may be the host itself or a tunnel to it
+ * from another computer (`ssh -L`), where the button is the way to reach the server, so it keeps it.
  */
-export const onTaskHost = (taskHost: string, localHostId: string | null, hostname: string): boolean => taskHost === localHostId && isLoopback(hostname)
+export const onTaskHost = (taskHost: string, localHostId: string | null, appServerHere: boolean): boolean => appServerHere && taskHost === localHostId

@@ -1,19 +1,22 @@
 import { assert, describe, it } from "@effect/vitest"
 import { onTaskHost } from "../../src/components/task/thread/forwardPort"
 
-// HE-92: Forward port is for a client on another machine, so the banner leaves it out on the task's host itself.
+// HE-92: Forward port is for a client on another machine, so the banner leaves it out in the desktop app on the task's
+// host itself. `appServerHere` is whether the app's board server runs on this machine (no `serverUrl`).
 describe("onTaskHost", () => {
-  it("is the page's own host opened on loopback", () => {
-    for (const hostname of ["localhost", "127.0.0.1", "127.1.2.3", "[::1]"]) assert.isTrue(onTaskHost("h1", "h1", hostname), hostname)
+  it("is the desktop app on its own server's machine, for that server's task", () => {
+    assert.isTrue(onTaskHost("h1", "h1", true))
   })
 
-  it("is not a linked host's task, even on loopback", () => {
-    assert.isFalse(onTaskHost("h2", "h1", "localhost"))
+  it("is not a linked host's task, even in the app on its own server's machine", () => {
+    assert.isFalse(onTaskHost("h2", "h1", true))
   })
 
-  it("is not a page opened on another address, or before the board says its host", () => {
-    assert.isFalse(onTaskHost("h1", "h1", "omarchy.tail1234.ts.net"))
-    assert.isFalse(onTaskHost("h1", "h1", "192.168.1.5"))
-    assert.isFalse(onTaskHost("h1", null, "localhost"))
+  it("is not the app with a serverUrl (a remote server, or a tunnel at localhost), nor a browser", () => {
+    assert.isFalse(onTaskHost("h1", "h1", false))
+  })
+
+  it("is not before the board says its host", () => {
+    assert.isFalse(onTaskHost("h1", null, true))
   })
 })

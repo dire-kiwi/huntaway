@@ -110,6 +110,8 @@ your next message at once.
   says "Shared with tailcat", on every computer and tab looking at the task; once it ends that goes, and so does the
   command, as its address no longer works. Forward port gives the same address again while the share lasts, and a new
   one after.
+  The desktop app leaves the button out for a task on its own machine (no `serverUrl` in desktop.json), where the server
+  is localhost already. A browser always shows it, even at `localhost`, which may be a tunnel from another computer.
 
 ## Interactive replies
 

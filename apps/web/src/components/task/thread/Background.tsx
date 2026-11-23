@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react"
 import { backgroundLabel, serverUrl, type HostTask as Task } from "@huntaway/client"
 import type { BackgroundItem, PortForward, TaskServer } from "@huntaway/contracts"
 import { useBoard } from "../../../state/board"
+import { paneDebugger } from "../BrowserWebview"
 import { useNow } from "../../../state/clock"
 import { exitError, useMutation } from "../../../state/mutation"
 import { copyText, millisOf } from "../../ui"
@@ -13,8 +14,8 @@ import { desktopForward, desktopForwards, forwardCommand, onTaskHost } from "./f
 /**
  * What the task's agent left going (HA-405), above its composer: the shells it has running in the background (a dev
  * server, a watcher), each with a Stop that ends it and leaves the agent be, and the servers its processes listen on,
- * with Open, Forward port (HE-81: shared with tailcat, for a client on another machine; HE-92: not on the task's host
- * itself) and Stop. Once the agent's turn has ended with only those left it's idle, not working, and a message reaches
+ * with Open, Forward port (HE-81: shared with tailcat, for a client on another machine; HE-92: not in the desktop app on
+ * the task's host itself) and Stop. Once the agent's turn has ended with only those left it's idle, not working, and a message reaches
  * it at once.
  */
 export function BackgroundBanner({ task }: { task: Task }) {
@@ -84,7 +85,7 @@ function ServerRow({ task, server, onError }: { task: Task; server: TaskServer; 
   // replaced it. A host older than HE-83 says neither, and it's shown until the row goes.
   const shared = given !== null && given.share.since === server.forwarded ? given : null
   const [opening, setOpening] = useState(false)
-  const here = useBoard((s) => onTaskHost(task.host_id, s.localHostId, location.hostname))
+  const here = useBoard((s) => onTaskHost(task.host_id, s.localHostId, paneDebugger() !== null))
   const forward = () => {
     onError(null)
     void forwardServer(task.host_id, { id: task.id, port: server.port }).then((exit) => {
