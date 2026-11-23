@@ -17,6 +17,7 @@ import { AgentRequests } from "../runs/AgentRequests.ts"
 import type { RunDir } from "../runs/RunDir.ts"
 import { RunOutput } from "../runs/RunOutput.ts"
 import { RunRepo } from "../runs/RunRepo.ts"
+import type { Runs } from "../runs/Runs.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { Threads } from "../threads/Threads.ts"
 import { ThreadStore } from "../threads/ThreadStore.ts"
@@ -24,6 +25,8 @@ import { PermissionRepo } from "./PermissionRepo.ts"
 import { DONT_ASK_DENIAL, EXPIRED, EXPIRED_UNANSWERED, Permissions, promptCallId, SKIPPED } from "./Permissions.ts"
 import type { Decision } from "./Permissions.ts"
 import { reason } from "./prompts.ts"
+import type { Questions } from "./Questions.ts"
+import { UserMessages } from "./UserMessages.ts"
 
 // Permission prompts on the whole board's services (huntaway's mcp/permissions/tests.test.ts, and the can_use_tool cases
 // of agent/runner/requests.test.ts), with a scripted agent (`fakeAgent`) whose run is the task's live one. Ported as the
@@ -36,6 +39,8 @@ import { reason } from "./prompts.ts"
 
 type Env =
   | Permissions
+  | Questions
+  | Runs
   | DataDir
   | PermissionRepo
   | ApprovalRules
@@ -908,6 +913,23 @@ describe("Permissions: a message from the user skips what is open", () => {
         // Still waiting on the question and the plan.
         assert.strictEqual((yield* taskRow(task)).status, "needs_attention")
       }),
+    ),
+  )
+
+  // HE-102: `/output-style` is the board's; the agent never reads it, so it skips nothing. What follows its line does.
+  it.effect("an /output-style alone skips nothing; one with a message after it does", () =>
+    run(
+      Effect.gen(function* () {
+        const { task, agent } = yield* runningTask()
+        const { id, told } = yield* asked(agent, "b", "Bash", { command: "ls" })
+        const messages = yield* UserMessages
+        yield* messages.send(task, "/output-style Explanatory")
+        yield* messages.send(task, "/output-style")
+        assert.strictEqual((yield* row(id)).status, "pending")
+        yield* messages.send(task, "/output-style Explanatory\n\nAttached files:\n- a.png")
+        assert.deepStrictEqual(yield* Fiber.join(told), deny(SKIPPED))
+        assert.strictEqual((yield* row(id)).status, "skipped")
+      }).pipe(Effect.provide(UserMessages.layer)),
     ),
   )
 

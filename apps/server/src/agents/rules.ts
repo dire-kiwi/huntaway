@@ -277,5 +277,6 @@ export const needsPromptTool = (rules: Rules): boolean => hookRules(rules).some(
  */
 export const ghHook = (exe: string): ClaudeHook => ({ matcher: "Bash", hooks: [{ type: "command", command: `${quote(exe)} gh-hook`, timeout: 10 }] })
 
-/** `--settings` with a Claude run's PreToolUse hooks (`ghHook`, `claudeHook`), in the order given. */
-export const hookSettings = (hooks: ReadonlyArray<ClaudeHook>): Effect.Effect<string> => toJson({ hooks: { PreToolUse: hooks } })
+/** `--settings` with a Claude run's PreToolUse hooks (`ghHook`, `claudeHook`), in the order given, and its output style (HE-102). */
+export const hookSettings = (hooks: ReadonlyArray<ClaudeHook>, outputStyle: string | null = null): Effect.Effect<string> =>
+  toJson({ ...(hooks.length > 0 ? { hooks: { PreToolUse: hooks } } : {}), ...(outputStyle === null ? {} : { outputStyle }) })

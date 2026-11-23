@@ -327,6 +327,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           model,
           effort,
           permissionMode,
+          outputStyle: nonBlank(task.output_style ?? null),
           rules: yield* rules.forTask(task),
           tools: yield* agentTools.forRun(task),
           served,

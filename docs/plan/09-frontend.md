@@ -520,7 +520,8 @@ Superseded by HE-96 (above): kept as the record of what came over.
   `Section`, `OtherList`, `describe` and McpSection's `serverSummary`, apart so the files don't import each other);
   `settings/AgentTools.tsx` exports `ProjectAgentTools`, which 6.12's project settings mount under their Skills and MCP
   tab; `settings/AgentStepTools.tsx` (with `stepToolChoices`) for 6.6's workflow inspector; `task/SkillMenu.tsx` works
-  (`tasks.skills`, kept a minute per task and config as before; `/compact`, `/plan` for a task, `/new`). Calls are
+  (`tasks.skills`, kept a minute per task and config as before; `/compact`, `/plan` for a task, `/new`; HE-102: a
+  Claude task's `/output-style` and its styles, [07-agents.md](07-agents.md#output-styles)). Calls are
   `rpc(host, "agentTools.…")`, read again after a change, as the old ones were. The project settings' Agents tab had no
   agent-tools part.
 - **Changed.** Every host has sources, subfolders, `/plan` and `/new`, so the API checks are gone; the host picker waited

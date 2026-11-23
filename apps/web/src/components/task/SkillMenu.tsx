@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react"
 import { clsx } from "clsx"
 import { AsyncResult, Atom } from "effect/reactivity"
-import { Layers, Loader2, Sparkles } from "lucide-react"
+import { Layers, Loader2, Palette, Sparkles } from "lucide-react"
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
 import { query as hostQuery, type HostTask as Task, type QueryResult } from "@huntaway/client"
 import { resultError, resultValue } from "../ui"
@@ -9,9 +9,10 @@ import { hasTurns } from "./turns"
 
 // The composer's `/` menu (6.4; huntaway's task/SkillMenu.tsx): the skills a task's agent can be asked to use (the
 // host's `tasks.skills`, a query read again when the task's config changes and kept ten seconds after the composer) and the board's own `/compact`, `/plan` and `/new`. Every host here handles
-// them all, so the old API checks are gone. `/rewind` (HE-101) is the composer's own: picking it runs it.
+// them all, so the old API checks are gone. HE-102: a Claude task's `/output-style`, whose menu, once its name is typed,
+// lists the output styles from the same query. `/rewind` (HE-101) is the composer's own: picking it runs it.
 
-/** Something the composer's `/` menu offers: a skill, or `/compact`, `/plan`, `/new` or `/rewind`, which the board handles itself. */
+/** Something the composer's `/` menu offers: a skill, or `/compact`, `/plan`, `/new`, `/output-style` or `/rewind`, which the board handles itself; or after `/output-style `, a style. */
 export interface SkillItem {
   name: string
   description: string
@@ -22,7 +23,12 @@ export interface SkillItem {
   args?: string | undefined
   /** Picking it runs it (`/rewind`), rather than putting it in the message. */
   run?: (() => void) | undefined
+  /** An output style, for `/output-style <name>` (HE-102); `current` is the task's now. */
+  style?: "current" | true | undefined
 }
+
+/** The command that sets the output style. */
+const OUTPUT_STYLE = "output-style"
 
 /** No skills asked for yet. */
 const notAsked: Atom.Atom<QueryResult<"tasks.skills">> = Atom.make<QueryResult<"tasks.skills">>(AsyncResult.initial())
@@ -47,15 +53,25 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
   // `$` is Codex's (Claude Code and ACP agents take `/`), but until the host says which agent the task has, it loads the list too.
   const query = m && (m[1] === "/" || (agent !== "claude" && agent !== "acp")) ? (m[2] ?? "").toLowerCase() : null
   const trigger = m?.[1]
+  // Output styles are Claude Code's.
+  const styles = agent !== "codex" && agent !== "acp"
+  // `/output-style <name>`, being typed: the styles, for its name.
+  const typing = styles ? /^\s*\/output-style\s+(\S*)$/.exec(text) : null
+  const styleArg = typing ? (typing[1] ?? "") : null
+  const styleQuery = styleArg?.toLowerCase() ?? null
+  const asking = query !== null || styleQuery !== null
 
   // A new query starts at the top of the list, and one that's gone lets the menu open again.
-  const [lastQuery, setLastQuery] = useState(query)
-  if (lastQuery !== query) {
-    setLastQuery(query)
+  const menuQuery = query !== null ? `/${query}` : styleQuery !== null ? ` ${styleQuery}` : null
+  const [lastQuery, setLastQuery] = useState(menuQuery)
+  if (lastQuery !== menuQuery) {
+    setLastQuery(menuQuery)
     setSelected(0)
-    if (query === null) setDismissed(false)
+    if (menuQuery === null) setDismissed(false)
   }
-  if (query !== null && asked !== key) setAsked(key)
+  if (asking && asked !== key) setAsked(key)
+  // The task's style, else the one its last run had (from Claude Code's settings).
+  const currentStyle = task.output_style ?? data?.output_style ?? null
 
   const all: SkillItem[] = [
     // An ACP agent's conversation is never compacted.
@@ -105,6 +121,17 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
           },
         ]
       : []),
+    ...(styles
+      ? [
+          {
+            name: OUTPUT_STYLE,
+            description: `How the agent writes its replies${currentStyle === null ? "" : ` (now ${currentStyle})`}`,
+            prefix: "/" as const,
+            builtin: true,
+            args: "[style]",
+          },
+        ]
+      : []),
   ]
   // A skill named like a builtin can't be called with `/`: the board takes the message.
   all.push(
@@ -112,22 +139,29 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
       .map((s): SkillItem => ({ name: s.name, description: s.description, prefix: agent === "codex" ? "$" : "/" }))
       .filter((s) => !all.some((b) => b.prefix === s.prefix && b.name === s.name)),
   )
+  const styleItems = (data?.output_styles ?? []).map((st): SkillItem => ({
+    name: st.name,
+    description: st.description,
+    prefix: "/",
+    style: st.name === currentStyle ? "current" : true,
+  }))
+  const startsFirst = (q: string) => (a: SkillItem, b: SkillItem) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q))
   const items =
-    query === null
-      ? []
-      : all
-          .filter((i) => i.name.toLowerCase().includes(query) && (trigger === "/" || !i.builtin))
-          .toSorted((a, b) => Number(!a.name.toLowerCase().startsWith(query)) - Number(!b.name.toLowerCase().startsWith(query)))
+    styleQuery !== null
+      ? styleItems.filter((i) => i.name.toLowerCase().includes(styleQuery)).toSorted(startsFirst(styleQuery))
+      : query === null
+        ? []
+        : all.filter((i) => i.name.toLowerCase().includes(query) && (trigger === "/" || !i.builtin)).toSorted(startsFirst(query))
   // Loading the first list for this config.
-  const waiting = query !== null && !data && !failed
-  const open = query !== null && !dismissed && (items.length > 0 || waiting)
+  const waiting = asking && !data && !failed
+  const open = asking && !dismissed && (items.length > 0 || waiting)
   const sel = Math.min(selected, Math.max(items.length - 1, 0))
 
   // What the message calls, once it's typed: shown with what it does.
   const command = text.trimStart().split(/\s/)[0] ?? ""
   const hint = !open && command.length > 1 ? all.find((i) => i.prefix + i.name === command) : undefined
 
-  const pick = (i: SkillItem) => (i.run ? i.run() : setText(`${i.prefix}${i.name} `))
+  const pick = (i: SkillItem) => (i.run ? i.run() : setText(i.style ? `/${OUTPUT_STYLE} ${i.name}` : `${i.prefix}${i.name} `))
 
   /** Handles the menu's keys; true when the key was its. */
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -156,7 +190,7 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
       const item = items[sel]
       if (!item) return false
       // Typed out in full, Enter sends it as it is.
-      if (enter && command === item.prefix + item.name) return false
+      if (enter && (item.style ? styleArg === item.name : command === item.prefix + item.name)) return false
       e.preventDefault()
       pick(item)
       return true
@@ -164,7 +198,7 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
     return false
   }
 
-  return { open, items, selected: sel, setSelected, loading: waiting, pick, onKeyDown, hint }
+  return { open, items, selected: sel, setSelected, loading: waiting, pick, onKeyDown, hint, styles: styleQuery !== null }
 }
 
 export function SkillMenu({ menu }: { menu: ReturnType<typeof useSkillMenu> }) {
@@ -177,7 +211,12 @@ export function SkillMenu({ menu }: { menu: ReturnType<typeof useSkillMenu> }) {
   }, [selected, count])
   if (!menu.open) return null
   return (
-    <div ref={list} role="listbox" aria-label="Skills" className="max-h-60 overflow-y-auto border-b border-line py-1">
+    <div
+      ref={list}
+      role="listbox"
+      aria-label={menu.items.some((i) => i.style) ? "Output styles" : "Skills"}
+      className="max-h-60 overflow-y-auto border-b border-line py-1"
+    >
       {menu.items.map((i, n) => (
         <div
           key={i.prefix + i.name}
@@ -193,18 +232,25 @@ export function SkillMenu({ menu }: { menu: ReturnType<typeof useSkillMenu> }) {
           title={i.description || undefined}
           className={clsx("flex cursor-pointer items-center gap-2 px-4 py-1 text-[12.5px]", n === menu.selected && "bg-white/5")}
         >
-          {i.builtin ? <Layers size={12} className="shrink-0 text-faint" /> : <Sparkles size={12} className="shrink-0 text-faint" />}
+          {i.style ? (
+            <Palette size={12} className="shrink-0 text-faint" />
+          ) : i.builtin ? (
+            <Layers size={12} className="shrink-0 text-faint" />
+          ) : (
+            <Sparkles size={12} className="shrink-0 text-faint" />
+          )}
           <span className="shrink-0 font-mono text-fg">
-            {i.prefix}
+            {!i.style && i.prefix}
             {i.name}
           </span>
+          {i.style === "current" && <span className="shrink-0 rounded bg-white/10 px-1 text-[10.5px] text-muted">current</span>}
           {i.description && <span className="min-w-0 truncate text-faint">{i.description}</span>}
         </div>
       ))}
       {menu.loading && (
         <div className="flex items-center gap-2 px-4 py-1 text-[12px] text-faint">
           <Loader2 size={12} className="animate-spin" />
-          Loading skills…
+          {menu.styles ? "Loading output styles…" : "Loading skills…"}
         </div>
       )}
     </div>

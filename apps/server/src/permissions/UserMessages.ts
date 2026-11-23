@@ -2,6 +2,7 @@ import { Context, Effect, Layer } from "effect"
 import type { Task, TaskId } from "@huntaway/contracts"
 import { Runs } from "../runs/Runs.ts"
 import type { SendRefused } from "../runs/Runs.ts"
+import { reachesAgent } from "../runs/queue.ts"
 import type { TaskNotFound } from "../tasks/Tasks.ts"
 import { Permissions } from "./Permissions.ts"
 import { Questions } from "./Questions.ts"
@@ -25,7 +26,8 @@ export class UserMessages extends Context.Service<UserMessages, UserMessagesShap
 
       const send = Effect.fn("UserMessages.send")(function* (task: TaskId, text: string) {
         const sent = yield* runs.send(task, { text, source: "user" })
-        if (text.trim() !== "") yield* Effect.andThen(questions.settle(task, "replied"), permissions.skipFor(task))
+        // A board command the agent never sees (HE-102: `/output-style`) answers nothing.
+        if (reachesAgent(text)) yield* Effect.andThen(questions.settle(task, "replied"), permissions.skipFor(task))
         return sent
       })
 

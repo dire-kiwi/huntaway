@@ -27,7 +27,7 @@ export class TaskRpcs extends RpcGroup.make(
   ),
   /**
    * A message for the task's thread (the old `POST /tasks/{id}/messages`): steered into its live run, queued, held for
-   * its dependencies or usage, or it starts a run. `/new`, `/compact` and `/plan` are the board's. The task as it is after.
+   * its dependencies or usage, or it starts a run. `/new`, `/compact`, `/plan` and `/output-style` are the board's. The task as it is after.
    */
   Rpc.make("tasks.send", {
     payload: { id: TaskId, text: Schema.String },

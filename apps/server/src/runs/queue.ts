@@ -42,6 +42,29 @@ export const newCommand = (text: string): string | null => {
   return rest === "" || /^\s/u.test(rest) ? rest.trim() : null
 }
 
+/**
+ * HE-102: `/output-style [name]`: the name on its line (perhaps "", to say which there are) and what follows that line
+ * (the composer's line comments and attached files), which goes on to the agent as a message; null for any other message.
+ */
+export const outputStyleCommand = (text: string): { readonly name: string; readonly rest: string } | null => {
+  const t = text.trim()
+  const end = t.indexOf("\n")
+  const line = end < 0 ? t : t.slice(0, end)
+  if (!line.startsWith("/output-style")) return null
+  const after = line.slice("/output-style".length)
+  if (after !== "" && !/^\s/u.test(after)) return null
+  return { name: after.trim(), rest: end < 0 ? "" : t.slice(end + 1).trim() }
+}
+
+/**
+ * Whether the user's `text` reaches the agent as a message, so it answers the agent's questions and skips its
+ * permission prompts: anything but blank text or an `/output-style` with nothing after it, which the board takes.
+ */
+export const reachesAgent = (text: string): boolean => {
+  const style = outputStyleCommand(text)
+  return style === null ? text.trim() !== "" : style.rest !== ""
+}
+
 /** What a run starts with: the messages it takes from the queue and its own, as one (the old `Queued`). */
 export interface Combined {
   readonly text: string

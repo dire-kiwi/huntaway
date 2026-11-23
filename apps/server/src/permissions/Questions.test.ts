@@ -9,6 +9,7 @@ import { RunRepo } from "../runs/RunRepo.ts"
 import { Threads } from "../threads/Threads.ts"
 import { Questions, SETTLED } from "./Questions.ts"
 import type { Answer } from "./Questions.ts"
+import { UserMessages } from "./UserMessages.ts"
 
 // Answering a `request_user_input` card (the old mcp/questions.test.ts's `answer` cases): the answer is checked against
 // the question, the first one wins, and it is sent to the agent as the user's message through `Runs`.
@@ -107,6 +108,20 @@ describe("Questions.answer", () => {
       assert.strictEqual(yield* failure(answer(task, id, ["A"], null)), "QuestionClosed")
       assert.isUndefined((yield* requests(task))[0]?.resolution)
     }).pipe(Effect.provide(TestMcp())),
+  )
+
+  // HE-102: the agent never reads an `/output-style` alone, so it answers nothing.
+  it.effect("an /output-style alone leaves its questions open; one with a message after it settles them", () =>
+    Effect.gen(function* () {
+      const me = yield* agentOf(yield* profile("personal"))
+      const task = me.run.task_id
+      yield* ask(me, { question: "Which?", options: ["A", "B"] })
+      const messages = yield* UserMessages
+      yield* messages.send(task, "/output-style Explanatory")
+      assert.isUndefined((yield* requests(task))[0]?.resolution)
+      yield* messages.send(task, "/output-style Explanatory\n\nuse A")
+      assert.strictEqual((yield* requests(task))[0]?.resolution?.message, SETTLED.replied)
+    }).pipe(Effect.provide(UserMessages.layer.pipe(Layer.provideMerge(TestMcp())))),
   )
 
   it.effect("a reply in the thread settles its questions, which can't be answered after", () =>

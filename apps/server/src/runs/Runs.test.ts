@@ -424,6 +424,49 @@ describe("Runs.send", () => {
       }),
     ),
   )
+
+  it.effect("/output-style sets the task's style, tells a running agent, and names the styles its agent listed", () =>
+    run(
+      Effect.gen(function* () {
+        const { task: id, agent } = yield* running()
+        // The run's `initialize` answer lists the styles.
+        yield* output(agent, [
+          {
+            type: "control_response",
+            response: {
+              subtype: "success",
+              request_id: `huntaway-init-${agent.run.id}`,
+              response: { output_style: "default", available_output_styles: ["default", "Explanatory", "Terse"] },
+            },
+          },
+        ])
+        const notices = Effect.map(items(id), (all) => all.flatMap((i) => (i.type === "notice" ? [`${i.level}: ${i.text}`] : [])))
+        yield* send(id, "/output-style")
+        yield* send(id, "/output-style Nope")
+        assert.strictEqual((yield* task(id)).output_style, null)
+        const t = yield* send(id, "/output-style explanatory")
+        assert.deepStrictEqual([t.output_style, t.running], ["Explanatory", true])
+        assert.deepStrictEqual(yield* notices, ["info: Output style: default", "warning: No output style is called Nope", "info: Output style: Explanatory"])
+        // Not a message for the agent: it is told on its input, for its next turn.
+        assert.deepStrictEqual(yield* userMessages(id), [])
+        const told = only(yield* agent.input)
+        assert.deepInclude(told, { type: "control_request", request: { subtype: "apply_flag_settings", settings: { outputStyle: "Explanatory" } } })
+        // What follows its line (the composer's comments, attached files) goes on to the agent.
+        const after = yield* send(id, "/output-style Terse\n\nAttached files:\n- a.png")
+        assert.deepStrictEqual([after.output_style, after.steering.map((st) => st.text)], ["Terse", ["Attached files:\n- a.png"]])
+      }),
+    ),
+  )
+
+  it.effect("/output-style on an idle task starts no run, and takes a style no run has listed yet as it is named", () =>
+    run(
+      Effect.gen(function* () {
+        const id = yield* newTask({ status: "in_review", session: "s9" })
+        const t = yield* send(id, "/output-style my-plugin:Pirate")
+        assert.deepStrictEqual([t.output_style, t.running, t.status], ["my-plugin:Pirate", false, "in_review"])
+      }),
+    ),
+  )
 })
 
 describe("starting a run", () => {
