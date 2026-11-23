@@ -105,7 +105,7 @@ export function NewTaskModal({
         <DraftAttachments draft={attach} hostId={target.host_id} />
         <ReadsAs opened={opened} origin={origin} where={place} agent={agent} tok={tok} />
         <Legend completion={completion} />
-        <OptionsRow where={place} tok={tok} options={options} agent={agent} kept={kept} />
+        <OptionsRow where={place} tok={tok} options={options} agent={agent} kept={kept} ed={ed} />
         <Notes opened={opened} origin={origin} where={place} tok={tok} worktree={options.worktree} blocks={blocks} whenLoaded={submission.whenLoaded} />
         <Footer submission={submission} options={options} tok={tok} kept={kept} blocks={blocks} onClose={onClose} />
       </form>

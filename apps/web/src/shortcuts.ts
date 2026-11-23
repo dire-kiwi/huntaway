@@ -25,6 +25,12 @@ export const FIXED_SHORTCUTS: { group: string; label: string; keys: string }[] =
   { group: "Anywhere", label: "Close the open dialog, menu, panel or task", keys: "Esc" },
   { group: "Anywhere", label: "Submit a dialog or an editor", keys: /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? "") ? "⌘↵" : "Ctrl+Enter" },
   { group: "Anywhere", label: "Pick an answer on the latest question card", keys: "1–9" },
+  // HE-89: in a message field (components/task/Dictation.tsx).
+  {
+    group: "Anywhere",
+    label: "Dictate into the message field: press to start and again to finish, or hold while you speak",
+    keys: /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? "") ? "⌘⇧D" : "Ctrl+Shift+D",
+  },
   { group: "Triage view", label: "Open the task's thread", keys: "Enter" },
   { group: "Compare view, one at a time", label: "Next or previous task", keys: "→ ←" },
   { group: "Compare view, one at a time", label: "Go to a task", keys: "1–9" },

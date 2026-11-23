@@ -1,11 +1,13 @@
 import { assert, describe, it } from "@effect/vitest"
-import { joinTexts, MAX_PCM_BYTES, pcmProblem, pcmToFloat, splitAtPauses } from "./audio.ts"
+import { joinTexts, MAX_PCM_BYTES, MIN_PCM_BYTES, pcmProblem, pcmToFloat, splitAtPauses } from "./audio.ts"
 
 describe("a dictation's audio", () => {
-  it("takes 16-bit PCM of up to five minutes", () => {
+  it("takes 16-bit PCM of 0.3 seconds to five minutes", () => {
     assert.strictEqual(pcmProblem(new Uint8Array(0)), "the recording is empty")
     assert.strictEqual(pcmProblem(new Uint8Array(3)), "the recording isn't 16-bit PCM")
     assert.strictEqual(pcmProblem(new Uint8Array(MAX_PCM_BYTES + 2)), "the recording is longer than 5 minutes")
+    assert.strictEqual(pcmProblem(new Uint8Array(MIN_PCM_BYTES - 2)), "the recording is too short")
+    assert.isNull(pcmProblem(new Uint8Array(MIN_PCM_BYTES)))
     assert.isNull(pcmProblem(new Uint8Array(MAX_PCM_BYTES)))
   })
 

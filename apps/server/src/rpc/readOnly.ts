@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema, Stream } from "effect"
 import { RpcSchema } from "effect/rpc"
 import type { Rpc, RpcGroup } from "effect/rpc"
-import { HubHostRpcs, Invalid, NotFound, PublicRpcs, RequiredScope } from "@huntaway/contracts"
+import { HubHostRpcs, Invalid, NotFound, PublicRpcs, RequiredScope, SpeechRpcs } from "@huntaway/contracts"
 import type { Host } from "@huntaway/contracts"
 import { LinkRepo } from "../hosts/LinkRepo.ts"
 import { linkEntry, localEntry } from "../hosts/Links.ts"
@@ -85,6 +85,22 @@ export const ReadOnlyHubHandlers = HubHostRpcs.toLayer(
       "hub.hosts.remove": () => changes,
       "hub.hosts.copyConfig": () => changes,
       "hub.hosts.pushUpdate": () => changes,
+    })
+  }),
+)
+
+/** `speech.*` (HE-89): a rehearsal transcribes nothing, so its status says so, and the rest are refused. */
+export const ReadOnlySpeechHandlers = SpeechRpcs.toLayer(
+  Effect.sync(() => {
+    const changes = Effect.die(new RefusedOnReadOnly({ rpc: "speech" }))
+    return SpeechRpcs.of({
+      "speech.status": () =>
+        Effect.succeed({ unsupported: "a read-only server doesn't transcribe", models: [], active: null, downloading: null, failed: null }),
+      "speech.download": () => changes,
+      "speech.cancel": () => changes,
+      "speech.remove": () => changes,
+      "speech.select": () => changes,
+      "speech.transcribe": () => changes,
     })
   }),
 )

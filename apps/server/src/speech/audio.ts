@@ -1,4 +1,4 @@
-import { SPEECH_MAX_SECONDS, SPEECH_SAMPLE_RATE } from "@huntaway/contracts"
+import { SPEECH_MAX_SECONDS, SPEECH_MIN_SECONDS, SPEECH_SAMPLE_RATE } from "@huntaway/contracts"
 
 // The audio of a dictation (HE-89), as plain functions: the browser's 16-bit PCM as the engine's float samples, and a
 // long recording cut at its pauses into pieces a model takes at once (T3 Code cuts at what Silero hears as silence;
@@ -7,10 +7,14 @@ import { SPEECH_MAX_SECONDS, SPEECH_SAMPLE_RATE } from "@huntaway/contracts"
 /** The most bytes a dictation's PCM may be: five minutes of 16-bit samples. */
 export const MAX_PCM_BYTES = SPEECH_SAMPLE_RATE * SPEECH_MAX_SECONDS * 2
 
+/** The fewest bytes: `SPEECH_MIN_SECONDS` of 16-bit samples. */
+export const MIN_PCM_BYTES = Math.ceil(SPEECH_SAMPLE_RATE * SPEECH_MIN_SECONDS) * 2
+
 /** Why audio was refused, or null when it is 16-bit PCM of a usable length. */
 export const pcmProblem = (bytes: Uint8Array): string | null => {
   if (bytes.byteLength === 0) return "the recording is empty"
   if (bytes.byteLength % 2 !== 0) return "the recording isn't 16-bit PCM"
+  if (bytes.byteLength < MIN_PCM_BYTES) return "the recording is too short"
   if (bytes.byteLength > MAX_PCM_BYTES) return `the recording is longer than ${SPEECH_MAX_SECONDS / 60} minutes`
   return null
 }

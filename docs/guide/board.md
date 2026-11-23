@@ -331,6 +331,14 @@ repository without changing it. Like a document task it has no worktree, review 
 marks it done. Scratch tasks replace the scratch chats of earlier versions: those became done scratch tasks (in no
 project, whichever project they were in) that keep working in their old folder, so their conversations carry on.
 
+**Dictation**: the microphone beside a task's message field, and in the New task form, types what you say at the caret.
+Click it, speak, and click ✓ (or ✕, or Esc, to drop it); or press **Ctrl+Shift+D** (⌘⇧D on a Mac) in the field to start
+and again to finish, or hold it down while you speak and let go. A recording can be up to five minutes. It is
+transcribed on the board's own server, with a speech model it downloads once: choose one in Settings → _Voice input_
+(Parakeet, 731 MB, is the best for English; Nemotron for other languages; Moonshine Base, 77 MB, the smallest). What you
+say doesn't leave the server. The browser only lets a page use the microphone over https or on localhost, so a board
+opened at a plain http address on the network has the button greyed out.
+
 **Experiments** (Settings → _Experiments_) are features still being tried, each with a switch and, behind the ?
 beside it, what it does. They may change or go away. All are off until you switch one on, and a switch is for the whole board: it's kept
 on the board's own host, so it holds in every browser and the desktop app, and settings sync carries it to the hosts

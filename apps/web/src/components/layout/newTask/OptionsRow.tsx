@@ -1,8 +1,10 @@
 import { AttachButton } from "../../task/Attachments"
+import { Dictation } from "../../task/Dictation"
 import { AsanaIcon, LinkList } from "../../task/ExternalLinks"
 import { Toggle } from "../../ui"
 import type { AgentChoice } from "./useAgentChoice"
 import type { DraftExtras } from "./useDraft"
+import type { EditorText } from "./useEditorText"
 import type { Options } from "./useOptions"
 import type { Tokens } from "./useTokens"
 import type { Where } from "./useWhere"
@@ -13,12 +15,14 @@ export function OptionsRow({
   tok: { codeTask, fanout, startFrom, mergesInto },
   options: { worktree, setWorktree, agents, start, setStart },
   kept: { linking, setPickingLink, attach, links, setLinks },
+  ed,
 }: {
   where: Where
   tok: Tokens
   options: Options
   agent: AgentChoice
   kept: DraftExtras
+  ed: EditorText
 }) {
   return (
     <>
@@ -39,6 +43,8 @@ export function OptionsRow({
               <AsanaIcon size={13} /> Link Asana task
             </button>
           )}
+          {/* HE-89: dictating the description, at its caret. */}
+          <Dictation field={ed.input} onText={ed.edit} />
           <AttachButton draft={attach} label="Attach files" />
         </div>
       </div>

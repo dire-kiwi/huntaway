@@ -72,7 +72,7 @@ const testSpeech = (catalog: ReadonlyArray<CatalogModel>, unsupported: string | 
     Layer.provideMerge(TestPlatform()),
   )
 
-const AUDIO = Base64.encode(new Uint8Array(3200))
+const AUDIO = Base64.encode(new Uint8Array(16_000))
 
 const shaOf = Effect.gen(function* () {
   return yield* (yield* Digest.Digest).digestHex(Digest.sha256, BYTES)

@@ -972,7 +972,7 @@ packages:
       effect: ^4.1.4
 
   '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.6.0/dire-kiwi-docs-render-0.6.0.tgz':
-    resolution: {tarball: https://github.com/dire-kiwi/docs/releases/download/render-v0.6.0/dire-kiwi-docs-render-0.6.0.tgz}
+    resolution: {integrity: sha512-WimT2+GB2cqo0co5mYxBxvC/5jL3915Bcm2Hkc90/lZFu4JNQCZUZSjHCenBYbqZsKju6Z+4LxAf1M+oC6ZUXw==, tarball: https://github.com/dire-kiwi/docs/releases/download/render-v0.6.0/dire-kiwi-docs-render-0.6.0.tgz}
     version: 0.6.0
     engines: {node: '>=20'}
 

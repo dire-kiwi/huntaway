@@ -160,7 +160,7 @@ import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
 import { PushHandlers } from "./rpc/push.ts"
-import { ReadOnlyHubHandlers, ReadOnlyPublicHandlers, refuseAll, refuseChanges } from "./rpc/readOnly.ts"
+import { ReadOnlyHubHandlers, ReadOnlyPublicHandlers, ReadOnlySpeechHandlers, refuseAll, refuseChanges } from "./rpc/readOnly.ts"
 import { TaskDocumentHandlers } from "./rpc/taskDocuments.ts"
 import { TaskHandlers } from "./rpc/tasks.ts"
 import { ThreadHandlers } from "./rpc/threads.ts"
@@ -363,7 +363,7 @@ export const ReadOnlyServed = PublicRpcs.merge(
   AutomationRpcs,
   AssistantRpcs,
   WorkflowRpcs,
-  // HE-89: dictation transcribes with a model it would load, so it is refused here.
+  // HE-89: dictation, which a read-only server doesn't do (its status says so).
   SpeechRpcs,
 )
 
@@ -399,6 +399,7 @@ export const ReadOnlyRpcHandlers = Layer.mergeAll(
   AutomationHandlers,
   AssistantHandlers,
   WorkflowHandlers,
+  ReadOnlySpeechHandlers,
   refuseChanges(ReadOnlyServed),
 )
 

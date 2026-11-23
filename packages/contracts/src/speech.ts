@@ -8,6 +8,8 @@ import { Schema } from "effect"
 export const SPEECH_SAMPLE_RATE = 16_000
 /** The longest dictation: five minutes, about 9.6 MB of PCM (12.8 MB as base64, under the 16 MiB a request may be). */
 export const SPEECH_MAX_SECONDS = 300
+/** The shortest: less than this is a tap of the button, which the engine can't take (it fails on a few samples). */
+export const SPEECH_MIN_SECONDS = 0.3
 
 /** A speech model this host can download, and whether it has. */
 export const SpeechModel = Schema.Struct({
