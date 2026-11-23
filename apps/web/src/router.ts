@@ -155,3 +155,26 @@ export const profileTaskUrl = (profile: string, taskId: string): string => panel
 /** `/g/<host>/<group>?task=<id>`: a task open on a group's board. */
 export const groupTaskUrl = (hostId: string, group: string, taskId: string): string =>
   panelUrl(href({ name: "group", hostId, group }), { taskId, expanded: true })
+
+/** The plugin a path (`/docs/…?x`) is a page of, or null. */
+const pluginOf = (pathAndSearch: string): string | null => {
+  const r = parse(pathAndSearch.split(/[?#]/)[0] ?? "")
+  return r.name === "plugin" ? r.plugin : null
+}
+
+/**
+ * HE-86: where a plugin's pages were opened from (a task, a board…), kept in their history entries, for their header's
+ * back link: the page `was` when going from it to `to`, the same as before while moving between the plugin's own pages
+ * (`wasFrom`, the entry's), and null off its pages. A `replace` in place of another page (a redirect) keeps what it had.
+ */
+export function cameFrom(to: string, was: string, wasFrom: string | null, replace: boolean): string | null {
+  const plugin = pluginOf(to)
+  if (plugin === null) return null
+  return pluginOf(was) === plugin || replace ? wasFrom : was
+}
+
+/** The `from` (see cameFrom) a history entry's state keeps, or null. */
+export const stateFrom = (state: unknown): string | null => {
+  const from: unknown = typeof state === "object" && state !== null ? Reflect.get(state, "from") : null
+  return typeof from === "string" ? from : null
+}

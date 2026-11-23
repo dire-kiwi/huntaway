@@ -90,6 +90,12 @@ document's does): that is the host's that has the profile (the page's own first,
 `components/plugins/pluginHost.ts`, HE-60). So a document of a host the hub links opens there, not on the hub, which
 has no such profile. Until the board is loaded, a path naming a profile no host has shown yet waits.
 
+A plugin's page opened from another of the board's pages (a task's link to a document, the sidebar from a board) has
+**‹ Back to <that page>** in its header (HE-86), beside the page's own links (the docs plugin's "All documents"): its
+task's key, project's or profile's name, or "Back". It is the page before the first of the plugin's pages, kept while
+moving between them and by their redirects, in the history entries' state (`router.ts`' `cameFrom`, `state/route.ts`'
+`useCameFrom`), so a reload or the browser's back and forward keep it; a page opened from outside the board has none.
+
 ## Calls and events
 
 `calls: { [method]: pluginCall({ scope, payload, success, handle }) }`. `plugins.call` needs `read`, and the method's

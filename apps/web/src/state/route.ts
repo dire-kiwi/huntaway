@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react"
 import { Atom } from "effect/reactivity"
-import { hasPanel, href, type Panel, panelUrl, parse, parsePanel, parseModal, pluginQuery, type Route, withoutModal } from "../router"
+import { cameFrom, hasPanel, href, type Panel, panelUrl, parse, parsePanel, parseModal, pluginQuery, type Route, stateFrom, withoutModal } from "../router"
 import { registry } from "./registry"
 
 // The page's route as an atom over the History API (docs/plan/09-frontend.md, The web app's own state), with the
@@ -9,9 +9,11 @@ import { registry } from "./registry"
 interface Location {
   readonly pathname: string
   readonly search: string
+  /** Where a plugin's page was opened from (`cameFrom`), kept in its history entry. */
+  readonly from: string | null
 }
 
-const here = (): Location => ({ pathname: window.location.pathname, search: window.location.search })
+const here = (): Location => ({ pathname: window.location.pathname, search: window.location.search, from: stateFrom(window.history.state) })
 
 /** The page's URL: follows the back and forward buttons, and `navigate`. */
 const locationAtom: Atom.Atom<Location> = Atom.make((get) => {
@@ -33,8 +35,10 @@ export function navigate(to: Route | string, options: boolean | { readonly repla
   const url = typeof to === "string" ? to : href(to)
   const was = current()
   if (url === was) return
-  if (replace) window.history.replaceState(window.history.state, "", url)
-  else window.history.pushState(null, "", url)
+  const from = cameFrom(url, was, stateFrom(window.history.state), replace)
+  const state = from === null ? null : { from }
+  if (replace) window.history.replaceState(state, "", url)
+  else window.history.pushState(state, "", url)
   registry.refresh(locationAtom)
 }
 
@@ -46,6 +50,11 @@ export function onNavigate(cb: () => void): () => void {
 /** The route of the page: draws again when the path changes. */
 export function useRoute(): Route {
   return useAtomValue(pathAtom, parse)
+}
+
+/** HE-86: on a plugin's page, the board's page it was opened from (a path and query), or null. */
+export function useCameFrom(): string | null {
+  return useAtomValue(locationAtom, (l) => l.from)
 }
 
 /** The task open over the page (`?task=`): in a dialog, or in the side panel (`&side`), compared (`&compare`). */
