@@ -13,7 +13,7 @@ import { WorkerAnswer, WorkerRequest } from "./speech/workerProtocol.ts"
 //
 // Its stdin is one JSON request a line (`WorkerRequest`): a model's file and the audio to transcribe, as base64 of
 // 16 kHz mono 16-bit PCM, or a downloaded model's file to hash. It answers each on a line of stdout (`WorkerAnswer`),
-// in order. The model loaded stays loaded for the next request; a request for another file loads that one instead.
+// in order, with the request's id. The model loaded stays loaded for the next request; a request for another file loads that one instead.
 
 /** The most samples a model not made for long audio is given at once: 30 seconds, as T3 Code gives them. */
 const PIECE = 16_000 * 30
@@ -75,10 +75,17 @@ const main = Effect.gen(function* () {
     Stream.filter((line) => line.trim() !== ""),
     Stream.runForEach((line) =>
       decode(line).pipe(
-        Effect.mapError(() => "the request isn't one"),
-        Effect.flatMap((request) => (request.kind === "sha256" ? sha256(request.path) : transcribe(request))),
-        Effect.match({ onFailure: (error): WorkerAnswer => ({ ok: false, error }), onSuccess: (text): WorkerAnswer => ({ ok: true, text }) }),
-        Effect.flatMap(writeLine),
+        Effect.matchEffect({
+          onFailure: () => writeLine({ id: -1, ok: false, error: "the request isn't one" }),
+          onSuccess: (request) =>
+            (request.kind === "sha256" ? sha256(request.path) : transcribe(request)).pipe(
+              Effect.match({
+                onFailure: (error): WorkerAnswer => ({ id: request.id, ok: false, error }),
+                onSuccess: (text): WorkerAnswer => ({ id: request.id, ok: true, text }),
+              }),
+              Effect.flatMap(writeLine),
+            ),
+        }),
       ),
     ),
   )

@@ -171,9 +171,11 @@ export function Dictation({
     }
   }, [field])
 
-  // A recording doesn't outlive its composer.
+  // A recording doesn't outlive its composer: one going is cancelled, and one still waiting for the microphone is
+  // cancelled when it gets it (`start` cancels a recording that comes once the phase isn't "starting").
   useEffect(
     () => () => {
+      phaseNow.current = "idle"
       const r = recording.current
       recording.current = null
       if (r !== null) void runExit(r.cancel)

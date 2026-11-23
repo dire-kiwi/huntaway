@@ -33,6 +33,9 @@ export interface SpeechEngineShape {
 }
 
 const encoder = new TextEncoder()
+
+/** `Omit` over each member of a union. */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 const encodeRequest = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
 const decodeAnswer = Schema.decodeUnknownOption(Schema.fromJsonString(WorkerAnswer))
 
@@ -103,21 +106,21 @@ export class SpeechEngine extends Context.Service<SpeechEngine, SpeechEngineShap
         const ask = (request: WorkerRequest) =>
           Effect.gen(function* () {
             yield* Queue.offer(writes, encoder.encode(`${yield* encodeRequest(request).pipe(Effect.orDie)}\n`))
-            const line = yield* Effect.raceFirst(
-              Queue.take(answers),
-              Deferred.await(exited).pipe(
-                Effect.flatMap((why) =>
-                  Effect.flatMap(Ref.get(errText), (err) => {
-                    const last = err.trim().split("\n").slice(-2).join(" / ")
-                    return Effect.fail(new SpeechEngineFailed({ reason: `the speech engine ${why}${last === "" ? "" : `: ${last}`}` }))
-                  }),
-                ),
+            const gone = Deferred.await(exited).pipe(
+              Effect.flatMap((why) =>
+                Effect.flatMap(Ref.get(errText), (err) => {
+                  const last = err.trim().split("\n").slice(-2).join(" / ")
+                  return Effect.fail(new SpeechEngineFailed({ reason: `the speech engine ${why}${last === "" ? "" : `: ${last}`}` }))
+                }),
               ),
             )
-            const answer = Option.getOrUndefined(decodeAnswer(line))
-            if (answer === undefined) return yield* new SpeechEngineFailed({ reason: "the speech engine answered something else" })
-            if (!answer.ok) return yield* new SpeechEngineFailed({ reason: answer.error })
-            return answer.text
+            // Lines that aren't the answer to this request are skipped: one left by a request given up on, or stray output.
+            while (true) {
+              const answer = Option.getOrUndefined(decodeAnswer(yield* Effect.raceFirst(Queue.take(answers), gone)))
+              if (answer === undefined || answer.id !== request.id) continue
+              if (!answer.ok) return yield* new SpeechEngineFailed({ reason: answer.error })
+              return answer.text
+            }
           })
         return { ask, gone: Deferred.isDone(exited), scope } satisfies Worker
       })
@@ -146,22 +149,24 @@ export class SpeechEngine extends Context.Service<SpeechEngine, SpeechEngineShap
         }),
       )
 
-      const ask = (request: WorkerRequest) =>
+      const nextId = yield* Ref.make(0)
+      const ask = (request: DistributiveOmit<WorkerRequest, "id">) =>
         lock
           .withPermit(
             Effect.gen(function* () {
               yield* FiberHandle.clear(idle)
               const w = yield* worker
-              return yield* w.ask(request).pipe(
+              const id = yield* Ref.getAndUpdate(nextId, (n) => n + 1)
+              /** Stop the worker: the next request starts another. */
+              const stop = Effect.andThen(Ref.set(current, null), Scope.close(w.scope, Exit.void))
+              return yield* w.ask({ ...request, id }).pipe(
                 Effect.timeoutOrElse({
                   duration: TIMEOUT,
-                  // A worker that doesn't answer is stopped: the next request starts another.
-                  orElse: () =>
-                    Effect.andThen(
-                      Effect.andThen(Ref.set(current, null), Scope.close(w.scope, Exit.void)),
-                      Effect.fail(new SpeechEngineFailed({ reason: "the speech engine took too long" })),
-                    ),
+                  orElse: () => Effect.andThen(stop, Effect.fail(new SpeechEngineFailed({ reason: "the speech engine took too long" }))),
                 }),
+                // Nobody waits for the answer any more (a cancelled download, a client gone): the work it does is
+                // stopped with it, rather than left to finish for no one.
+                Effect.onInterrupt(() => stop),
               )
             }),
           )

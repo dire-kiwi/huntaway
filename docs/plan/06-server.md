@@ -1588,7 +1588,10 @@ T3 Code's live preview (audio streamed over a socket, a streaming model's commit
   its model's memory. transcribe.cpp (`transcribe-cpp`, prebuilt for Linux, macOS and Windows; a platform without one
   says so in `unsupported`) runs native code, so a crash ends that process, not the server; the request fails and the
   next starts it again. One request at a time over its stdio, a JSON line each way: `transcribe` (a model's file and the
-  audio as base64) and `sha256` (a downloaded file's hash, read as a stream so the server never holds a whole model). The
+  audio as base64) and `sha256` (a downloaded file's hash, read as a stream so the server never holds a whole model).
+  Each request has an id its answer echoes, and a line with another id is skipped; a request given up on (a cancelled
+  download, an RPC whose client went away) stops the process, so no answer is left for the next request and no work
+  goes on for nobody. The
   model loads on the backend transcribe.cpp picks (a GPU through Vulkan or Metal, else the CPU), and again on the CPU if
   that fails. A request that takes five minutes stops the process.
 - **`Speech`**: the models under `<data>/speech/models/<file>`, the one in use (the `speech_model` setting, else the
@@ -1599,7 +1602,8 @@ T3 Code's live preview (audio streamed over a socket, a streaming model's commit
   (`admin`: they change what the host has installed). Each change answers with the status; Settings reads it every
   second while a download goes. The read-only server refuses them all.
 - **Tests**: `audio.test.ts`, `Speech.test.ts` (a fake HTTP client and engine), `SpeechEngine.test.ts` (the real worker,
-  with no model: a hash, a missing model's error, still answering after it).
+  with no model: a hash, a missing model's error, still answering after it; a request interrupted while the worker
+  hashes a large file leaves the next its own answer).
 
 ## Hook commands<a id="hook-commands"></a>
 

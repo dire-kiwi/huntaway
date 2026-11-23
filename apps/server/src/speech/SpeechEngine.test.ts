@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem, Layer } from "effect"
+import { Effect, Fiber, FileSystem, Layer } from "effect"
 import { Digest } from "effect/crypto"
 import { Base64 } from "effect/encoding"
 import { TestPlatform } from "@huntaway/testing"
@@ -28,6 +28,32 @@ describe("the speech engine", () => {
         assert.isNotEmpty(garbled.reason)
         // Still answering after the failures.
         assert.strictEqual((yield* engine.sha256(file)).length, 64)
+      }).pipe(Effect.provide(TestEngine)),
+    60_000,
+  )
+
+  it.live(
+    "a request given up on leaves no answer for the next one",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* SpeechEngine
+        const fs = yield* FileSystem.FileSystem
+        const digest = yield* Digest.Digest
+        const dir = (yield* ServerConfig).dataDir
+        // A large file (sparse, so it takes no room) whose hash takes long enough to give up on.
+        yield* fs.writeFile(`${dir}/big.gguf`, new Uint8Array(0)).pipe(Effect.orDie)
+        yield* fs.truncate(`${dir}/big.gguf`, 2_000_000_000).pipe(Effect.orDie)
+        const small = new TextEncoder().encode("small")
+        yield* fs.writeFile(`${dir}/small.gguf`, small).pipe(Effect.orDie)
+        const want = yield* digest.digestHex(Digest.sha256, small)
+
+        // With the worker up, a request for the big file runs until it waits for its answer (so the worker has it),
+        // and is given up on.
+        assert.strictEqual(yield* engine.sha256(`${dir}/small.gguf`), want)
+        const slow = yield* Effect.forkChild(engine.sha256(`${dir}/big.gguf`), { startImmediately: true })
+        yield* Fiber.interrupt(slow)
+        assert.strictEqual(yield* engine.sha256(`${dir}/small.gguf`), want)
+        assert.strictEqual(yield* engine.sha256(`${dir}/small.gguf`), want)
       }).pipe(Effect.provide(TestEngine)),
     60_000,
   )
