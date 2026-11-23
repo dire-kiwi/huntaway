@@ -112,10 +112,10 @@ const without = <K, V>(all: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> => {
 }
 
 /**
- * What a host may be asked to open for its peer: its RPC, a terminal by its ticket (the relay's own rule), or a relay by
- * its ticket (a hop on the way to a host further on, HE-46).
+ * What a host may be asked to open for its peer: its RPC, a terminal or a task's browser by its ticket (the relay's own
+ * rule, HE-93), or a relay by its ticket (a hop on the way to a host further on, HE-46).
  */
-export const STREAM_PATH = /^\/api\/(rpc|terminal\/[A-Za-z0-9_-]{1,200}|relay\/[0-9a-f]{64})$/
+export const STREAM_PATH = /^\/api\/(rpc|(terminal|browser)\/[A-Za-z0-9_-]{1,200}|relay\/[0-9a-f]{64})$/
 
 /** The RPC ping's interval and how long a link may be silent before it counts as dead. */
 export const PING = "20 seconds"

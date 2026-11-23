@@ -35,8 +35,8 @@ export const RELAYED = Duration.hours(12)
 /** How long a session this hub gives a host that dialled in may last (its own on a host it dials does too). */
 const LINKED = Duration.days(7)
 
-/** What a client may reach through the relay: a host's RPC, or a terminal by its ticket. */
-const PATH = /^\/api\/(rpc|terminal\/[A-Za-z0-9_-]{1,200})$/
+/** What a client may reach through the relay: a host's RPC, or a terminal or a task's browser by its ticket (HE-93). */
+const PATH = /^\/api\/(rpc|(terminal|browser)\/[A-Za-z0-9_-]{1,200})$/
 
 /** Where a ticket goes: a host this hub links, one the mesh reaches through a neighbour (`hop`), or this hub itself. */
 type Target =
@@ -163,7 +163,7 @@ export class Relay extends Context.Service<
 
       const open = Effect.fn("Relay.open")(function* (session: SessionShape, host: HostId, path: string, as?: RelayedFor) {
         if (host === identity.hostId) return yield* new Invalid({ field: "host_id", reason: "this host is reached directly, not through the relay" })
-        if (!PATH.test(path)) return yield* new Invalid({ field: "path", reason: "only a host's /api/rpc or a terminal can be relayed" })
+        if (!PATH.test(path)) return yield* new Invalid({ field: "path", reason: "only a host's /api/rpc, a terminal or a task's browser can be relayed" })
         // A neighbour's own connection relays only for a client of its own, with no more than its own scopes.
         if (session.kind === "link" && as === undefined)
           return yield* new Conflict({ reason: "in_use", detail: "a host's own connection is relayed further only for a client of its own" })

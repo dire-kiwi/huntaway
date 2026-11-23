@@ -10,8 +10,8 @@ export const BrowserHandlers = BrowserRpcs.toLayer(
     const browsers = yield* Browsers
     const tasks = yield* Tasks
     return BrowserRpcs.of({
-      "browser.open": ({ task_id }) =>
-        browsers.ticket(task_id, "view").pipe(
+      "browser.open": ({ task_id, width, height, url }) =>
+        browsers.ticket(task_id, "view", { width, height, url }).pipe(
           Effect.map((ticket) => ({ ticket })),
           Effect.catchTag("TaskNotFound", taskNotFound),
         ),

@@ -95,17 +95,31 @@ export interface BrowsersShape {
   readonly scratch: <A, E, R>(use: (page: CdpPage) => Effect.Effect<A, E, R>) => Effect.Effect<A, E | ChromeUnavailable | CdpError, R>
   /** The download of the headless Chrome going, if one is. */
   readonly installing: Effect.Effect<ChromeInstalling | null>
-  /** A ticket for the task's browser's socket (single use, for a minute). */
-  readonly ticket: (task: TaskId, role: BrowserRole) => Effect.Effect<string, TaskNotFound>
+  /**
+   * A ticket for the task's browser's socket (single use, for a minute). A viewer's size and start address may come with
+   * it (`browser.open`), for a socket relayed from another host, which carries no query (HE-93): they win over the
+   * socket's.
+   */
+  readonly ticket: (task: TaskId, role: BrowserRole, start?: ViewStart) => Effect.Effect<string, TaskNotFound>
   /**
    * The socket of `ticket`: its role checked, the request upgraded (`upgrade`), then a viewer's stream or the desktop
    * pane's relay, until the socket closes.
    */
-  readonly serve: <E>(
-    ticket: string,
-    query: { readonly width: number; readonly height: number; readonly url: string | null },
-    upgrade: Effect.Effect<Socket.Socket, E>,
-  ) => Effect.Effect<void, BrowserTicketInvalid | E, Scope.Scope>
+  readonly serve: <E>(ticket: string, query: ViewQuery, upgrade: Effect.Effect<Socket.Socket, E>) => Effect.Effect<void, BrowserTicketInvalid | E, Scope.Scope>
+}
+
+/** A viewer's page size in CSS pixels, and where a browser the task doesn't have yet starts. */
+export interface ViewQuery {
+  readonly width: number
+  readonly height: number
+  readonly url: string | null
+}
+
+/** What a viewer's ticket may say of its socket's `ViewQuery`. */
+export interface ViewStart {
+  readonly width?: number | undefined
+  readonly height?: number | undefined
+  readonly url?: string | undefined
 }
 
 /** How long a ticket opens the socket. */
@@ -191,7 +205,9 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
       const running = yield* Ref.make<Running | null>(null)
       const lock = yield* Semaphore.make(1)
       const chromeLock = yield* Semaphore.make(1)
-      const tickets = yield* Ref.make<ReadonlyMap<string, { readonly task: TaskId; readonly role: BrowserRole; readonly expires: number }>>(new Map())
+      const tickets = yield* Ref.make<
+        ReadonlyMap<string, { readonly task: TaskId; readonly role: BrowserRole; readonly start: ViewStart; readonly expires: number }>
+      >(new Map())
       const paneIds = yield* Ref.make(0)
       const chromeIds = yield* Ref.make(0)
       /** The scratch pages open (`scratch`), which keep Chrome up. */
@@ -485,12 +501,12 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           () => Ref.update(scratches, (n) => n - 1),
         )
 
-      const ticket: BrowsersShape["ticket"] = (task, role) =>
+      const ticket: BrowsersShape["ticket"] = (task, role, start = {}) =>
         Effect.gen(function* () {
           yield* tasks.get(task)
           const now = yield* Clock.currentTimeMillis
           const t = Array.from(yield* random.randomBytes(24), (b) => b.toString(16).padStart(2, "0")).join("")
-          yield* Ref.update(tickets, (m) => new Map([...[...m].filter(([, x]) => x.expires > now), [t, { task, role, expires: now + TICKET_MS }]]))
+          yield* Ref.update(tickets, (m) => new Map([...[...m].filter(([, x]) => x.expires > now), [t, { task, role, start, expires: now + TICKET_MS }]]))
           return t
         })
 
@@ -507,12 +523,7 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
         })
 
       /** A viewer of the task's headless page, until it goes or the desktop pane takes the tab. */
-      const view = (
-        task: TaskId,
-        reader: Socket.Reader,
-        writer: Socket.Writer,
-        query: { readonly width: number; readonly height: number; readonly url: string | null },
-      ) =>
+      const view = (task: TaskId, reader: Socket.Reader, writer: Socket.Writer, query: ViewQuery) =>
         Effect.gen(function* () {
           const say = (text: string) => writer.write(text).pipe(Effect.ignore)
           const tab = yield* tabOf(task)
@@ -609,7 +620,12 @@ export class Browsers extends Context.Service<Browsers, BrowsersShape>()("huntaw
           const reader = yield* socket.reader.pipe(Effect.orDie)
           const writer = yield* socket.writer
           if (found.role === "desktop") return yield* attachDesktop(found.task, reader, writer)
-          return yield* view(found.task, reader, writer, query)
+          const { width, height, url } = found.start
+          return yield* view(found.task, reader, writer, {
+            width: width !== undefined && width > 0 ? width : query.width,
+            height: height !== undefined && height > 0 ? height : query.height,
+            url: url !== undefined && url !== "" ? url : query.url,
+          })
         })
 
       return Browsers.of({

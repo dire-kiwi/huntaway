@@ -1,7 +1,7 @@
 import { useAtom } from "@effect/atom-react"
-import { mutate, type HostTask as Task } from "@huntaway/client"
+import { hostSocketUrl, mutate, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
-import { Exit } from "effect"
+import { Effect, Exit } from "effect"
 import { Loader2 } from "lucide-react"
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react"
 import { exitError, useAction } from "../../state/mutation"
@@ -14,7 +14,9 @@ import { BrowserBar, NoPage } from "./BrowserBar"
 // `/api/browser/<ticket>` (a ticket from `browser.open`, one per connection) sends the page as JPEG frames, each drawn on
 // the canvas and then acknowledged (the next comes after), and JSON frames for the page's address and title, its size,
 // a download of Chrome going, and the desktop app taking the page. The pane's size is the page's; the pointer, wheel,
-// keys and pasted text go back as JSON.
+// keys and pasted text go back as JSON. The socket is on the task's host: the page's own server for its own tasks, else
+// through the hub's relay (`hostSocketUrl`, as the terminal's), which passes no query on, so the size and start address go
+// in `browser.open` too (HE-93).
 
 type Conn =
   | { readonly state: "connecting" }
@@ -161,18 +163,19 @@ function Stream({ task, onClose, onRetry }: { task: Task; onClose: () => void; o
     }
     const connect = () => {
       if (at.disposed) return
-      void run(mutate("browser.open", task.host_id, { task_id: task.id })).then((exit) => {
+      const s = size()
+      const url = start.current === "" ? {} : { url: start.current }
+      const q = new URLSearchParams({ width: String(s.width), height: String(s.height), ...url })
+      const opened = mutate("browser.open", task.host_id, { task_id: task.id, ...s, ...url }).pipe(
+        Effect.flatMap(({ ticket }) => hostSocketUrl(task.host_id, `/api/browser/${encodeURIComponent(ticket)}`, `?${q.toString()}`)),
+      )
+      void run(opened).then((exit) => {
         if (at.disposed) return
         if (!Exit.isSuccess(exit)) {
           retry(exitError(exit) ?? "Can't reach the task's browser")
           return
         }
-        const s = size()
-        const q = new URLSearchParams({ width: String(s.width), height: String(s.height) })
-        if (start.current !== "") q.set("url", start.current)
-        const ws = new WebSocket(
-          `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/browser/${encodeURIComponent(exit.value.ticket)}?${q.toString()}`,
-        )
+        const ws = new WebSocket(exit.value)
         ws.binaryType = "arraybuffer"
         at.ws = ws
         ws.addEventListener("open", () => {

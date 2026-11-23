@@ -7,9 +7,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { Headers } from "effect/http"
 import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
 import { Socket } from "effect/socket"
-import { Auth, HostRpcs, HubRpcs, LinkId, LinkRpcs, PublicRpcs } from "@huntaway/contracts"
+import { Auth, BrowserServerFrame, HostRpcs, HubRpcs, LinkId, LinkRpcs, PublicRpcs } from "@huntaway/contracts"
 import type { Host } from "@huntaway/contracts"
-import { FAKE_SSH } from "@huntaway/testing"
+import { FAKE_SSH, systemChrome } from "@huntaway/testing"
 import { httpRpcClientLayer } from "../../src/cli/rpc.ts"
 import { e2eDataDir, startServer } from "./launch.ts"
 
@@ -21,6 +21,9 @@ const BoardRpcs = PublicRpcs.merge(HostRpcs, HubRpcs)
 const RelayedRpcs = HostRpcs.merge(LinkRpcs)
 
 const SERVE = ["--no-agents", "--no-discovery"]
+
+/** A task's browser's JSON frame, from the text of a websocket message. */
+const decodeFrame = Schema.decodeUnknownOption(Schema.fromJsonString(BrowserServerFrame))
 
 /** A client of `port`'s own board over HTTP. */
 const boardClient = (port: number, token: string) =>
@@ -371,6 +374,48 @@ describe("hosts, whole servers", () => {
 
         const own = (yield* board("hub.hosts.list", undefined))[0]?.id ?? ""
         assert.strictEqual((yield* Effect.flip(board("hub.hosts.pushUpdate", { id: LinkId.make(own) })))._tag, "Invalid")
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    60_000,
+  )
+
+  it.live.skipIf(systemChrome === null)(
+    "a task's browser on a host that dialled in is reached through the hub's relay, at the size its ticket was given (HE-93)",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const hub = yield* startServer(SERVE)
+        const hubToken = (yield* fs.readFileString(`${hub.dataDir}/hub_token`)).trim()
+        const host = yield* startServer([...SERVE, "--hub", `http://127.0.0.1:${hub.port}`, "--hub-token", hubToken], {
+          HUNTAWAY_CHROME: systemChrome ?? "",
+          HUNTAWAY_CHROME_SANDBOX: "0",
+        })
+        const hostInfo = yield* (yield* boardClient(host.port, host.token))("host.info", undefined)
+        const board = yield* boardClient(hub.port, hub.token)
+        yield* until(board("hub.hosts.watch", undefined), (hosts) => hosts.some((h) => h.id === hostInfo.host_id && h.connected))
+        const relayed = yield* relayedClient(
+          hub.port,
+          hub.token,
+          Effect.map(board("hub.hosts.openRelay", { host_id: hostInfo.host_id }), (r) => r.ticket).pipe(Effect.orDie),
+        )
+        const profile = yield* relayed("profiles.create", { profile: { name: "Me" } })
+        const task = yield* relayed("tasks.create", { task: { profile_id: profile.id, title: "Look" } })
+
+        // The ticket is the host's, so its socket is the host's: through the relay, which passes no query on.
+        const { ticket } = yield* relayed("browser.open", { task_id: task.id, width: 640, height: 480 })
+        const relay = yield* board("hub.hosts.openRelay", { host_id: hostInfo.host_id, path: `/api/browser/${ticket}` })
+        const ws = yield* Effect.acquireRelease(
+          Effect.sync(() => new NodeWS.WebSocket(`ws://127.0.0.1:${hub.port}/api/relay/${relay.ticket}`)),
+          (made) => Effect.sync(() => made.terminate()),
+        )
+        const viewport = yield* Effect.callback<BrowserServerFrame, string>((resume) => {
+          ws.on("message", (data, binary) => {
+            if (binary || !Buffer.isBuffer(data)) return
+            const frame = decodeFrame(data.toString("utf8"))
+            if (Option.isSome(frame) && frame.value.type === "viewport") resume(Effect.succeed(frame.value))
+          })
+          ws.once("close", (code) => resume(Effect.fail(`the browser's socket closed (${code})`)))
+        }).pipe(Effect.timeoutOrElse({ duration: "30 seconds", orElse: () => Effect.fail("no viewport from the host's browser") }))
+        assert.deepStrictEqual(viewport, { type: "viewport", width: 640, height: 480 })
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     60_000,
   )
