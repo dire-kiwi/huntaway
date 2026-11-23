@@ -1153,7 +1153,9 @@ apps/desktop/
 
 `apps/mobile` (HE-20): an Expo SDK 58 app (React Native 0.88, expo-router) on `packages/client` and effect 4, which
 bundles for Hermes as it is (the client's atoms, sessions and thread are the web app's own; Expo installs `URL` and
-`structuredClone`, and Babel turns effect's `import.meta` into what Hermes parses). The old app's screens are kept in
+`structuredClone`, and Babel turns effect's `import.meta` into what Hermes parses). Hermes has no ES2023 copying array
+methods, which the lint asks for (`toSorted`, `toReversed`): the entry, `src/index.ts`, loads `src/polyfills.ts` before
+Expo Router (HE-98; without it the network search died before asking anyone). The old app's screens are kept in
 shape and its state modules are gone: `serverUrlAtom` and `tokenAtom` are set from the board kept in the keychain
 (`expo-secure-store`, `localStorage` on its web build), and everything else is atoms.
 
@@ -1205,9 +1207,9 @@ shape and its state modules are gone: `serverUrlAtom` and `tokenAtom` are set fr
 
 Checked: its pure logic in `pnpm test` (`apps/mobile/tests`); the type check and lint in `pnpm check`; the screens on
 its web build (`pnpm --filter huntaway-mobile export:web`, served on a free port, driven by `scripts/ui-check.mjs`)
-against a test server with the fake agent; `expo export --platform android` (Hermes bytecode). Not yet on a phone:
-HE-99's screens and its documents were driven on the web build, where a plugin's page is a sandboxed `<iframe>`; the
-web view a phone shows it in (`components/frameView.tsx`) bundles and has not run.
+against a test server with the fake agent; `expo export --platform android` (Hermes bytecode); a release build on an
+Android phone (HE-98). HE-99's screens and its documents were driven on the web build, where a plugin's page is a
+sandboxed `<iframe>`; the web view a phone shows it in (`components/frameView.tsx`) bundles and has not run on one.
 
 What is left, a task each:
 
