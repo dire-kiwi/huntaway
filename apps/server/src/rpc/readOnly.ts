@@ -98,7 +98,6 @@ export const ReadOnlyDeviceHandlers = DeviceRpcs.toLayer(
       "hub.devices.list": () => Effect.succeed({ devices: [], pairing: null, current: null }),
       "hub.devices.startPairing": () => Effect.fail(new Unavailable({ what: "pairing", reason: "a read-only rehearsal pairs no device" })),
       "hub.devices.stopPairing": () => changes,
-      "hub.devices.rename": () => changes,
       "hub.devices.revoke": () => changes,
       "hub.devices.unpair": () => Effect.fail(new Invalid({ field: "session", reason: "a read-only rehearsal has no paired device" })),
     })

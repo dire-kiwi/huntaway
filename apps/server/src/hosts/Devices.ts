@@ -64,7 +64,6 @@ export class Devices extends Context.Service<
     readonly stopPairing: Effect.Effect<void>
     /** `public.pair`: the PIN showing gives a device and its token. */
     readonly pair: (pin: string, name: string) => Effect.Effect<Paired, Invalid | Unavailable>
-    readonly rename: (id: DeviceId, name: string) => Effect.Effect<Device, NotFound | Invalid>
     /** Unpairs a device: its token is refused from now on, and `revoked` ends for it. */
     readonly revoke: (id: DeviceId) => Effect.Effect<void, NotFound>
     /** The paired device whose token this is, if one is (noting when it was used, once a minute). */
@@ -136,16 +135,6 @@ export class Devices extends Context.Service<
         return { token, device: shown(device), host_id: identity.hostId, host_name: identity.hostName }
       })
 
-      const rename = Effect.fn("Devices.rename")(function* (id: DeviceId, name: string) {
-        const trimmed = name.trim()
-        if (trimmed === "") return yield* new Invalid({ field: "name", reason: "give it a name" })
-        if (trimmed.length > 100) return yield* new Invalid({ field: "name", reason: "100 characters at most" })
-        const found = yield* repo.get(id)
-        if (found === null) return yield* new NotFound({ what: "device", id })
-        yield* repo.rename(id, trimmed)
-        return shown({ ...found, name: trimmed })
-      })
-
       const revoke = Effect.fn("Devices.revoke")(function* (id: DeviceId) {
         if (!(yield* repo.delete(id))) return yield* new NotFound({ what: "device", id })
         yield* SubscriptionRef.update(tokens, (all) => new Map([...all].filter(([, d]) => d !== id)))
@@ -173,7 +162,7 @@ export class Devices extends Context.Service<
           Effect.asVoid,
         )
 
-      return Devices.of({ list, startPairing, stopPairing: Ref.set(mode, null), pair, rename, revoke, byToken, revoked })
+      return Devices.of({ list, startPairing, stopPairing: Ref.set(mode, null), pair, revoke, byToken, revoked })
     }),
   )
 }

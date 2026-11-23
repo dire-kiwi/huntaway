@@ -10,7 +10,6 @@ export const DeviceHandlers = DeviceRpcs.toLayer(
       "hub.devices.list": () => Effect.flatMap(Session, (s) => devices.list(s.device_id)),
       "hub.devices.startPairing": () => devices.startPairing,
       "hub.devices.stopPairing": () => devices.stopPairing,
-      "hub.devices.rename": ({ id, name }) => devices.rename(id, name),
       "hub.devices.revoke": ({ id }) => devices.revoke(id),
       "hub.devices.unpair": () =>
         Effect.gen(function* () {

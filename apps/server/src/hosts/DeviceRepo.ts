@@ -29,7 +29,6 @@ export class DeviceRepo extends Context.Service<
     readonly list: Effect.Effect<ReadonlyArray<StoredDevice>>
     readonly get: (id: DeviceId) => Effect.Effect<StoredDevice | null>
     readonly insert: (device: StoredDevice) => Effect.Effect<void>
-    readonly rename: (id: DeviceId, name: string) => Effect.Effect<void>
     readonly touch: (id: DeviceId, at: Timestamp) => Effect.Effect<void>
     /** Whether there was one to delete. */
     readonly delete: (id: DeviceId) => Effect.Effect<boolean>
@@ -55,7 +54,6 @@ export class DeviceRepo extends Context.Service<
         insert: (d) =>
           run(sql`INSERT INTO device_tokens (id, name, token_hash, created_at, last_used_at)
             VALUES (${d.id}, ${d.name}, ${d.token_hash}, ${d.created_at}, ${d.last_used_at})`),
-        rename: (id, name) => run(sql`UPDATE device_tokens SET name = ${name} WHERE id = ${id}`),
         touch: (id, at) => run(sql`UPDATE device_tokens SET last_used_at = ${at} WHERE id = ${id}`),
         delete: (id) =>
           sql`DELETE FROM device_tokens WHERE id = ${id} RETURNING id`.pipe(

@@ -18,7 +18,7 @@ export const PIN_TTL_SECS = 300
 /** A phone paired with this board. */
 export const Device = Schema.Struct({
   id: DeviceId,
-  /** What it calls itself ("Pixel 8"), renamed on the board as the user likes. */
+  /** What it called itself when it paired ("Pixel 8"). */
   name: Schema.String,
   created_at: Timestamp,
   /** When its token was last taken, to the minute; null if never. */

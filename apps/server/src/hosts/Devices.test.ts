@@ -87,12 +87,10 @@ describe("Devices", () => {
     }).pipe(Effect.provide(TestDevices)),
   )
 
-  it.effect("unpairing refuses the token from then on and ends `revoked`; renaming keeps a name", () =>
+  it.effect("unpairing refuses the token from then on and ends `revoked`", () =>
     Effect.gen(function* () {
       const devices = yield* Devices
       const paired = yield* devices.pair((yield* devices.startPairing).pin, "Phone")
-      assert.strictEqual((yield* devices.rename(paired.device.id, " Work phone ")).name, "Work phone")
-      assert.strictEqual(yield* outcome(devices.rename(paired.device.id, " ")), "Invalid")
       const waiting = yield* Effect.forkChild(devices.revoked(paired.device.id))
       yield* devices.revoke(paired.device.id)
       yield* Fiber.join(waiting)
