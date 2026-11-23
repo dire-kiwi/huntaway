@@ -111,6 +111,9 @@ export const sharedSince = (s: TaskServer, forwarded: Timestamp | undefined): Ta
   return forwarded === undefined ? plain : { ...plain, forwarded }
 }
 
+/** Whether a server on `address` is reached as localhost (what tailcat proxies to, HE-85): on loopback, or on every address. */
+export const onLocalhost = (host: string): boolean => ["127.0.0.1", "::1", "0.0.0.0", "::"].includes(host)
+
 /** Whether two servers are shown alike. */
 const same = (a: TaskServer, b: TaskServer | undefined) =>
   b !== undefined &&
@@ -125,7 +128,8 @@ const same = (a: TaskServer, b: TaskServer | undefined) =>
 
 /**
  * What a task shows after a scan found `found`, given what it showed (`before`): when each was first seen kept, one per
- * port (a server listening on both IPv4 and IPv6 is one), by port, and whether its port is shared with tailcat
+ * port (a server listening on both IPv4 and IPv6 is one; HE-85: of a port's, one reached as localhost if there is
+ * one, so that it's shared as localhost and not refused for its other address), by port, and whether its port is shared with tailcat
  * (`forwarded`, which `PortForwards` writes). Null when nothing changed.
  */
 export const shown = (before: ReadonlyArray<TaskServer>, found: ReadonlyArray<TaskServer>): ReadonlyArray<TaskServer> | null => {
@@ -138,7 +142,7 @@ export const shown = (before: ReadonlyArray<TaskServer>, found: ReadonlyArray<Ta
         forwarded,
       )
     })
-    .filter((f, i, all) => all.findIndex((g) => g.port === f.port) === i)
+    .filter((f, _, all) => f === (all.find((g) => g.port === f.port && onLocalhost(g.address)) ?? all.find((g) => g.port === f.port)))
     .toSorted((a, b) => a.port - b.port)
   return list.length === before.length && list.every((s, i) => same(s, before[i])) ? null : list
 }

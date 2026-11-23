@@ -1425,6 +1425,14 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   `RcMap` of semaphores by forward on the desktop), so two clicks start one tailcat while a slow start (up to
   `START_TIMEOUT`) holds up no other port or task. When `tailcat serve` stops before its address, its reason is read
   from the end of its stderr once that has ended, not as its exit is seen, which can come first.
+  HE-85: tailcat proxies a bare port to `localhost`, so a server listed (`TaskServer.address`) only on another address
+  (`--host 192.168.1.5`) is served through a port mapping, `tailcat serve <port>:<address>:<port>` (IPv6 in brackets),
+  when `tailcat serve --help` tells of port mappings (after v0.7.0, which has none); with a tailcat without, Forward port
+  fails `Unavailable` with why ("listens only on 192.168.1.5; tailcat v0.7.0 can only share servers on localhost",
+  its version from `tailcat version`) rather than share an address nothing answers on. A server on `127.0.0.1`, `::1`,
+  `0.0.0.0` or `::` is served as before, without asking tailcat. A task lists one server per port, so one listening on
+  several addresses (`192.168.1.5` and `127.0.0.1`, a socket each) is listed on one of those four if it has one
+  (`DevServers`' scan, `shown`), whichever socket the scan meets first: it's shared as localhost, not refused.
 - **Shown shared (HE-83, new)**: while a share lasts, the task's server says so: `TaskServer.forwarded`, the time the
   share started (`PortForward.since` too), written by `PortForwards` as tailcat prints its address and cleared by the
   share's finalizer, however it ends (tailcat exits, the server goes, the board stops), each as a `task` event. A scan
