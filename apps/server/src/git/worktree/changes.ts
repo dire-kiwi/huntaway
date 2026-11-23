@@ -123,7 +123,9 @@ const PATCH = [...DIFF, "--src-prefix=a/", "--dst-prefix=b/"]
  * Code tab has them.
  */
 const placeOf = Effect.fnUntraced(function* (g: GitShape, dir: string) {
-  const [top = dir, prefix = ""] = (yield* g.ok(dir, ["rev-parse", "--show-toplevel", "--show-prefix"])).split("\n")
+  const o = yield* g.run(dir, ["rev-parse", "--show-toplevel", "--show-prefix"])
+  // Not in a working tree (a bare repository): `dir` as the top, nothing limited.
+  const [top = dir, prefix = ""] = o.ok ? o.stdout.split("\n") : []
   return { top, prefix, scope: prefix !== "" ? ["--", "."] : [] }
 })
 
@@ -161,9 +163,8 @@ export const branchDiff = Effect.fnUntraced(function* (g: GitShape, get: Lookup,
   }
   const { base, start } = yield* changesBaseAt(g, get, repo, task, project, head)
   const from = start ?? head
-  const { scope } = yield* placeOf(g, repo)
-  const stat = (yield* g.run(repo, [...DIFF, "--stat=200", from, head, ...scope])).stdout
-  const patch = (yield* g.run(repo, [...PATCH, from, head, ...scope])).stdout
+  const stat = (yield* g.run(repo, [...DIFF, "--stat=200", from, head])).stdout
+  const patch = (yield* g.run(repo, [...PATCH, from, head])).stdout
   const commits = start !== null ? (yield* g.run(repo, ["log", "--oneline", `${start}..${head}`])).stdout : ""
   const out: DiffResult = { available: true, dir: repo, base, merge_base: start, commits, stat, patch: truncate(patch, PATCH_LIMIT), untracked: [], branch }
   return out

@@ -273,6 +273,31 @@ describe("a task's diff", () => {
     ),
   )
 
+  // HE-96 review: only a task working in the project's folder has its diff limited to that folder; a worktree's is its
+  // whole repository's, and so is its branch's once the worktree is gone.
+  it.live("of a project on a folder of its repository, is the whole worktree's, and its branch's once that's gone", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* tempDir
+        yield* git(repo, ["init", "-q", "-b", "master"])
+        yield* write(`${repo}/web/src/a.txt`, "a\n")
+        yield* git(repo, ["add", "."])
+        yield* git(repo, ["commit", "-qm", "init"])
+        const project = yield* projectOn(`${repo}/web`)
+        const task = yield* setUp((yield* make(project, "Do it", { use_worktree: true })).id)
+        const top = (yield* git(task.worktree_path ?? "", ["rev-parse", "--show-toplevel"])).trim()
+        yield* write(`${top}/web/src/a.txt`, "a, changed\n")
+        yield* write(`${top}/docs/b.md`, "b\n")
+        yield* git(top, ["add", "."])
+        yield* git(top, ["commit", "-qm", "both"])
+        const both = ["docs/b.md", "web/src/a.txt"]
+        assert.deepStrictEqual((yield* changedFiles(task.id)).toSorted(), both)
+        yield* (yield* Worktrees).teardown(task.id, { force: false, deleteBranch: false })
+        assert.deepStrictEqual((yield* changedFiles(task.id)).toSorted(), both)
+      }),
+    ),
+  )
+
   // HA-92: a worktree removed while its diff was being read failed the request with git's "cannot change to" the folder.
   it.live("of a worktree removed meanwhile, is its branch's", () =>
     run(

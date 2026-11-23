@@ -100,6 +100,15 @@ test("a file opens in the Code tab, at its first change", async () => {
   })
 })
 
+// Review of HE-96: narrow, the tree and the file take turns in the Code tab; one opened from the Changes tab shows.
+test("narrow, a file opens in the Code tab on the file, at its first change", async () => {
+  await withBrowser(server, { size: "600x900" }, async (ui) => {
+    await ui.run([`goto /t/${task.id}`, "click Changes", `click ${tree("app.txt")}`, "wait css=[data-testid=changes-path][title='app.txt']"])
+    await ui.run(["click css=[data-testid=changes-view] button[title='Open in the Code tab']"])
+    await ui.run(["wait css=[data-testid=code-path][title='app.txt']", "wait css=[data-n='19'].bg-accent\\/15"])
+  })
+})
+
 test("new changes show as the agent makes them", async () => {
   await withBrowser(server, {}, async (ui) => {
     await ui.run([`goto /t/${task.id}`, "click Changes", `wait ${tree("new.txt")}`])
