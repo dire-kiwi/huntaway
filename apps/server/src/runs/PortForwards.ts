@@ -6,7 +6,7 @@ import type { PortForward, TaskServer } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
-import { WATCHDOG } from "../platform/Proc.ts"
+import { Proc, WATCHDOG } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
@@ -32,6 +32,9 @@ export const START_TIMEOUT = "30 seconds"
 /** How often a share looks whether its server is still listed. */
 export const CHECK_EVERY = "5 seconds"
 
+/** How long `tailcat serve --help` and `tailcat version` have to answer. */
+const ASK_TIMEOUT = "10 seconds"
+
 /** What stays of tailcat's stderr, for the error when it doesn't start. */
 const STDERR_KEPT = 2000
 
@@ -55,6 +58,23 @@ export const whyNotStarted = (code: number | null, stderr: string, bin: string):
       .findLast((l) => l !== "") ?? ""
   return last === "" ? `tailcat stopped${code === null ? "" : ` with exit code ${code}`} before it printed an address` : `tailcat: ${last}`
 }
+
+/** Whether a server on `address` is reached as localhost: on loopback, or on every address. */
+export const onLocalhost = (address: string): boolean => ["127.0.0.1", "::1", "0.0.0.0", "::"].includes(address)
+
+/**
+ * What `tailcat serve` is given for a server on `port` that the task lists on `addresses`: the port, proxied to
+ * localhost, when one is reached as localhost; else (HE-85) a mapping to the first, `port:address:port`, with an IPv6
+ * address in brackets.
+ */
+export const serveTarget = (port: number, addresses: ReadonlyArray<string>): string => {
+  const only = addresses.find((a) => !onLocalhost(a))
+  if (only === undefined || addresses.some(onLocalhost)) return String(port)
+  return `${port}:${only.includes(":") ? `[${only}]` : only}:${port}`
+}
+
+/** Whether `tailcat serve --help` tells of port mappings (`port:target`, after v0.7.0); v0.7.0's proxies to localhost only. */
+export const hasMappings = (help: string): boolean => /\bport mappings?\b/i.test(help)
 
 /** The server shown shared since `since`. */
 const marked =
@@ -92,7 +112,8 @@ export class PortForwards extends Context.Service<
   {
     /**
      * Share the task's server on `port` (one it lists) with tailcat, or give the share it has. Fails `NotFound` for a
-     * port the task doesn't list, `Unavailable` when tailcat isn't there or doesn't start.
+     * port the task doesn't list, `Unavailable` when tailcat isn't there or doesn't start, or can't reach the server
+     * (HE-85: one on another address than localhost, with a tailcat without port mappings).
      */
     readonly forward: (task: TaskId, port: number) => Effect.Effect<PortForward, TaskNotFound | NotFound | Invalid | Unavailable>
   }
@@ -105,6 +126,7 @@ export class PortForwards extends Context.Service<
       const shownAs = yield* rewriter
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
       const locks = yield* KeyedLock
+      const proc = yield* Proc
       // The shares that printed their address, by `task:port`.
       const shared = yield* Ref.make<ReadonlyMap<string, PortForward>>(new Map())
       // Each share's tailcat, for as long as it lasts: stopped with the board.
@@ -112,13 +134,38 @@ export class PortForwards extends Context.Service<
 
       const listed = (task: TaskId, port: number) => Effect.map(tasks.get(task), (row) => row !== null && row.servers.some((s) => s.port === port))
 
-      /** tailcat's share of `port` until it stops or the task no longer lists the server; `ready` gets its address. */
-      const share = (task: TaskId, port: number, key: string, ready: Deferred.Deferred<PortForward, Unavailable>) =>
+      /** Runs `tailcat <args>` to its end and gives its stdout, or why it couldn't. */
+      const ask = (args: ReadonlyArray<string>) =>
+        proc.run(config.tailcatBin, args, { env: config.agentEnv, timeout: ASK_TIMEOUT }).pipe(
+          Effect.mapError((e) =>
+            unavailable(e.reason.startsWith("NotFound") ? whyNotStarted(127, "", config.tailcatBin) : `tailcat ${args.join(" ")}: ${e.reason}`),
+          ),
+          Effect.map((r) => r.stdout),
+        )
+
+      /**
+       * The target `tailcat serve` can proxy to a server on `port` listed on `addresses` (HE-85). One that listens only
+       * on another address needs a tailcat with port mappings: without, it fails `Unavailable`, as tailcat would proxy to
+       * localhost, where nothing answers.
+       */
+      const targetOf = Effect.fn("PortForwards.targetOf")(function* (port: number, addresses: ReadonlyArray<string>) {
+        const target = serveTarget(port, addresses)
+        if (target === String(port) || hasMappings(yield* ask(["serve", "--help"]))) return target
+        const version = (yield* ask(["version"]).pipe(Effect.orElseSucceed(() => ""))).trim()
+        const only = addresses.find((a) => !onLocalhost(a)) ?? ""
+        return yield* unavailable(`listens only on ${only}; tailcat ${version === "" ? "here" : version} can only share servers on localhost`)
+      })
+
+      /**
+       * tailcat's share of `port` (proxied to `target`) until it stops or the task no longer lists the server; `ready`
+       * gets its address.
+       */
+      const share = (task: TaskId, port: number, target: string, key: string, ready: Deferred.Deferred<PortForward, Unavailable>) =>
         Effect.scoped(
           Effect.gen(function* () {
             const child = yield* spawner
               .spawn(
-                ChildProcess.make("bash", ["-c", WATCHDOG, "huntaway-tailcat", config.tailcatBin, "--json", "serve", "--key=new", String(port)], {
+                ChildProcess.make("bash", ["-c", WATCHDOG, "huntaway-tailcat", config.tailcatBin, "--json", "serve", "--key=new", target], {
                   detached: true,
                   env: config.agentEnv,
                   extendEnv: true,
@@ -192,7 +239,8 @@ export class PortForwards extends Context.Service<
         if (!Number.isInteger(port) || port <= 0 || port > 65535) return yield* new Invalid({ field: "port", reason: "bad port" })
         const row = yield* tasks.get(task)
         if (row === null) return yield* new TaskNotFound({ id: task })
-        if (!row.servers.some((s) => s.port === port)) return yield* new NotFound({ what: "server", id: String(port) })
+        const addresses = row.servers.filter((s) => s.port === port).map((s) => s.address)
+        if (addresses.length === 0) return yield* new NotFound({ what: "server", id: String(port) })
         const key = `${task}:${port}`
         // One start per share at a time, so two clicks don't start two; another port's or task's doesn't wait for it (HE-84).
         return yield* locks.withLock(["forward", key])(
@@ -202,8 +250,9 @@ export class PortForwards extends Context.Service<
               if (have.since !== undefined) yield* shownAs(task, port, marked(have.since))
               return have
             }
+            const target = yield* targetOf(port, addresses)
             const ready = yield* Deferred.make<PortForward, Unavailable>()
-            yield* FiberMap.run(shares, key, share(task, port, key, ready))
+            yield* FiberMap.run(shares, key, share(task, port, target, key, ready))
             return yield* Deferred.await(ready).pipe(
               Effect.timeoutOrElse({
                 duration: START_TIMEOUT,

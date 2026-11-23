@@ -11,11 +11,12 @@ import { Timestamp } from "@huntaway/contracts"
 import type { BoardEvent, TaskId } from "@huntaway/contracts"
 import { Events } from "../platform/Events.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
-import { CHECK_EVERY, listenAddressOf, PortForwards, whyNotStarted } from "./PortForwards.ts"
+import { CHECK_EVERY, hasMappings, listenAddressOf, PortForwards, serveTarget, whyNotStarted } from "./PortForwards.ts"
 
 // HE-81: sharing a task's dev server with tailcat, against fake tailcats: one that prints an address as `tailcat --json
 // serve` does and stays, one that fails as tailcat does when it can't reach a relay, and none at all. HE-84: one slow to
-// start beside a quick one, and one whose reason comes after it exits.
+// start beside a quick one, and one whose reason comes after it exits. HE-85: one whose help tells of port mappings and one
+// whose help doesn't (v0.7.0's), for servers on another address than localhost.
 
 /** A folder for a test's fake tailcats, removed after it. */
 const fakesDir = Effect.acquireRelease(
@@ -37,6 +38,22 @@ const serving = (dir: string) =>
     dir,
     "tailcat",
     `echo "$*" >> ${argsFile(dir)}\necho "# 🐈 Server listening with new address: tcFAKE$$" >&2\necho '{"listenAddr":"tcFAKE'$$'"}'\nexec sleep 600`,
+  )
+/** v0.7.0's help says ports are proxied to localhost; main's has port mappings. */
+const HELP_V070 =
+  "The arguments are port numbers, port ranges, and service names, either as separate arguments or\ncomma-separated. Ports are proxied to the same port on localhost."
+const HELP_MAPPINGS =
+  'The arguments are port numbers, port ranges, port mappings, Unix\nsocket paths, and service names. A\nport mapping "port:target" proxies a port elsewhere instead.'
+/** A tailcat that serves as `serving` does, answering `serve --help` with `help` and `version` with `version`. */
+const withHelp = (help: string, version: string) => (dir: string) =>
+  fake(
+    dir,
+    "tailcat-help",
+    `if [ "$1 $2" = "serve --help" ]; then printf '%s\n' '${help.replaceAll("'", "'\\''")}'; exit 0; fi
+if [ "$1" = version ]; then echo ${version}; exit 0; fi
+echo "$*" >> ${argsFile(dir)}
+echo '{"listenAddr":"tcFAKE'$$'"}'
+exec sleep 600`,
   )
 const failing = (dir: string) =>
   fake(dir, "tailcat-fails", `echo "# Selected bootstrap relay region 302, San Francisco" >&2\necho "2026/11/23 11:53:01 couldn't reach the relay" >&2\nexit 1`)
@@ -66,11 +83,11 @@ echo $$ > ${join(dir, "slow.pid.new")} && mv ${join(dir, "slow.pid.new")} ${join
 while :; do sleep 600 & wait $!; done`,
   )
 
-const listOn = (task: TaskId, ports: ReadonlyArray<number>) =>
+const listOn = (task: TaskId, ports: ReadonlyArray<number>, address = "127.0.0.1") =>
   Effect.gen(function* () {
     const repo = yield* TaskRepo
     const since = Timestamp.make("2026-11-23T00:00:00.000Z")
-    const servers = ports.map((port) => ({ port, address: "127.0.0.1", pid: 1, pgid: 1, command: "vite", since, detached: false }))
+    const servers = ports.map((port) => ({ port, address, pid: 1, pgid: 1, command: "vite", since, detached: false }))
     yield* repo.write(task, { servers }, since)
   })
 
@@ -148,6 +165,14 @@ describe("tailcat's output", () => {
     assert.match(whyNotStarted(127, "", "tailcat"), /isn't installed on this host/)
     assert.strictEqual(whyNotStarted(1, "# Selected region\n2026 couldn't reach the relay\n\n", "tailcat"), "tailcat: 2026 couldn't reach the relay")
     assert.strictEqual(whyNotStarted(2, "", "tailcat"), "tailcat stopped with exit code 2 before it printed an address")
+  })
+
+  it("serves a server on another address than localhost through a port mapping", () => {
+    for (const local of [["127.0.0.1"], ["::1"], ["0.0.0.0"], ["::"], ["192.168.1.5", "127.0.0.1"]]) assert.strictEqual(serveTarget(5173, local), "5173")
+    assert.strictEqual(serveTarget(5173, ["192.168.1.5"]), "5173:192.168.1.5:5173")
+    assert.strictEqual(serveTarget(5173, ["fd7a::1"]), "5173:[fd7a::1]:5173")
+    assert.isFalse(hasMappings(HELP_V070))
+    assert.isTrue(hasMappings(HELP_MAPPINGS))
   })
 })
 
@@ -285,6 +310,51 @@ describe("PortForwards", () => {
           .filter((l) => l === "5101"),
         ["5101"],
       )
+    }),
+  )
+
+  test("shares a server on another address with a tailcat that has port mappings", withHelp(HELP_MAPPINGS, "v0.8.0"), (dir) =>
+    Effect.gen(function* () {
+      const forwards = yield* PortForwards
+      const task = yield* fakeTask
+      const other = yield* fakeTask
+      yield* listOn(task, [5200], "192.168.1.5")
+      yield* listOn(other, [5201], "fd7a::1")
+      assert.match((yield* forwards.forward(task, 5200)).address, /^tcFAKE\d+$/)
+      assert.match((yield* forwards.forward(other, 5201)).address, /^tcFAKE\d+$/)
+      assert.deepStrictEqual(readFileSync(argsFile(dir), "utf8").trim().split("\n"), [
+        "--json serve --key=new 5200:192.168.1.5:5200",
+        "--json serve --key=new 5201:[fd7a::1]:5201",
+      ])
+    }),
+  )
+
+  test("says why it can't share a server on another address with a tailcat without port mappings", withHelp(HELP_V070, "v0.7.0"), (dir) =>
+    Effect.gen(function* () {
+      const forwards = yield* PortForwards
+      const task = yield* fakeTask
+      const other = yield* fakeTask
+      yield* listOn(task, [5300], "192.168.1.5")
+      const e = yield* Effect.flip(forwards.forward(task, 5300))
+      assert.deepStrictEqual(
+        [e._tag, e._tag === "Unavailable" ? e.reason : ""],
+        ["Unavailable", "listens only on 192.168.1.5; tailcat v0.7.0 can only share servers on localhost"],
+      )
+      assert.isFalse(existsSync(argsFile(dir)))
+      // One on every address it shares as before.
+      yield* listOn(other, [5301], "0.0.0.0")
+      assert.match((yield* forwards.forward(other, 5301)).address, /^tcFAKE\d+$/)
+      assert.strictEqual(readFileSync(argsFile(dir), "utf8"), "--json serve --key=new 5301\n")
+    }),
+  )
+
+  test("says tailcat isn't installed when asked to share a server on another address", null, () =>
+    Effect.gen(function* () {
+      const forwards = yield* PortForwards
+      const task = yield* fakeTask
+      yield* listOn(task, [5400], "192.168.1.5")
+      const e = yield* Effect.flip(forwards.forward(task, 5400))
+      assert.match(e._tag === "Unavailable" ? e.reason : e._tag, /tailcat isn't installed on this host/)
     }),
   )
 })
