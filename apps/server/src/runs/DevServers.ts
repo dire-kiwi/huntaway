@@ -7,7 +7,7 @@ import { Leftovers } from "../tasks/Leftovers.ts"
 import { Events } from "../platform/Events.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
-import { commandLine, leftRunning, parseStat, parseTcp, shellsServe, shown, socketInode, taskOf } from "./devServers/proc.ts"
+import { commandLine, leftRunning, onLocalhost, parseStat, parseTcp, shellsServe, shown, socketInode, taskOf } from "./devServers/proc.ts"
 import type { Listening, SessionProc } from "./devServers/proc.ts"
 import { RunDir } from "./RunDir.ts"
 import { RunRepo } from "./RunRepo.ts"
@@ -251,12 +251,13 @@ export class DevServers extends Context.Service<DevServers, DevServersShape>()("
           const agent = own[0] ?? null
           for (const pid of byTask.get(task) ?? []) {
             if (own.includes(pid) || pid === process.pid) continue
-            for (const inode of yield* sockets(pid)) {
-              const l = now.get(inode)
-              if (l === undefined || found.some((f) => f.port === l.port && f.pid === pid)) continue
+            const held = (yield* sockets(pid)).flatMap((inode) => now.get(inode) ?? [])
+            for (const l of held) {
+              if (found.some((f) => f.port === l.port && f.pid === pid)) continue
               found.push({
                 port: l.port,
-                address: l.address,
+                // A port on several addresses (a socket each): listed on one reached as localhost if it has one (HE-85).
+                address: held.find((h) => h.port === l.port && onLocalhost(h.address))?.address ?? l.address,
                 pid,
                 pgid: (yield* stat(pid))?.pgid ?? pid,
                 command: commandLine((yield* readText(`/proc/${pid}/cmdline`)) ?? ""),

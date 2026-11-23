@@ -168,9 +168,9 @@ describe("tailcat's output", () => {
   })
 
   it("serves a server on another address than localhost through a port mapping", () => {
-    for (const local of [["127.0.0.1"], ["::1"], ["0.0.0.0"], ["::"], ["192.168.1.5", "127.0.0.1"]]) assert.strictEqual(serveTarget(5173, local), "5173")
-    assert.strictEqual(serveTarget(5173, ["192.168.1.5"]), "5173:192.168.1.5:5173")
-    assert.strictEqual(serveTarget(5173, ["fd7a::1"]), "5173:[fd7a::1]:5173")
+    for (const local of ["127.0.0.1", "::1", "0.0.0.0", "::"]) assert.strictEqual(serveTarget(5173, local), "5173")
+    assert.strictEqual(serveTarget(5173, "192.168.1.5"), "5173:192.168.1.5:5173")
+    assert.strictEqual(serveTarget(5173, "fd7a::1"), "5173:[fd7a::1]:5173")
     assert.isFalse(hasMappings(HELP_V070))
     assert.isTrue(hasMappings(HELP_MAPPINGS))
   })

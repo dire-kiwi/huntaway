@@ -121,6 +121,9 @@ describe("DevServers' /proc readers", () => {
       listed(4000, 2, "b"),
     ])
     assert.deepStrictEqual(shown(before, []), [])
+    // HE-85: of a port's, one reached as localhost, whichever was found first.
+    assert.deepStrictEqual(shown([], [listed(3000, 1, "a", "192.168.1.5"), listed(3000, 2, "a", "0.0.0.0")]), [listed(3000, 2, "a", "0.0.0.0")])
+    assert.deepStrictEqual(shown([], [listed(3000, 1, "a", "192.168.1.5")]), [listed(3000, 1, "a", "192.168.1.5")])
   })
 
   it("keeps that a port is shared with tailcat, by port", () => {
@@ -134,12 +137,17 @@ describe("DevServers' /proc readers", () => {
 
 const TestLive = DevServers.layer.pipe(Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, Leftovers.layer)), Layer.provideMerge(TestRuns()))
 
-/** A server on a free port started for `task`, in a process group of its own (`detached`) or the test's; killed with the scope. */
-const server = (task: TaskId, detached: boolean) =>
+/**
+ * A server on a free port started for `task`, in a process group of its own (`detached`) or the test's, listening on
+ * each of `hosts` in turn (a socket each, on one port); killed with the scope.
+ */
+const server = (task: TaskId, detached: boolean, hosts: ReadonlyArray<string> = ["127.0.0.1"]) =>
   Effect.gen(function* () {
     const port = yield* Deferred.make<number, string>()
     const exited = yield* Deferred.make<void>()
-    const script = "/* dev-server */ const s = require('node:net').createServer(); s.listen(0, '127.0.0.1', () => console.log('port ' + s.address().port))"
+    const script = `/* dev-server */ const net = require('node:net'); const hosts = [${hosts.map((h) => `'${h}'`).join(", ")}];
+const next = (i, port) => i === hosts.length ? console.log('port ' + port) : net.createServer().listen(port, hosts[i], function () { next(i + 1, this.address().port) });
+next(0, 0)`
     const child = yield* Effect.acquireRelease(
       Effect.sync(() => {
         const p = spawn(process.execPath, ["-e", script], { detached, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, [TASK_ENV]: task } })
@@ -255,6 +263,26 @@ describe("DevServers", () => {
       assert.deepStrictEqual([gone._tag, gone._tag === "Conflict" ? gone.detail : ""], ["Conflict", "that server isn't running any more"])
       // The stop looked again.
       assert.deepStrictEqual(yield* servers(task), [])
+    }),
+  )
+
+  test(
+    "lists a server on another address and on localhost as on localhost, and one only on another address as on that (HE-85)",
+    Effect.gen(function* () {
+      const dev = yield* DevServers
+      const task = yield* fakeTask
+      // 127.0.0.2 is loopback, but not localhost's address: tailcat would need a mapping for it. Its socket comes first.
+      const both = yield* server(task, true, ["127.0.0.2", "127.0.0.1"])
+      const only = yield* server(task, true, ["127.0.0.2"])
+      yield* dev.notifyRunEnded(task)
+      yield* dev.scan
+      assert.deepStrictEqual(
+        (yield* servers(task)).map((s) => [s.port, s.address]).toSorted(([a], [b]) => Number(a) - Number(b)),
+        [
+          [both.port, "127.0.0.1"],
+          [only.port, "127.0.0.2"],
+        ].toSorted(([a], [b]) => Number(a) - Number(b)),
+      )
     }),
   )
 })

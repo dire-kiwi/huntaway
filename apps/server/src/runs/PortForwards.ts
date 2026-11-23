@@ -10,7 +10,7 @@ import { Proc, WATCHDOG } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
-import { sharedSince } from "./devServers/proc.ts"
+import { onLocalhost, sharedSince } from "./devServers/proc.ts"
 
 // HE-81: a task's dev server (`Task.servers`, see `DevServers`) shared with tailcat (https://tailscale.com/tailcat), so
 // a client on another machine reaches it as its own localhost: the host runs `tailcat --json serve --key=new <port>`,
@@ -59,19 +59,13 @@ export const whyNotStarted = (code: number | null, stderr: string, bin: string):
   return last === "" ? `tailcat stopped${code === null ? "" : ` with exit code ${code}`} before it printed an address` : `tailcat: ${last}`
 }
 
-/** Whether a server on `address` is reached as localhost: on loopback, or on every address. */
-export const onLocalhost = (address: string): boolean => ["127.0.0.1", "::1", "0.0.0.0", "::"].includes(address)
-
 /**
- * What `tailcat serve` is given for a server on `port` that the task lists on `addresses`: the port, proxied to
- * localhost, when one is reached as localhost; else (HE-85) a mapping to the first, `port:address:port`, with an IPv6
- * address in brackets.
+ * What `tailcat serve` is given for a server on `port` that the task lists on `address`: the port, proxied to
+ * localhost, when it's reached as localhost; else (HE-85) a mapping, `port:address:port`, with an IPv6 address in
+ * brackets. A server on several addresses is listed on one reached as localhost if it has one (`shown`, `DevServers`).
  */
-export const serveTarget = (port: number, addresses: ReadonlyArray<string>): string => {
-  const only = addresses.find((a) => !onLocalhost(a))
-  if (only === undefined || addresses.some(onLocalhost)) return String(port)
-  return `${port}:${only.includes(":") ? `[${only}]` : only}:${port}`
-}
+export const serveTarget = (port: number, address: string): string =>
+  onLocalhost(address) ? String(port) : `${port}:${address.includes(":") ? `[${address}]` : address}:${port}`
 
 /** Whether `tailcat serve --help` tells of port mappings (`port:target`, after v0.7.0); v0.7.0's proxies to localhost only. */
 export const hasMappings = (help: string): boolean => /\bport mappings?\b/i.test(help)
@@ -144,16 +138,15 @@ export class PortForwards extends Context.Service<
         )
 
       /**
-       * The target `tailcat serve` can proxy to a server on `port` listed on `addresses` (HE-85). One that listens only
+       * The target `tailcat serve` can proxy to a server on `port` listed on `address` (HE-85). One that listens only
        * on another address needs a tailcat with port mappings: without, it fails `Unavailable`, as tailcat would proxy to
        * localhost, where nothing answers.
        */
-      const targetOf = Effect.fn("PortForwards.targetOf")(function* (port: number, addresses: ReadonlyArray<string>) {
-        const target = serveTarget(port, addresses)
+      const targetOf = Effect.fn("PortForwards.targetOf")(function* (port: number, address: string) {
+        const target = serveTarget(port, address)
         if (target === String(port) || hasMappings(yield* ask(["serve", "--help"]))) return target
         const version = (yield* ask(["version"]).pipe(Effect.orElseSucceed(() => ""))).trim()
-        const only = addresses.find((a) => !onLocalhost(a)) ?? ""
-        return yield* unavailable(`listens only on ${only}; tailcat ${version === "" ? "here" : version} can only share servers on localhost`)
+        return yield* unavailable(`listens only on ${address}; tailcat ${version === "" ? "here" : version} can only share servers on localhost`)
       })
 
       /**
@@ -239,8 +232,8 @@ export class PortForwards extends Context.Service<
         if (!Number.isInteger(port) || port <= 0 || port > 65535) return yield* new Invalid({ field: "port", reason: "bad port" })
         const row = yield* tasks.get(task)
         if (row === null) return yield* new TaskNotFound({ id: task })
-        const addresses = row.servers.filter((s) => s.port === port).map((s) => s.address)
-        if (addresses.length === 0) return yield* new NotFound({ what: "server", id: String(port) })
+        const server = row.servers.find((s) => s.port === port)
+        if (server === undefined) return yield* new NotFound({ what: "server", id: String(port) })
         const key = `${task}:${port}`
         // One start per share at a time, so two clicks don't start two; another port's or task's doesn't wait for it (HE-84).
         return yield* locks.withLock(["forward", key])(
@@ -250,7 +243,7 @@ export class PortForwards extends Context.Service<
               if (have.since !== undefined) yield* shownAs(task, port, marked(have.since))
               return have
             }
-            const target = yield* targetOf(port, addresses)
+            const target = yield* targetOf(port, server.address)
             const ready = yield* Deferred.make<PortForward, Unavailable>()
             yield* FiberMap.run(shares, key, share(task, port, target, key, ready))
             return yield* Deferred.await(ready).pipe(
