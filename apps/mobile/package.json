@@ -4,7 +4,7 @@
   "private": true,
   "description": "Huntaway's phone app (Expo, React Native): a board's projects, tasks, threads and prompts, on packages/client",
   "license": "MIT",
-  "main": "expo-router/entry",
+  "main": "src/index.ts",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",

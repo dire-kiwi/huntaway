@@ -210,6 +210,17 @@ export default defineConfig({
       // The /proc scan every start of an imported board makes (HE-71): ~30,000 fd links, which Effect's FileSystem (only
       // asynchronous calls) reads in twice the time of Node's synchronous ones. That file holds the scan and nothing else.
       { files: ["apps/server/src/platform/procFds.ts"], rules: { "effecttsgo/node-builtin-import": "off" } },
+      // The phone app's polyfills for what Hermes lacks (HE-98): adding `toSorted` and the like to Array.prototype is
+      // the point, built on the mutating `sort`/`reverse` of a copy. Its entry loads them, then Expo Router, by import.
+      {
+        files: ["apps/mobile/src/polyfills.ts", "apps/mobile/src/index.ts"],
+        rules: {
+          "no-extend-native": "off",
+          "unicorn/no-array-sort": "off",
+          "unicorn/no-array-reverse": "off",
+          "import/no-unassigned-import": "off",
+        },
+      },
       // Tests may use the test fixtures.
       { files: ["**/*.test.ts", "**/*.test.tsx", "**/tests/**"], rules: { "no-restricted-imports": "off" } },
       // The tools agents and tests drive the board with (ui-check.mjs and the like): plain Node scripts with a promise
