@@ -1169,20 +1169,45 @@ shape and its state modules are gone: `serverUrlAtom` and `tokenAtom` are set fr
   this board unpairs the phone first (`hub.devices.unpair`; a board token's `Invalid` is ignored). iOS asks for the
   local network (`NSLocalNetworkUsageDescription`). Plain HTTP to another machine is allowed with a warning (boards are reached over
   Tailscale and the like), so a release build allows cleartext (`expo-build-properties`, `NSAllowsArbitraryLoads`).
-- **Inbox**: every usable host's `permissions.pending` (read every 5 s while it shows: a prompt is no board event),
-  Allow or Deny in place, a question or plan opening its task; and the tasks in Needs attention with no prompt.
+- **The shape of it** (HE-99, a redesign for use on a phone): five tabs with icons (`@expo/vector-icons`' Ionicons),
+  Inbox, Tasks, Assistant, Docs and Board; a task and a plugin's page pushed over them. Menus, pickers and forms are
+  bottom sheets (`components/ui.tsx`' `Sheet`), buttons have a thumb's reach, and the colours are the web board's own
+  (`theme.ts`, index.css's `--color-*`). The profile shown is in the header of the screens that show one profile's
+  things (Tasks, Assistant, Docs), where it is changed. A note over the bottom of every screen says when the app is
+  finding the board again, or was turned down (`components/connection.tsx`).
+- **Inbox** (`state/inbox.ts`, `logic/inbox.ts`): every usable host's `permissions.pending` (read every 5 s while it or
+  its tab's count shows: a prompt is no board event), Allow or Deny in place with what the tool would do, a question or
+  plan opening its task; the tasks in Needs attention with no prompt; then the tasks new in In review (HE-65's mark).
+  Its tab counts what waits on an answer, and its top says how many agents are at work.
 - **Assistant**: the shown profile's, found with `assistantHome` and opened with `assistant.get` (`here`).
-- **Projects** and **a project**: the shown profile's projects on every host; a project's tasks by status, what needs
-  the user first, Done the latest 20; New task (`tasks.create` with `start`).
-- **A task**: Stop (`tasks.stop`), Start (an empty `tasks.send`), Move (`optimisticMove`), its thread (`threadAtom`,
-  `threadPreviewAtom`, `olderPage`) as rows (`src/logic/thread.ts`, a smaller cut of the web's `itemModel.ts`), its
-  requests' cards (`permissions.answer`; a board question's `threads.answerQuestion`), and the composer
-  (`sendMessage`).
-- **Board**: the board's sessions, its hosts, the profile shown (merged by name, kept), connecting another, forgetting.
+- **Tasks** (in place of Projects and a project's own screen): the shown profile's tasks by status, what needs the
+  user first, across its projects or in the one picked at the top (a sheet, with how much is going on in each); a
+  search by key and title; Backlog and Done folded until tapped (Done the latest 20); each task with its project, when
+  it last moved, its agent's state, a pull request's failed or running checks and why it needs attention; New task from
+  the + (`tasks.create` with `start`), for any of the profile's projects.
+- **A task**: its title, its status (a tap moves it: `optimisticMove`), its agent, its pull request with its checks,
+  and its agent's todo count; its thread (`threadAtom`, `threadPreviewAtom`, `olderPage`) as rows (`src/logic/thread.ts`,
+  a smaller cut of the web's `itemModel.ts`), where a run of tool calls is one line that opens (`foldTools`), a
+  document the agent published (`mcp__docs__publish_document`'s result) is a card that opens it, and a button comes
+  back to the latest; its requests' cards (`permissions.answer`; a board question's `threads.answerQuestion`); and the
+  composer (`sendMessage`), whose one button sends what is typed and, with nothing typed, stops the running agent
+  (`tasks.stop`), with the queued message above it. Behind ⋯: Start (an empty `tasks.send`) or Stop, Move, Details (the
+  description, the branch, the todo list, and the task's section of each plugin: the documents it published), the pull
+  request and the task on the web.
+- **Docs, and any plugin's page** (HE-99; [15-plugins.md](15-plugins.md#on-the-phone)): the Docs tab is the docs
+  plugin's home page for the shown profile (on the host that has it; a profile on several hosts says which), and
+  `app/page.tsx` is any page of a plugin's, `/<plugin>/<path>` on the board, on `pluginHost`'s host. The page is the
+  plugin's own HTML in a frame (`components/pluginFrame.tsx`), so a document reads, is commented on, answered and
+  sent as on the board. A link to a document or a task in a message, in a page or in a tool's result opens in the app
+  (`logic/links.ts`, `state/open.ts`); a link out of the app that a page asked for is asked about first.
+- **Board**: the board's sessions, its hosts, the profile shown (merged by name, kept), its plugins' other pages,
+  connecting another, forgetting (asked about first).
 
 Checked: its pure logic in `pnpm test` (`apps/mobile/tests`); the type check and lint in `pnpm check`; the screens on
 its web build (`pnpm --filter huntaway-mobile export:web`, served on a free port, driven by `scripts/ui-check.mjs`)
-against a test server with the fake agent; `expo export --platform android` (Hermes bytecode). Not yet on a phone.
+against a test server with the fake agent; `expo export --platform android` (Hermes bytecode). Not yet on a phone:
+HE-99's screens and its documents were driven on the web build, where a plugin's page is a sandboxed `<iframe>`; the
+web view a phone shows it in (`components/frameView.tsx`) bundles and has not run.
 
 What is left, a task each:
 

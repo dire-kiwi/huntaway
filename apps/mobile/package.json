@@ -15,13 +15,16 @@
   "dependencies": {
     "@effect/atom-react": "catalog:",
     "@expo/metro-runtime": "58.0.17",
+    "@expo/vector-icons": "15.1.1",
     "@huntaway/a2ui": "workspace:*",
     "@huntaway/client": "workspace:*",
     "@huntaway/contracts": "workspace:*",
+    "@huntaway/shared": "workspace:*",
     "effect": "catalog:",
     "expo": "58.0.25",
     "expo-build-properties": "58.0.12",
     "expo-constants": "58.0.16",
+    "expo-font": "58.0.12",
     "expo-linking": "58.0.17",
     "expo-network": "58.0.5",
     "expo-router": "58.0.31",
@@ -38,6 +41,7 @@
     "react-native-safe-area-context": "5.11.1",
     "react-native-screens": "4.30.1",
     "react-native-web": "0.21.4",
+    "react-native-webview": "14.0.1",
     "scheduler": "0.28.0"
   },
   "devDependencies": {

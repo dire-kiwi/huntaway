@@ -15,21 +15,22 @@ import { useBoard, useProfile } from "../../state/board"
 
 function AssistantThread({ host, taskId }: { readonly host: string; readonly taskId: string }) {
   const task = useAtomValue(taskAtom({ host_id: host, id: taskId }))
-  if (task === undefined) return <Empty title="Opening your assistant…" />
+  if (task === undefined) return <Empty icon="sparkles-outline" title="Opening your assistant…" />
   return (
     <>
       <View style={{ flex: 1 }}>
         <ThreadView host={host} task={task} emptyTitle="Ask your assistant anything." />
       </View>
-      <Composer host={host} taskId={taskId} placeholder="Ask your assistant" />
+      <Composer host={host} taskId={taskId} running={task.running} queued={task.queued_message} placeholder="Ask your assistant" />
     </>
   )
 }
 
 function AssistantOf({ host, profileId }: { readonly host: string; readonly profileId: string }) {
   const result = useAtomValue(query("assistant.get", host, { profile_id: ProfileId.make(profileId), here: true }))
-  if (AsyncResult.isFailure(result)) return <Empty title={`Your assistant can't be opened: ${errorText(Cause.squash(result.cause))}`} />
-  if (!AsyncResult.isSuccess(result)) return <Empty title="Opening your assistant…" />
+  if (AsyncResult.isFailure(result))
+    return <Empty icon="alert-circle-outline" title="Your assistant can't be opened." hint={errorText(Cause.squash(result.cause))} />
+  if (!AsyncResult.isSuccess(result)) return <Empty icon="sparkles-outline" title="Opening your assistant…" />
   return <AssistantThread host={host} taskId={result.value.id} />
 }
 

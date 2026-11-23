@@ -1,4 +1,4 @@
-import type { Board } from "@huntaway/client"
+import { type Board, pluginHost } from "@huntaway/client"
 import { ChevronLeft } from "lucide-react"
 import { useEffect, useState } from "react"
 import { parse, parseModal, parsePanel, type Route } from "../../router"
@@ -6,7 +6,6 @@ import { useBoard } from "../../state/board"
 import { navigate, useCameFrom, usePluginQuery } from "../../state/route"
 import { MenuButton } from "../ui"
 import { PluginFrame } from "./PluginFrame"
-import { pluginHost } from "./pluginHost"
 import { usePluginList } from "./usePlugins"
 
 // HE-34: a plugin's own page, `/<plugin id>/<path>` (docs/plan/15-plugins.md, Pages), on the page's own host: its frame

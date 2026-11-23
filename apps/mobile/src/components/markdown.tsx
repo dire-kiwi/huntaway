@@ -3,11 +3,13 @@ import { fromMarkdown } from "mdast-util-from-markdown"
 import { gfmFromMarkdown } from "mdast-util-gfm"
 import { gfm } from "micromark-extension-gfm"
 import { memo, type ReactNode } from "react"
-import { Linking, Platform, ScrollView, StyleSheet, Text, View } from "react-native"
+import { Platform, ScrollView, StyleSheet, Text, View } from "react-native"
+import { openMessageLink } from "../state/open"
 import { colors } from "../theme"
 
 // Markdown as React Native views (the old app's markdown.tsx): parsed with mdast-util-from-markdown (GitHub's flavour),
-// as the web board's is, and drawn here, so there is no web view or HTML. Images aren't fetched; links open the browser.
+// as the web board's is, and drawn here, so there is no web view or HTML. Images aren't fetched; a link to one of the
+// board's documents or tasks opens in the app (HE-99), any other in the browser.
 
 export function parseMarkdown(text: string): Root {
   try {
@@ -20,10 +22,6 @@ export function parseMarkdown(text: string): Root {
 const mono = Platform.select({ ios: "Menlo", default: "monospace" })
 
 const childrenOf = (n: Nodes): ReadonlyArray<RootContent> => ("children" in n ? n.children : [])
-
-const openLink = (url: string): void => {
-  if (/^https?:|^mailto:/i.test(url)) void Linking.openURL(url)
-}
 
 function inline(nodes: ReadonlyArray<Nodes>, key: string): Array<ReactNode> {
   return nodes.map((n, i) => inlineNode(n, `${key}${i}`))
@@ -41,7 +39,7 @@ function inlineNode(n: Nodes, k: string): ReactNode {
     )
   if (n.type === "link")
     return (
-      <Text key={k} style={st.link} onPress={() => openLink(n.url)}>
+      <Text key={k} style={st.link} onPress={() => openMessageLink(n.url)}>
         {inline(n.children, k)}
       </Text>
     )
@@ -128,22 +126,22 @@ export const Markdown = memo(function Markdown({ text }: { readonly text: string
 })
 
 const st = StyleSheet.create({
-  root: { gap: 6 },
-  p: { color: colors.fg, fontSize: 15, lineHeight: 21 },
+  root: { gap: 8 },
+  p: { color: colors.fg, fontSize: 16, lineHeight: 23 },
   h: { fontWeight: "700", marginTop: 4 },
-  h1: { fontSize: 17 },
+  h1: { fontSize: 18 },
   strong: { fontWeight: "700" },
   em: { fontStyle: "italic" },
   del: { textDecorationLine: "line-through" },
-  code: { fontFamily: mono, fontSize: 13, backgroundColor: colors.raised, color: "#e5c07b" },
+  code: { fontFamily: mono, fontSize: 14, backgroundColor: colors.raised, color: "#e5c07b" },
   link: { color: colors.accent, textDecorationLine: "underline" },
   pre: { backgroundColor: colors.raised, borderRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
-  preInner: { padding: 8 },
-  preText: { fontFamily: mono, fontSize: 12.5, color: colors.fg },
+  preInner: { padding: 10 },
+  preText: { fontFamily: mono, fontSize: 13, lineHeight: 19, color: colors.fg },
   quote: { borderLeftWidth: 3, borderLeftColor: colors.line, paddingLeft: 10, gap: 6 },
   list: { gap: 4 },
   item: { flexDirection: "row", gap: 6 },
-  bullet: { color: colors.muted, fontSize: 15, lineHeight: 21, minWidth: 14 },
+  bullet: { color: colors.muted, fontSize: 16, lineHeight: 23, minWidth: 14 },
   itemBody: { flex: 1, gap: 4 },
   hr: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line, marginVertical: 6 },
   table: { borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, borderRadius: 4 },
