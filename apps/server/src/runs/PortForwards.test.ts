@@ -1,9 +1,9 @@
 import { assert, describe, it } from "@effect/vitest"
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { setImmediate } from "node:timers/promises"
-import { Effect, Layer, Stream } from "effect"
+import { Effect, Fiber, Layer, Stream } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { fakeTask, TestRuns } from "@huntaway/testing"
@@ -14,24 +14,57 @@ import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { CHECK_EVERY, listenAddressOf, PortForwards, whyNotStarted } from "./PortForwards.ts"
 
 // HE-81: sharing a task's dev server with tailcat, against fake tailcats: one that prints an address as `tailcat --json
-// serve` does and stays, one that fails as tailcat does when it can't reach a relay, and none at all.
+// serve` does and stays, one that fails as tailcat does when it can't reach a relay, and none at all. HE-84: one slow to
+// start beside a quick one, and one whose reason comes after it exits.
 
-const dir = mkdtempSync(join(tmpdir(), "huntaway-tailcat-"))
-const fake = (name: string, body: string) => {
+/** A folder for a test's fake tailcats, removed after it. */
+const fakesDir = Effect.acquireRelease(
+  Effect.sync(() => mkdtempSync(join(tmpdir(), "huntaway-tailcat-"))),
+  (dir) => Effect.sync(() => rmSync(dir, { recursive: true, force: true })),
+)
+
+/** A fake tailcat `name` in `dir`, running `body`. */
+const fake = (dir: string, name: string, body: string) => {
   const file = join(dir, name)
   writeFileSync(file, `#!/bin/bash\n${body}\n`)
   chmodSync(file, 0o755)
   return file
 }
-const argsFile = join(dir, "args")
-const serving = fake(
-  "tailcat",
-  `echo "$*" >> ${argsFile}\necho "# 🐈 Server listening with new address: tcFAKE$$" >&2\necho '{"listenAddr":"tcFAKE'$$'"}'\nexec sleep 600`,
-)
-const failing = fake(
-  "tailcat-fails",
-  `echo "# Selected bootstrap relay region 302, San Francisco" >&2\necho "2026/11/23 11:53:01 couldn't reach the relay" >&2\nexit 1`,
-)
+/** Where the fakes write the arguments they're started with, a line each. */
+const argsFile = (dir: string) => join(dir, "args")
+const serving = (dir: string) =>
+  fake(
+    dir,
+    "tailcat",
+    `echo "$*" >> ${argsFile(dir)}\necho "# 🐈 Server listening with new address: tcFAKE$$" >&2\necho '{"listenAddr":"tcFAKE'$$'"}'\nexec sleep 600`,
+  )
+const failing = (dir: string) =>
+  fake(dir, "tailcat-fails", `echo "# Selected bootstrap relay region 302, San Francisco" >&2\necho "2026/11/23 11:53:01 couldn't reach the relay" >&2\nexit 1`)
+/**
+ * One whose reason comes after it exits, as the end of its stderr may be read after its exit is seen: written by a
+ * process in a session of its own (so the watchdog's kill doesn't reach it) once tailcat is gone.
+ */
+const failingLate = (dir: string) =>
+  fake(
+    dir,
+    "tailcat-fails-late",
+    `setsid bash -c 'touch "$2"; while kill -0 "$1" 2>/dev/null; do sleep 0.01; done; sleep 0.2; echo "# no relay would take us" >&2' _ $$ ${join(dir, "late")} </dev/null >/dev/null &
+echo "# Selected bootstrap relay region 302, San Francisco" >&2
+# Not before that's in its own session, out of reach of the kill of tailcat's process group as it exits.
+while [ ! -e ${join(dir, "late")} ]; do sleep 0.01; done
+exit 1`,
+  )
+/** Port 5101's is slow: it prints its address once sent SIGUSR1 (its pid in `slow.pid`). Every other port's is quick. */
+const slowOn5101 = (dir: string) =>
+  fake(
+    dir,
+    "tailcat-slow",
+    `echo "$4" >> ${argsFile(dir)}
+if [ "$4" != 5101 ]; then echo '{"listenAddr":"tcQUICK'$$'"}'; exec sleep 600; fi
+trap 'echo "{\\"listenAddr\\":\\"tcSLOW$$\\"}"' USR1
+echo $$ > ${join(dir, "slow.pid")}
+while :; do sleep 600 & wait $!; done`,
+  )
 
 const listOn = (task: TaskId, ports: ReadonlyArray<number>) =>
   Effect.gen(function* () {
@@ -80,11 +113,27 @@ const gone = (pid: number) =>
 const live = (tailcatBin: string | null) =>
   PortForwards.layer.pipe(Layer.provideMerge(TaskRepo.layer), Layer.provideMerge(TestRuns(undefined, tailcatBin === null ? {} : { tailcatBin })))
 
+/** A test of `body` with the fake tailcat `tailcat` makes in its folder (none, for null). */
 const test = <A, E>(
   name: string,
-  tailcatBin: string | null,
-  body: Effect.Effect<A, E, PortForwards | TaskRepo | Scope.Scope | Layer.Success<ReturnType<typeof live>>>,
-) => it.effect(name, () => body.pipe(Effect.scoped, Effect.provide(live(tailcatBin))), 20_000)
+  tailcat: ((dir: string) => string) | null,
+  body: (dir: string) => Effect.Effect<A, E, PortForwards | TaskRepo | Scope.Scope | Layer.Success<ReturnType<typeof live>>>,
+) =>
+  it.effect(
+    name,
+    () => Effect.scoped(Effect.flatMap(fakesDir, (dir) => body(dir).pipe(Effect.scoped, Effect.provide(live(tailcat === null ? null : tailcat(dir)))))),
+    20_000,
+  )
+
+/** Once `file` is there, after turns of the event loop (no sleep: the fake tailcat writing it is real). */
+const appeared = (file: string) =>
+  Effect.gen(function* () {
+    for (let i = 0; i < 100_000; i++) {
+      if (existsSync(file)) return readFileSync(file, "utf8")
+      yield* Effect.promise(() => setImmediate())
+    }
+    return assert.fail(`${file} never appeared`)
+  })
 
 describe("tailcat's output", () => {
   it("reads the address from `tailcat --json serve`", () => {
@@ -101,9 +150,7 @@ describe("tailcat's output", () => {
 })
 
 describe("PortForwards", () => {
-  test(
-    "shares a task's server once, until the task no longer lists it",
-    serving,
+  test("shares a task's server once, until the task no longer lists it", serving, (dir) =>
     Effect.gen(function* () {
       const forwards = yield* PortForwards
       const task = yield* fakeTask
@@ -116,7 +163,7 @@ describe("PortForwards", () => {
       assert.isString(first.since)
       assert.deepStrictEqual(yield* shownShared(task), [[4173, first.since ?? null]])
       assert.strictEqual(yield* nextShown(watch.live), first.since)
-      assert.include(readFileSync(argsFile, "utf8"), "--json serve --key=new 4173")
+      assert.include(readFileSync(argsFile(dir), "utf8"), "--json serve --key=new 4173")
       // Asked again: the same share.
       assert.deepStrictEqual(yield* forwards.forward(task, 4173), first)
       // A port the task doesn't list, and one that isn't a port.
@@ -134,9 +181,7 @@ describe("PortForwards", () => {
     }),
   )
 
-  test(
-    "shows the share ended when tailcat exits, and asks again for a new one",
-    serving,
+  test("shows the share ended when tailcat exits, and asks again for a new one", serving, () =>
     Effect.gen(function* () {
       const forwards = yield* PortForwards
       const task = yield* fakeTask
@@ -159,9 +204,7 @@ describe("PortForwards", () => {
     }),
   )
 
-  test(
-    "shows no server shared as the board starts",
-    null,
+  test("shows no server shared as the board starts", null, () =>
     Effect.gen(function* () {
       const repo = yield* TaskRepo
       const task = yield* fakeTask
@@ -185,9 +228,7 @@ describe("PortForwards", () => {
     }),
   )
 
-  test(
-    "says what tailcat said when it doesn't start",
-    failing,
+  test("says what tailcat said when it doesn't start", failing, () =>
     Effect.gen(function* () {
       const forwards = yield* PortForwards
       const task = yield* fakeTask
@@ -197,15 +238,51 @@ describe("PortForwards", () => {
     }),
   )
 
-  test(
-    "says tailcat isn't installed",
-    null,
+  test("says tailcat isn't installed", null, () =>
     Effect.gen(function* () {
       const forwards = yield* PortForwards
       const task = yield* fakeTask
       yield* listOn(task, [5000])
       const e = yield* Effect.flip(forwards.forward(task, 5000))
       assert.match(e._tag === "Unavailable" ? e.reason : e._tag, /tailcat isn't installed on this host/)
+    }),
+  )
+
+  test("says tailcat's reason when the last of its stderr comes after it exits", failingLate, () =>
+    Effect.gen(function* () {
+      const forwards = yield* PortForwards
+      const task = yield* fakeTask
+      yield* listOn(task, [5000])
+      const e = yield* Effect.flip(forwards.forward(task, 5000))
+      assert.strictEqual(e._tag === "Unavailable" ? e.reason : e._tag, "tailcat: no relay would take us")
+    }),
+  )
+
+  test("a slow start doesn't hold up another port's, and two asks of one port start one tailcat", slowOn5101, (dir) =>
+    Effect.gen(function* () {
+      const forwards = yield* PortForwards
+      const task = yield* fakeTask
+      const other = yield* fakeTask
+      yield* listOn(task, [5101, 5102])
+      yield* listOn(other, [5103])
+      // Two clicks on the slow port, and its tailcat started.
+      const first = yield* Effect.forkChild(forwards.forward(task, 5101))
+      const second = yield* Effect.forkChild(forwards.forward(task, 5101))
+      const pid = Number(yield* appeared(join(dir, "slow.pid")))
+      // Meanwhile, the task's other port and another task's: no wait for it.
+      assert.match((yield* forwards.forward(task, 5102)).address, /^tcQUICK\d+$/)
+      assert.match((yield* forwards.forward(other, 5103)).address, /^tcQUICK\d+$/)
+      // It prints its address: both clicks get it, from the one tailcat.
+      process.kill(pid, "SIGUSR1")
+      const a = yield* Fiber.join(first)
+      assert.strictEqual(a.address, `tcSLOW${pid}`)
+      assert.deepStrictEqual(yield* Fiber.join(second), a)
+      assert.deepStrictEqual(
+        readFileSync(argsFile(dir), "utf8")
+          .split("\n")
+          .filter((l) => l === "5101"),
+        ["5101"],
+      )
     }),
   )
 })

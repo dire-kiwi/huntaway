@@ -26,6 +26,8 @@ export type LockKey =
   | readonly ["workflowRun", string]
   // HE-61: a thread's suggestions cards, one row acted on at a time (before the task's lock of the row's task).
   | readonly ["suggestions", string]
+  // HE-84: a task's server on one port shared with tailcat (`task:port`), one start at a time (before the task's lock).
+  | readonly ["forward", string]
 
 export interface KeyedLockShape {
   /** One holder per key at a time, waiters in order, released on any exit. */
