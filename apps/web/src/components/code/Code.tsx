@@ -1,13 +1,15 @@
 // HE-79: the Code tab: a task's files as they are in its working tree (where the Changes tab looks: its worktree once
 // ready, else its project's repository). The tree and a finder on the left (`t`), the file in the middle, highlighted,
 // and on the right where the name clicked in it is defined and used, or the file's outline. A Markdown file shows as
-// its preview first. The places gone to are kept, to go back to (the back button, Alt+←).
+// its preview first. The places gone to are kept, to go back to (the back button, Alt+←). HE-90: what git ignores, when
+// it's shown, with what's in the ignored folders opened.
 import { useAtom, useAtomValue } from "@effect/atom-react"
 import { query, type HostTask as Task, type QueryOptions } from "@huntaway/client"
-import { TaskId, type GitFileContent } from "@huntaway/contracts"
+import { TaskId, type GitFileContent, type GitTree } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { ArrowLeft, Copy, FolderTree, ListTree } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react"
+import { codeIgnoredAtom } from "../../state/prefs"
 import { useVisible } from "../../state/visibility"
 import { langFor } from "../changes/highlight"
 import { statusQuery } from "../changes/git/useGitStatus"
@@ -17,7 +19,7 @@ import { FileTree } from "./FileTree"
 import { CodeLines } from "./FileView"
 import { codeState, goBack, goTo, toggleFolder } from "./state"
 import { OutlinePanel, SymbolPanel } from "./SymbolPanel"
-import { ancestors } from "./tree"
+import { ancestors, openIgnored } from "./tree"
 
 /** Below this width the tree and the file take turns, and the side panel goes under the file. */
 const NARROW = 760
@@ -32,9 +34,19 @@ export function CodeView({ task }: { task: Task }) {
   const visible = useVisible()
   // Read again every few seconds while the page is shown, as the agent may be changing them.
   const reads: QueryOptions = { refresh: visible ? "10 seconds" : undefined, focus: true }
-  const treeResult = useAtomValue(query("git.files", h, { id }, reads))
   const status = resultValue(useAtomValue(statusQuery(h, task.id)))
-  const [s, setS] = useAtom(codeState(`${h}:${task.id}`))
+  const key = `${h}:${task.id}`
+  const [s, setS] = useAtom(codeState(key))
+  const [ignoredFlag, setIgnoredFlag] = useAtom(codeIgnoredAtom)
+  const showIgnored = ignoredFlag === "1"
+  // The last tree read: which of its open folders are ignored ones (listed only when asked), and shown while the tree
+  // is read again with another folder opened.
+  const [last, setLast] = useState<{ readonly key: string; readonly tree: GitTree } | null>(null)
+  const lastTree = last?.key === key ? last.tree : undefined
+  const opened = useMemo(() => (showIgnored ? openIgnored(lastTree?.ignored ?? [], s.open) : []), [showIgnored, lastTree, s.open])
+  const treeResult = useAtomValue(query("git.files", h, showIgnored ? { id, ignored: true, open: opened } : { id }, reads))
+  const fresh = resultValue(treeResult)
+  if (fresh !== undefined && fresh !== lastTree) setLast({ key, tree: fresh })
   const root = useRef<HTMLDivElement>(null)
   const filterRef = useRef<HTMLInputElement>(null)
   const [narrow, setNarrow] = useState(false)
@@ -54,7 +66,7 @@ export function CodeView({ task }: { task: Task }) {
     return () => ro.disconnect()
   }, [])
 
-  const tree = resultValue(treeResult)
+  const tree = fresh ?? lastTree
   const folder = tree?.folder ?? ""
   // A README at the top of the project's folder shows until a file is picked.
   const readme = tree?.files.find((p) => p.startsWith(folder) && README.test(p.slice(folder.length)))
@@ -133,15 +145,25 @@ export function CodeView({ task }: { task: Task }) {
     />
   ) : null
 
+  const treeOf = (t: GitTree) =>
+    t.available ? (
+      <FileTree
+        tree={t}
+        changed={status?.files ?? []}
+        open={s.open}
+        at={at?.path ?? null}
+        filterRef={filterRef}
+        showIgnored={showIgnored}
+        onIgnored={(show) => setIgnoredFlag(show ? "1" : "0")}
+        onOpen={openFile}
+        onToggle={toggle}
+      />
+    ) : (
+      <div className="p-3 text-[12.5px] text-muted">No files to show: {t.reason ?? "not a git repository"}.</div>
+    )
   const treeView = (
-    <Loading result={treeResult}>
-      {(t) =>
-        t.available ? (
-          <FileTree tree={t} changed={status?.files ?? []} open={s.open} at={at?.path ?? null} filterRef={filterRef} onOpen={openFile} onToggle={toggle} />
-        ) : (
-          <div className="p-3 text-[12.5px] text-muted">No files to show: {t.reason ?? "not a git repository"}.</div>
-        )
-      }
+    <Loading result={treeResult} {...(lastTree ? { waiting: treeOf(lastTree) } : {})}>
+      {treeOf}
     </Loading>
   )
 

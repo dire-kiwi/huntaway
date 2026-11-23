@@ -403,6 +403,10 @@ two tool-call test cases.
   project's folder when that is part of one; git with no optional locks and the location variables cleared.
 - **`git.files`.** `ls-files -z --cached --stage` (less submodules, mode 160000) and `--others --exclude-standard` (less
   an untracked repository of its own, listed as its folder with a slash), less `--deleted`, sorted, at most 50,000.
+  HE-90: with `ignored`, `ignored` has `ls-files -z --others --ignored --exclude-standard --directory` (an ignored folder
+  as one entry ending in `/`, so `node_modules` isn't listed whole) and, for each of `open` (at most 200) that is an
+  ignored folder or in one, what's in it one level from the file system (at most 5,000 each; `.git` left out, none
+  through a link out of the repository, its `.git` or the project's folder).
 - **`git.readFile`.** Read from the working tree as it is (not from the index or a commit). Refused (`Invalid`, field
   `path`): a path with `..`, absolute, with a `.git` component (in any case, as a file system may ignore it), outside the project's folder, a link whose target is
   outside the repository (`realPath` compared with the top's) or, from the top, in `.git` or outside the project's

@@ -21,16 +21,27 @@ const SNIFF = 8000
 /** Lines a symbol's search returns at most, and how much of a line's text. */
 export const MAX_HITS = 1000
 const MAX_HIT_TEXT = 400
+/** HE-90: ignored folders opened at most in one listing, and what's listed of each. */
+export const MAX_OPEN = 200
+export const MAX_IN_FOLDER = 5000
 /** What of `git grep`'s output is read (it's cut there). */
 const MAX_GREP = 4 * 1024 * 1024
 
 export interface FilesTabShape {
-  /** The working tree's files (but what git ignores), from the top of the repository; `available: false` when it isn't one. */
-  readonly files: (task: TaskId) => Effect.Effect<GitTree, ChangesError>
+  /**
+   * The working tree's files (but what git ignores), from the top of the repository; `available: false` when it isn't one.
+   * With `ignored`, what git ignores too (its folders as one entry each), and what's in the ignored folders `open` names.
+   */
+  readonly files: (task: TaskId, options?: FilesOptions) => Effect.Effect<GitTree, ChangesError>
   /** A file's contents, from the top of the repository: none in `.git`, outside the project's folder or through a link out of it. */
   readonly read: (task: TaskId, path: string) => Effect.Effect<GitFileContent, ChangesError>
   /** The lines `name` is on as a word, the ones defining it first, and `from`'s (the file it was looked up in) before others'. */
   readonly symbol: (task: TaskId, name: string, from: string | undefined) => Effect.Effect<GitSymbol, ChangesError>
+}
+
+export interface FilesOptions {
+  readonly ignored?: boolean
+  readonly open?: ReadonlyArray<string>
 }
 
 const invalid = (field: string, reason: string) => new ChangesInvalid({ field, reason })
@@ -47,6 +58,17 @@ const decode = (bytes: Uint8Array): { readonly text: string; readonly utf8: bool
 
 /** The end of a git command's arguments: the project's folder, when it's part of the repository. */
 const scope = (folder: string | null) => ["--", ...(folder !== null ? [folder] : [])]
+
+/** Why `p` (from the top) isn't a file of the view: in `.git` (in any case: a file system may ignore it), or outside the project's folder. */
+const outsideView = (p: string, folder: string | null) =>
+  (p.split("/").some((c) => c.toLowerCase() === ".git") ? `not a file of the working tree: ${p}` : null) ?? (folder !== null ? outsideFolder(p, folder) : null)
+
+/** `ls-files -z`'s entries; the last one may have been cut short. */
+const entries = (o: { readonly stdout: Uint8Array; readonly truncated: boolean }) => {
+  const list = lossy.decode(o.stdout).split("\0")
+  if (o.truncated) list.pop()
+  return list
+}
 
 /** `git grep -n -z`'s lines: the path, the line's number and its text, NUL apart. */
 export function parseGrep(out: string, name: string): Array<GitSymbolHit> {
@@ -104,7 +126,43 @@ export class FilesTab extends Context.Service<FilesTab, FilesTabShape>()("huntaw
         return repo
       })
 
-      const files = Effect.fn("FilesTab.files")(function* (id: TaskId) {
+      /** What's in `path` (an ignored folder, from the top), one level: its folders end in `/`. None through a link out of the view. */
+      const listFolder = Effect.fnUntraced(function* (top: string, folder: string | null, path: string) {
+        const none: ReadonlyArray<string> = []
+        const realTop = yield* fs.realPath(top).pipe(Effect.orElseSucceed(() => top))
+        const real = yield* fs.realPath(`${top}/${path}`).pipe(Effect.orElseSucceed(() => null))
+        if (real === null || !real.startsWith(`${realTop}/`) || outsideView(real.slice(realTop.length + 1), folder) !== null) return none
+        const names = yield* fs.readDirectory(real).pipe(Effect.orElseSucceed(() => none))
+        const listed = yield* Effect.forEach(
+          names.filter((n) => n.toLowerCase() !== ".git").slice(0, MAX_IN_FOLDER),
+          (name) =>
+            fs.stat(`${real}/${name}`).pipe(
+              Effect.map((info) => (info.type === "Directory" ? [`${path}/${name}/`] : info.type === "File" ? [`${path}/${name}`] : [])),
+              Effect.orElseSucceed(() => [`${path}/${name}`]),
+            ),
+          { concurrency: 32 },
+        )
+        return listed.flat()
+      })
+
+      /** HE-90: what git ignores, its folders as one entry each, and what's in the ignored folders `open` names. */
+      const ignoredOf = Effect.fnUntraced(function* (top: string, folder: string | null, open: ReadonlyArray<string>) {
+        const o = yield* run(
+          top,
+          ["--literal-pathspecs", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", ...scope(folder)],
+          8 * 1024 * 1024,
+        )
+        if (!o.ok) return yield* invalid("repository", o.stderr.trim() || "git ls-files failed")
+        const listed = entries(o).filter((p) => p !== "")
+        const folders = listed.filter((p) => p.endsWith("/"))
+        const inIgnored = (p: string) => folders.some((f) => `${p}/`.startsWith(f))
+        const opened = open.filter((p) => badPath(p) === null && outsideView(p, folder) === null && inIgnored(p)).slice(0, MAX_OPEN)
+        const more = yield* Effect.forEach(opened, (p) => listFolder(top, folder, p), { concurrency: 4 })
+        const all = [...new Set([...listed, ...more.flat()])].toSorted()
+        return { ignored: all.slice(0, MAX_FILES), truncated: o.truncated || all.length > MAX_FILES }
+      })
+
+      const files = Effect.fn("FilesTab.files")(function* (id: TaskId, options?: FilesOptions) {
         const repo = yield* repoOf(id)
         if (repo === null) return { available: false, reason: "not a git repository", files: [], truncated: false } satisfies GitTree
         const { top, folder } = repo
@@ -117,12 +175,6 @@ export class FilesTab extends Context.Service<FilesTab, FilesTabShape>()("huntaw
         // Files deleted from the working tree are still in the index: they aren't there to read.
         const deleted = yield* run(top, ["--literal-pathspecs", "ls-files", "-z", "--deleted", ...scope(folder)])
         const gone = new Set(lossy.decode(deleted.stdout).split("\0"))
-        const entries = (o: { readonly stdout: Uint8Array; readonly truncated: boolean }) => {
-          const list = lossy.decode(o.stdout).split("\0")
-          // The last one may have been cut short.
-          if (o.truncated) list.pop()
-          return list
-        }
         const cached = entries(tracked).flatMap((e) => {
           const tab = e.indexOf("\t")
           return tab < 0 || e.startsWith("160000 ") ? [] : [e.slice(tab + 1)]
@@ -130,16 +182,16 @@ export class FilesTab extends Context.Service<FilesTab, FilesTabShape>()("huntaw
         const all = [...new Set([...cached, ...entries(others)])].filter((p) => p !== "" && !p.endsWith("/") && !gone.has(p))
         const listed = { truncated: tracked.truncated || others.truncated }
         all.sort()
-        const result: GitTree = { available: true, folder, files: all.slice(0, MAX_FILES), truncated: listed.truncated || all.length > MAX_FILES }
-        return result
+        const truncated = listed.truncated || all.length > MAX_FILES
+        const result: GitTree = { available: true, folder, files: all.slice(0, MAX_FILES), truncated }
+        if (options?.ignored !== true) return result
+        const ignored = yield* ignoredOf(top, folder, options.open ?? [])
+        return { available: true, folder, files: result.files, truncated: truncated || ignored.truncated, ignored: ignored.ignored } satisfies GitTree
       })
 
       const read = Effect.fn("FilesTab.read")(function* (id: TaskId, path: string) {
         const { top, folder } = yield* need(id)
-        /** Why `p` (from the top) isn't a file of the view: in `.git` (in any case: a file system may ignore it), or outside the project's folder. */
-        const outside = (p: string) =>
-          (p.split("/").some((c) => c.toLowerCase() === ".git") ? `not a file of the working tree: ${path}` : null) ??
-          (folder !== null ? outsideFolder(p, folder) : null)
+        const outside = (p: string) => outsideView(p, folder)
         const bad = badPath(path) ?? outside(path)
         if (bad !== null) return yield* invalid("path", bad)
         const missing = () => invalid("path", `no such file: ${path}`)

@@ -309,6 +309,11 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   (`git.readFile`) highlighted by the Changes tab's Shiki worker (`useTextHighlight` in `changes/highlight.ts`, files of
   up to 20,000 lines), a Markdown file as its preview first, and the README of the project's folder until a file is
   picked. Over 3,000 lines only the lines in view (and 80 each side) are drawn.
+- **Ignored files (HE-90).** Dotfiles git tracks or would are always listed. The eye button beside the finder
+  (`ia.code.ignored`, `codeIgnoredAtom`) shows what git ignores too, dimmed (`.env`, `node_modules/`…): `git.files` is
+  asked with `ignored` and the open folders that are ignored ones (`openIgnored`), so an ignored folder's contents are
+  read as it's opened, the last tree shown meanwhile. An ignored folder is never folded into one row with its only
+  folder. Its files are in the finder once listed.
 - **Symbols.** A click on a name (not a drag) takes the word under the caret (`wordAt`: not a keyword, unless it's a
   member's name after `.` or `::`) and looks it up (`git.symbol`):
   the side panel lists its definitions and uses by file, its uses in the file are marked, and a hit opens its file at
