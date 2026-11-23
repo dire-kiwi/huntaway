@@ -1022,6 +1022,20 @@ server can't transcribe, greyed out where the page can't use a microphone (not h
 installed it opens Settings → Voice input (`settings/Voice.tsx`: the models, Download with its progress, Cancel, Use,
 Remove). The desktop app's macOS build gives the reason macOS asks for (`NSMicrophoneUsageDescription`).
 
+### As built in HE-101: `/rewind`
+
+The composer's `/rewind`, as Claude Code has it, to reword a prompt that left something out. It is the composer's own
+command (`task/rewindCommand.ts`), never sent: the `/` menu lists it for a task with a worktree of its own (the only
+threads with checkpoints), and picking it, or sending `/rewind` on its own, empties the field and opens `RewindCommand`
+(`task/Rewind.tsx`). That lists the user's messages a rewind can go back to before, newest first (each message's first
+turn from `checkpoints.turns`, without those already rewound past; Up and Down move between them, and one that can't be
+rewound to says why), and picking one opens the thread mark's `RewindDialog`, whose Cancel goes back to the list. With
+the conversation taken back (ticked by default), the message goes into the composer (`rewound`, moved here from
+`Composer.tsx`) to change and send again; the next run resumes the session from before it. Elsewhere (the assistant, a
+task in its project's repository) `/rewind` says there are no checkpoints rather than reaching the agent. The phone app
+has no `/` menu and is unchanged. Checks: `tests/unit/rewindCommand.test.ts`, `tests/ui/rewindCommand.test.mjs` (the
+fake claude: two turns, the list, Cancel, the rewind, and the reworded message's run resuming at the rewind).
+
 ### Logic that must not be lost on the way
 
 These live in components or module-level state today, outside the store, and are easy to drop when "the store and

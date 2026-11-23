@@ -411,7 +411,8 @@ CLI subcommands: `huntaway codex-run <codex.json>` (adapter), `huntaway gh-hook`
 (Claude PreToolUse hooks; they load only their own modules because agents start them often).
 
 Slash commands handled by the board: `/new`, `/compact`, `/plan`; and in the new server `/output-style` (HE-102,
-[07-agents.md](../07-agents.md#output-styles)).
+[07-agents.md](../07-agents.md#output-styles)). The web composer's own `/rewind` (HE-101) is never sent (it opens the
+rewind list, docs/plan/09-frontend.md).
 
 ## 8. Events
 

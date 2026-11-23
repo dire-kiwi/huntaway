@@ -1,12 +1,18 @@
 // Rewinding a task to before one of its turns: its files go back to the checkpoint taken before the turn, and optionally
-// its branch and its agent's conversation (on the agent's next run).
+// its branch and its agent's conversation (on the agent's next run). The composer's `/rewind` (HE-101) lists the
+// messages to pick from first.
 import { History, Loader2 } from "lucide-react"
+import { clsx } from "clsx"
 import { Exit } from "effect"
-import { useState } from "react"
-import type { HostTask as Task } from "@huntaway/client"
+import { useState, type KeyboardEvent } from "react"
+import { splitAttachments, type HostTask as Task } from "@huntaway/client"
 import type { RewindResult, Turn } from "@huntaway/contracts"
+import { composerDraftAtom, composerDraftKey } from "../../state/drafts"
 import { useMutation } from "../../state/mutation"
-import { Button, Modal } from "../ui"
+import { registry } from "../../state/registry"
+import { Ago, Button, Modal } from "../ui"
+import { rewindChoices } from "./rewindCommand"
+import { hasTurns, turnStat, useTurns } from "./turns"
 
 const short = (sha: string) => sha.slice(0, 8)
 
@@ -112,5 +118,108 @@ export function RewindNote({ task }: { task: Task }) {
         Keep the conversation
       </button>
     </div>
+  )
+}
+
+/**
+ * After a rewind that took the conversation back: the message rewound to goes into the task's composer (ahead of what's
+ * there), to edit and send again. Not the board's own messages (a review's issues, say).
+ */
+export function rewound(task: Task, r: RewindResult, conversation: boolean) {
+  if (!conversation || r.message.auto || !r.message.text?.trim()) return
+  const { text, files } = splitAttachments(r.message.text.trim())
+  const atom = composerDraftAtom(composerDraftKey(task))
+  const d = registry.get(atom)
+  registry.set(atom, { text: d?.text.trim() ? `${text}\n\n${d.text}` : text, files: [...files, ...(d?.files ?? [])] })
+}
+
+/** Up and Down move between the list's buttons. */
+function arrows(e: KeyboardEvent<HTMLElement>) {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
+  const all = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"))
+  if (!all.length) return
+  e.preventDefault()
+  const at = all.findIndex((b) => b === document.activeElement)
+  const next = e.key === "ArrowDown" ? (at + 1) % all.length : (at - 1 + all.length) % all.length
+  all[at === -1 ? 0 : next]?.focus()
+}
+
+/** The messages `/rewind` can go back to before, newest first; picking one asks how far, as the thread's mark does. */
+function RewindPicker({ task, onPick, onClose }: { task: Task; onPick: (t: Turn) => void; onClose: () => void }) {
+  const { data, error } = useTurns(task)
+  const choices = data ? rewindChoices(data.turns) : []
+  const firstOk = choices.findIndex((t) => t.rewind.ok)
+  const why = !hasTurns(task)
+    ? "This thread has no checkpoints to go back to: only a task with a worktree of its own keeps them."
+    : error
+      ? `Couldn't read the task's turns: ${error}`
+      : data && !data.available
+        ? `There's nothing to rewind: ${data.reason}.`
+        : data && !choices.length
+          ? "There are no messages to go back to yet."
+          : null
+  return (
+    <Modal title="Rewind" onClose={onClose}>
+      <div className="space-y-3 text-[13px]">
+        <p className="text-muted">
+          Go back to before one of your messages to reword it: the message comes back here to change and send again, and the worktree's files go back to how
+          they were before it.
+        </p>
+        {why ? (
+          <p className="text-faint">{why}</p>
+        ) : !data ? (
+          <p className="flex items-center gap-2 text-faint">
+            <Loader2 size={13} className="animate-spin" /> Loading the messages…
+          </p>
+        ) : (
+          <div role="group" aria-label="Messages to rewind to" className="-mx-1 space-y-1" onKeyDown={arrows}>
+            {choices.map((t, i) => (
+              <button
+                key={t.n}
+                disabled={!t.rewind.ok}
+                autoFocus={i === firstOk}
+                onClick={() => onPick(t)}
+                title={t.rewind.ok ? "Rewind to before this message" : t.rewind.reason}
+                className={clsx(
+                  "block w-full rounded-lg border border-transparent px-2.5 py-1.5 text-left outline-none",
+                  t.rewind.ok ? "hover:bg-white/5 focus-visible:border-accent/60 focus-visible:bg-white/5" : "cursor-not-allowed opacity-50",
+                )}
+              >
+                <span className="flex items-center gap-2 text-[11.5px] text-faint">
+                  <span>Turn {t.turn}</span>
+                  <Ago at={t.at} />
+                  {turnStat(t) && <span>{turnStat(t)}</span>}
+                  {t.auto && <span>from the board</span>}
+                </span>
+                <span className="line-clamp-2 whitespace-pre-wrap text-fg">{t.text || "(no message)"}</span>
+                {!t.rewind.ok && <span className="block text-[11.5px] text-faint">{t.rewind.reason}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+/**
+ * `/rewind`: the messages to pick from, then how far to go back to before the one picked (its Cancel goes back to the
+ * list). Once it's done, the message is in the composer to reword (`rewound`).
+ */
+export function RewindCommand({ task, onClose }: { task: Task; onClose: () => void }) {
+  const [picked, setPicked] = useState<Turn | null>(null)
+  const { data } = useTurns(task)
+  if (!picked) return <RewindPicker task={task} onPick={setPicked} onClose={onClose} />
+  return (
+    <RewindDialog
+      task={task}
+      turn={picked}
+      head={data?.available ? data.head : null}
+      onClose={() => setPicked(null)}
+      onDone={(r, convo) => {
+        rewound(task, r, convo)
+        onClose()
+      }}
+    />
   )
 }
