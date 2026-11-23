@@ -1433,6 +1433,10 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   `0.0.0.0` or `::` is served as before, without asking tailcat. A task lists one server per port, so one listening on
   several addresses (`192.168.1.5` and `127.0.0.1`, a socket each) is listed on one of those four if it has one
   (`DevServers`' scan, `shown`), whichever socket the scan meets first: it's shared as localhost, not refused.
+  HE-92: the banner leaves Forward port out on the task's host itself, where the server is localhost already: when the
+  task is the page's own server's (`localHostId`, not a linked host's) and the page was opened on loopback
+  (`localhost`, `127.x`, `[::1]`; `forwardPort.onTaskHost`). A page opened on the machine by another of its names (its
+  Tailscale name, a LAN address) can't tell it's there, and still shows it.
 - **Shown shared (HE-83, new)**: while a share lasts, the task's server says so: `TaskServer.forwarded`, the time the
   share started (`PortForward.since` too), written by `PortForwards` as tailcat prints its address and cleared by the
   share's finalizer, however it ends (tailcat exits, the server goes, the board stops), each as a `task` event. A scan
