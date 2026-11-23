@@ -1421,6 +1421,10 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   nothing when its peer is gone (only `--verbose` logs, a failed dial on each connection), so that is the only sign. A
   board that gives no host gets a forward per address and port, as before. Each runs under the same watchdog (bash, not
   on Windows), so they die with the app, even when it crashes. Mobile has no servers banner yet, so no Forward port.
+  HE-84: a start holds a lock for its share alone (`KeyedLock` `["forward", "<task>:<port>"]` on the server, an
+  `RcMap` of semaphores by forward on the desktop), so two clicks start one tailcat while a slow start (up to
+  `START_TIMEOUT`) holds up no other port or task. When `tailcat serve` stops before its address, its reason is read
+  from the end of its stderr once that has ended, not as its exit is seen, which can come first.
 - **Shown shared (HE-83, new)**: while a share lasts, the task's server says so: `TaskServer.forwarded`, the time the
   share started (`PortForward.since` too), written by `PortForwards` as tailcat prints its address and cleared by the
   share's finalizer, however it ends (tailcat exits, the server goes, the board stops), each as a `task` event. A scan

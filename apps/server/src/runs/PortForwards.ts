@@ -1,10 +1,11 @@
-import { Context, DateTime, Deferred, Effect, FiberMap, Layer, Option, Ref, Schema, Semaphore, Stream } from "effect"
+import { Context, DateTime, Deferred, Effect, Fiber, FiberMap, Layer, Option, Ref, Schema, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { SqlClient } from "effect/sql"
 import { Invalid, NotFound, TaskId, Timestamp, Unavailable } from "@huntaway/contracts"
 import type { PortForward, TaskServer } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
+import { KeyedLock } from "../platform/KeyedLock.ts"
 import { WATCHDOG } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
@@ -103,12 +104,11 @@ export class PortForwards extends Context.Service<
       const config = yield* ServerConfig
       const shownAs = yield* rewriter
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+      const locks = yield* KeyedLock
       // The shares that printed their address, by `task:port`.
       const shared = yield* Ref.make<ReadonlyMap<string, PortForward>>(new Map())
       // Each share's tailcat, for as long as it lasts: stopped with the board.
       const shares = yield* FiberMap.make<string>()
-      // One share starts at a time: two clicks don't start two.
-      const starting = yield* Semaphore.make(1)
 
       const listed = (task: TaskId, port: number) => Effect.map(tasks.get(task), (row) => row !== null && row.servers.some((s) => s.port === port))
 
@@ -127,7 +127,7 @@ export class PortForwards extends Context.Service<
               )
               .pipe(Effect.mapError((e) => unavailable(`couldn't start tailcat: ${e.message}`)))
             const stderr = yield* Ref.make("")
-            yield* Effect.forkScoped(
+            const reading = yield* Effect.forkScoped(
               child.stderr.pipe(
                 Stream.decodeText(),
                 Stream.runForEach((text) => Ref.update(stderr, (s) => (s + text).slice(-STDERR_KEPT))),
@@ -147,6 +147,8 @@ export class PortForwards extends Context.Service<
                 Effect.map(Number),
                 Effect.orElseSucceed(() => null),
               )
+              // Its exit comes before the last of its stderr may have been read, and that has its reason (HE-84).
+              yield* Fiber.await(reading)
               return yield* unavailable(whyNotStarted(code, yield* Ref.get(stderr), config.tailcatBin))
             }
             const since = Timestamp.make(DateTime.formatIso(yield* DateTime.now))
@@ -192,10 +194,8 @@ export class PortForwards extends Context.Service<
         if (row === null) return yield* new TaskNotFound({ id: task })
         if (!row.servers.some((s) => s.port === port)) return yield* new NotFound({ what: "server", id: String(port) })
         const key = `${task}:${port}`
-        return yield* Semaphore.withPermits(
-          starting,
-          1,
-        )(
+        // One start per share at a time, so two clicks don't start two; another port's or task's doesn't wait for it (HE-84).
+        return yield* locks.withLock(["forward", key])(
           Effect.gen(function* () {
             const have = (yield* Ref.get(shared)).get(key)
             if (have !== undefined) {

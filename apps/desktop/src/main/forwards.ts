@@ -1,4 +1,4 @@
-import { Config, Deferred, Effect, FiberMap, Option, Ref, Semaphore, Stream } from "effect"
+import { Config, Deferred, Effect, FiberMap, Option, RcMap, Ref, Semaphore, Stream } from "effect"
 import type { Scope } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { Desktop } from "./Desktop.ts"
@@ -65,7 +65,8 @@ export const makeForwards: Effect.Effect<
   // By board, host and port: the address forwarded and its URL.
   const urls = yield* Ref.make<ReadonlyMap<string, { readonly address: string; readonly url: string }>>(new Map())
   const running = yield* FiberMap.make<string>()
-  const starting = yield* Semaphore.make(1)
+  // A lock per forward, for its start: two clicks don't start two, and a slow start doesn't hold up another's (HE-84).
+  const locks = yield* RcMap.make({ lookup: () => Semaphore.make(1) })
 
   const notInstalled = `tailcat isn't installed on this computer (looked for ${bin}): see https://tailscale.com/tailcat`
 
@@ -119,10 +120,8 @@ export const makeForwards: Effect.Effect<
       if (host !== undefined && !isHostId(host)) return { error: "That isn't a host." }
       // Only the host's id may have a space in it, and it goes last.
       const key = host === undefined ? `${address}:${port}` : `${port} ${board} ${host}`
-      return yield* Semaphore.withPermits(
-        starting,
-        1,
-      )(
+      const lock = (body: Effect.Effect<ForwardAnswer>) => Effect.scoped(Effect.flatMap(RcMap.get(locks, key), (s) => Semaphore.withPermits(s, 1)(body)))
+      return yield* lock(
         Effect.gen(function* () {
           const have = (yield* Ref.get(urls)).get(key)
           if (have?.address === address) return { url: have.url }
