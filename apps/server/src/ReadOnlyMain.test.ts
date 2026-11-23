@@ -167,6 +167,8 @@ const readPayloads = (f: ImportedFolder): Readonly<Record<string, unknown>> => {
   return {
     "host.info": undefined,
     "host.settings": undefined,
+    // HE-89
+    "speech.status": undefined,
     "host.usage": { refresh: true },
     "host.defaultPrompts": undefined,
     "board.watch": {},

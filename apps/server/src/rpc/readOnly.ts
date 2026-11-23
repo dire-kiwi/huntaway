@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema, Stream } from "effect"
 import { RpcSchema } from "effect/rpc"
 import type { Rpc, RpcGroup } from "effect/rpc"
-import { DeviceRpcs, HubHostRpcs, Invalid, NotFound, PublicRpcs, RequiredScope, Unavailable } from "@huntaway/contracts"
+import { DeviceRpcs, HubHostRpcs, Invalid, NotFound, PublicRpcs, RequiredScope, SpeechRpcs, Unavailable } from "@huntaway/contracts"
 import type { Host } from "@huntaway/contracts"
 import { LinkRepo } from "../hosts/LinkRepo.ts"
 import { linkEntry, localEntry } from "../hosts/Links.ts"
@@ -100,6 +100,22 @@ export const ReadOnlyDeviceHandlers = DeviceRpcs.toLayer(
       "hub.devices.stopPairing": () => changes,
       "hub.devices.revoke": () => changes,
       "hub.devices.unpair": () => Effect.fail(new Invalid({ field: "session", reason: "a read-only rehearsal has no paired device" })),
+    })
+  }),
+)
+
+/** `speech.*` (HE-89): a rehearsal transcribes nothing, so its status says so, and the rest are refused. */
+export const ReadOnlySpeechHandlers = SpeechRpcs.toLayer(
+  Effect.sync(() => {
+    const changes = Effect.die(new RefusedOnReadOnly({ rpc: "speech" }))
+    return SpeechRpcs.of({
+      "speech.status": () =>
+        Effect.succeed({ unsupported: "a read-only server doesn't transcribe", models: [], active: null, downloading: null, failed: null }),
+      "speech.download": () => changes,
+      "speech.cancel": () => changes,
+      "speech.remove": () => changes,
+      "speech.select": () => changes,
+      "speech.transcribe": () => changes,
     })
   }),
 )

@@ -976,6 +976,20 @@ list drawn by the page, in the menus' style (`ContextMenu`), with a tick by the 
   `systemPromptPreview`, `workflowPresets`) do it through the harness's `pick(combobox, value | { label } | { index })`,
   which clicks the button and then the option, and read it with `pickedValue` (the button's `data-value`).
 
+### As built in HE-89: dictation
+
+The microphone beside the thread's composer and in the New task form (`components/task/Dictation.tsx`), as T3 Code's
+composer has it: a click starts recording, a pill shows the time, the level, ✕ and ✓; Ctrl+Shift+D (⌘⇧D) in the field
+starts and finishes, or held past 300 ms records until it is let go; Escape cancels (and doesn't reach the dialog). The
+recording (`speech/recorder.ts`) is the browser's `MediaRecorder` on the microphone, decoded and resampled to 16 kHz
+mono with an `OfflineAudioContext` when it stops, and sent whole to this page's own server (`speech.transcribe` on the
+local host, whatever host the task is on); what comes back goes in at the field's selection, spaced from the words
+either side (`insertDictation`). T3 Code streams PCM from an AudioWorklet for a live preview, which this leaves for
+later. A recording under 0.3 s isn't sent; one reaching five minutes finishes itself. The button is hidden where the
+server can't transcribe, greyed out where the page can't use a microphone (not https or localhost), and with no model
+installed it opens Settings → Voice input (`settings/Voice.tsx`: the models, Download with its progress, Cancel, Use,
+Remove). The desktop app's macOS build gives the reason macOS asks for (`NSMicrophoneUsageDescription`).
+
 ### Logic that must not be lost on the way
 
 These live in components or module-level state today, outside the store, and are easy to drop when "the store and
@@ -1178,7 +1192,8 @@ What is left, a task each:
 4. **Expo push** and **answering from the lock screen**: the server's `expo` subscriptions are kept and not pushed to
    (6.8); with them, `push_answer_tokens` and the notification's Allow and Deny.
 5. **Sharing into the app, attachments, dictation**: the old app's share intent, photos and files
-   (`attachments.upload`), voice notes.
+   (`attachments.upload`), voice notes. The web's dictation (HE-89, below) has the server transcribe
+   (`speech.transcribe`), which the phone can send its recording to as well, rather than the platform's recogniser.
 6. **One thread model**: the web's `itemModel.ts` and the phone's `thread.ts` moved into `packages/client`, so the two
    apps draw a thread from the same rows.
 

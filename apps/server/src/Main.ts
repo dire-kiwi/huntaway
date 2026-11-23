@@ -145,6 +145,9 @@ import { BrowserTools } from "./browser/BrowserTools.ts"
 import { HtmlTools } from "./browser/HtmlRender.ts"
 import { Browsers } from "./browser/Browsers.ts"
 import { ChromeInstall } from "./browser/ChromeInstall.ts"
+// HE-89: dictation.
+import { Speech } from "./speech/Speech.ts"
+import { SpeechEngine } from "./speech/SpeechEngine.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
 import { FilesTab } from "./git/FilesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
@@ -271,6 +274,7 @@ import { CheckpointHandlers } from "./rpc/checkpoints.ts"
 import { DesktopHandlers } from "./rpc/desktop.ts"
 import { SpacesHandlers } from "./rpc/spaces.ts"
 import { BrowserHandlers } from "./rpc/browser.ts"
+import { SpeechHandlers } from "./rpc/speech.ts"
 import { TeleportHandlers } from "./rpc/teleport.ts"
 import { GitHandlers } from "./rpc/git.ts"
 import { HostHandlers } from "./rpc/host.ts"
@@ -329,7 +333,7 @@ import { WorkflowApprovals } from "./workflows/WorkflowApprovals.ts"
 import { WorkflowStore } from "./workflows/WorkflowStore.ts"
 // HE-34: plugins.
 import notes from "@huntaway/plugin/example/notes"
-import { PluginRpcs } from "@huntaway/contracts"
+import { PluginRpcs, SpeechRpcs } from "@huntaway/contracts"
 import { PluginRoutes } from "./http/plugins.ts"
 import { installed } from "./plugins/installed.ts"
 import { InstalledPlugins } from "./plugins/InstalledPlugins.ts"
@@ -684,6 +688,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3, A, E4, R4>(
     // HE-62: each task's web browser, and the `browser` MCP server's tools, over the MCP area; HE-78: and the board's
     // html_render and html_preview, whose previews use its Chrome.
     Layer.provideMerge(Layer.mergeAll(BrowserTools, HtmlTools).pipe(Layer.provideMerge(Browsers.layer), Layer.provideMerge(ChromeInstall.layer))),
+    // HE-89: dictation, transcribed on this host by a speech engine in a process of its own.
+    Layer.provideMerge(Speech.layer.pipe(Layer.provideMerge(SpeechEngine.layer))),
     // 6.8: push, watching the board's events for what devices want.
     Layer.provideMerge(PushLive),
     // HE-34: the plugins, over the MCP area they define their servers with.
@@ -788,6 +794,8 @@ export const Served = PublicRpcs.merge(
   WorkflowRpcs,
   // HE-34
   PluginRpcs,
+  // HE-89
+  SpeechRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -842,6 +850,8 @@ export const HandlersLive = Layer.mergeAll(
   WorkflowHandlers,
   // HE-34
   PluginHandlers,
+  // HE-89
+  SpeechHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

@@ -1,5 +1,5 @@
 import { clsx } from "clsx"
-import { Archive, Bell, Blocks, Bot, FlaskConical, KeyRound, Keyboard, Network, Puzzle, Server, Users, Wifi } from "lucide-react"
+import { Archive, Bell, Blocks, Bot, FlaskConical, KeyRound, Keyboard, Mic, Network, Puzzle, Server, Users, Wifi } from "lucide-react"
 import { Fragment, type ReactNode } from "react"
 import { navigate } from "../../state/route"
 import { canRunAgents } from "@huntaway/client"
@@ -18,6 +18,7 @@ import { NetworkPanel } from "./Network"
 import { PluginsPanel } from "./Plugins"
 import { ServerPanel } from "./Server"
 import { ShortcutsPanel } from "./Shortcuts"
+import { VoicePanel } from "./Voice"
 
 type SettingsTab =
   | "hosts"
@@ -28,6 +29,7 @@ type SettingsTab =
   | "plugins"
   | "notifications"
   | "shortcuts"
+  | "voice"
   | "archived"
   | "server"
   | "network"
@@ -62,6 +64,8 @@ const TAB_GROUPS: ReadonlyArray<ReadonlyArray<TabDef>> = [
   [
     { id: "notifications", label: "Notifications", icon: <Bell size={14} />, panel: () => <NotificationsPanel /> },
     { id: "shortcuts", label: "Keyboard shortcuts", icon: <Keyboard size={14} />, panel: () => <ShortcutsPanel /> },
+    // HE-89: dictation, transcribed on this server.
+    { id: "voice", label: "Voice input", icon: <Mic size={14} />, panel: () => <VoicePanel /> },
   ],
   [
     { id: "server", label: "Server", icon: <Server size={14} />, panel: () => <ServerPanel /> },
@@ -83,6 +87,7 @@ export function Settings({ tab }: { tab?: string | undefined }) {
     plugins: true,
     notifications: true,
     shortcuts: true,
+    voice: true,
     archived: profiles.length > 0,
     server: true,
     network: true,

@@ -191,6 +191,8 @@ export default defineConfig({
           "apps/server/src/serve.ts",
           "apps/server/src/codex-run.ts",
           "apps/server/src/acp-run.ts",
+          // HE-89: the speech engine's process.
+          "apps/server/src/speech-worker.ts",
           "apps/server/src/mcp-stdio.ts",
           "apps/server/src/Main.ts",
           // 9.1: the read-only server's composition root, the second one.

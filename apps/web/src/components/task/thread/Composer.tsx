@@ -26,6 +26,7 @@ import { exitError, useMutation } from "../../../state/mutation"
 import { errorText } from "../../ui"
 import { lineRange, removeComments, useReview, withComments, type LineComment } from "../../changes/lineComments"
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "../Attachments"
+import { Dictation } from "../Dictation"
 import { RewindNote } from "../Rewind"
 import { RefChips, RefMenu, useRefCompletion, useRefMentions } from "../RefCompletion"
 import { SkillHint, SkillMenu, useSkillMenu } from "../SkillMenu"
@@ -316,7 +317,16 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
             <span className="min-w-0 truncate text-[11px] text-faint narrow:hidden" title={task.session_id ?? undefined}>
               {task.session_id ? `session ${task.session_id.slice(0, 8)}` : "new session"}
             </span>
-            <div className="ml-auto flex items-center gap-1.5">
+            <div className="ml-auto flex min-w-0 items-center gap-1.5">
+              {/* HE-89: what is said goes in at the caret, which goes after it. */}
+              <Dictation
+                field={textarea}
+                onText={(next, at) => {
+                  setText(next)
+                  setCaret(at)
+                  caretTo.current = at
+                }}
+              />
               <AttachButton draft={attach} />
               {working && canQueue && (text.trim() || attach.items.length > 0 || comments.length > 0) && (
                 <button

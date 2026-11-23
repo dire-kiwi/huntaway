@@ -43,6 +43,8 @@ import { WorkflowRpcs } from "./workflows.ts"
 import { PluginRpcs } from "./plugins.ts"
 // HE-62: each task's web browser.
 import { BrowserRpcs } from "./browser.ts"
+// HE-89: dictation.
+import { SpeechRpcs } from "./speech.ts"
 
 /** Every group a host serves about itself (docs/plan/05-protocol.md, The contract package). */
 export const HostRpcs = HostRpcGroup.merge(
@@ -91,6 +93,8 @@ export const HostRpcs = HostRpcGroup.merge(
   AnalyticsRpcs,
   // HE-34
   PluginRpcs,
+  // HE-89
+  SpeechRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 

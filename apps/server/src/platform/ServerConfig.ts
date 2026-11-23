@@ -277,6 +277,8 @@ export interface ServerConfigShape {
   readonly releaseApi: string
   /** `<os>-<arch>` as release assets name it (`linux-x64`, `mac-arm64`). */
   readonly platform: string
+  /** The Node this server runs on (`process.execPath`), which the speech engine's process runs on too (HE-89). */
+  readonly nodeBin: string
   /** `HUNTAWAY_DESKTOP_VERSION`, `_SHELL`, `_INSTALL`: the desktop app that started this server, if one did. */
   readonly desktopVersion: string | null
   readonly desktopShell: string | null
@@ -436,6 +438,7 @@ const updateConfig = (args: ServeArgs, home: string, exe: string | null, expand:
       releaseRepo,
       releaseApi: ((yield* text("HUNTAWAY_RELEASE_API")) ?? "https://api.github.com").replace(/\/+$/, ""),
       platform: `${process.platform === "darwin" ? "mac" : process.platform}-${process.arch}`,
+      nodeBin: process.execPath,
       desktopVersion: yield* text("HUNTAWAY_DESKTOP_VERSION"),
       desktopShell: yield* text("HUNTAWAY_DESKTOP_SHELL"),
       desktopInstall: yield* text("HUNTAWAY_DESKTOP_INSTALL"),
@@ -633,6 +636,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         releaseRepo: null,
         releaseApi: "http://127.0.0.1:1",
         platform: "linux-x64",
+        nodeBin: process.execPath,
         desktopVersion: null,
         desktopShell: null,
         desktopInstall: null,

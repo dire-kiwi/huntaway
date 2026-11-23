@@ -39,6 +39,7 @@ terminal      Terminals · Pty
 desktop       CuaDriver · DesktopClaims
 spaces        Docker · Spaces · TeleportRepo · Teleport · SpacesTools
 browser       ChromeInstall · Browsers · BrowserTools
+speech        SpeechEngine · Speech (HE-89: dictation)
 update        Supervisor · Restarts · Systemd · Releases · Service · Updater
 analytics     Analytics · Disk
 board         Board
@@ -1573,6 +1574,40 @@ take the same code, with no Playwright in the server.
   scrolling on a phone (taps work: the browser makes them mouse events), input methods, more than one tab a task,
   `t3 browser setup`'s AppArmor profile for Ubuntu's blocked sandbox (`HUNTAWAY_CHROME_SANDBOX=0` instead), and a task on
   another host from a board that isn't its own (as with terminals, the socket goes to the page's own server).
+
+### Speech<a id="speech"></a> (HE-89)
+
+Dictation into a message field. **Decided** (HE-89, after reading T3 Code's, which transcribes on the user's own
+machine with transcribe.cpp and a GGUF model it downloads, in a process of its own, with cloud providers as an option):
+the board's own server transcribes, with a model the user picks and the server downloads in Settings → Voice input. No
+cloud provider, no key: nothing said leaves the host. The browser records and sends the whole recording once it ends;
+T3 Code's live preview (audio streamed over a socket, a streaming model's committed and tentative text) is left for later.
+
+- **`speech/`** (below `browser/`): `catalog.ts` (five of T3 Code's models, `@handy-computer/models`' entries: each
+  pinned to a Hugging Face revision with its size and SHA-256), `audio.ts` (16-bit PCM checked, as floats, and a long
+  recording cut at its quietest 20 ms into pieces of at most 30 s, for a model not made for long audio; T3 Code cuts at
+  what Silero hears as silence), `workerProtocol.ts`, `SpeechEngine` and `Speech`.
+- **`SpeechEngine`**: `src/speech-worker.ts`, an entry file of its own, run by the server's Node
+  (`ServerConfig.nodeBin`) the first time it is needed and stopped after ten minutes without a request, which gives back
+  its model's memory. transcribe.cpp (`transcribe-cpp`, prebuilt for Linux, macOS and Windows; a platform without one
+  says so in `unsupported`) runs native code, so a crash ends that process, not the server; the request fails and the
+  next starts it again. One request at a time over its stdio, a JSON line each way: `transcribe` (a model's file and the
+  audio as base64) and `sha256` (a downloaded file's hash, read as a stream so the server never holds a whole model).
+  Each request has an id its answer echoes, and a line with another id is skipped; a request given up on (a cancelled
+  download, an RPC whose client went away) stops the process, so no answer is left for the next request and no work
+  goes on for nobody. The
+  model loads on the backend transcribe.cpp picks (a GPU through Vulkan or Metal, else the CPU), and again on the CPU if
+  that fails. A request that takes five minutes stops the process.
+- **`Speech`**: the models under `<data>/speech/models/<file>`, the one in use (the `speech_model` setting, else the
+  first installed), a download in the background (one at a time, into `<file>.part`, its size and hash checked, then
+  renamed into place and chosen; a cancel or a failure removes the part; the last failure is kept to show), and
+  `transcribe` (base64 of 16 kHz mono 16-bit PCM, 0.3 s to five minutes: 12.8 MB as base64, under the 16 MiB body).
+- **RPCs** (`speech.*`): `status` (`read`), `transcribe` (`operate`), `download`, `cancel`, `remove`, `select`
+  (`admin`: they change what the host has installed). Each change answers with the status; Settings reads it every
+  second while a download goes. The read-only server refuses them all.
+- **Tests**: `audio.test.ts`, `Speech.test.ts` (a fake HTTP client and engine), `SpeechEngine.test.ts` (the real worker,
+  with no model: a hash, a missing model's error, still answering after it; a request interrupted while the worker
+  hashes a large file leaves the next its own answer).
 
 ## Hook commands<a id="hook-commands"></a>
 

@@ -72,6 +72,8 @@ const config: Configuration = {
     // Signed ad hoc, not notarised: users clear the quarantine themselves.
     identity: "-",
     hardenedRuntime: false,
+    // HE-89: macOS asks before an app uses the microphone, with this reason, and kills one that has none to give.
+    extendInfo: { NSMicrophoneUsageDescription: "Huntaway records what you dictate into a message, for the board's server to transcribe." },
   },
   directories: { output: "release" },
 }
