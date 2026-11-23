@@ -341,7 +341,8 @@ The lazygit-style view that step 1 brought over (below) is replaced: the Changes
   (`changesState`), as the Code tab's place is. `j`/`k` go to the next or previous file in the tree's order, `|` switches unified and split.
 - **Into the Code tab.** The file's title bar, and each file's header in the diffs, have *Open in the Code tab* (not
   for a deleted file): it sets the Code tab's place (`codeState`, `goTo`) to the file at its first changed line and
-  switches the task view's tab (`onShowCode`, from `TaskView` through `TabContent`).
+  switches the task view's tab (`onShowCode`, from `TaskView` through `TabContent`). Narrow, the Code tab opens on the
+  file when it has a place to go to, rather than on its tree.
 - **Comments for the agent** stay: lines picked by their numbers (`n`, or a line's comment button) on the branch's
   diff (`branchSource`), the review bar at the bottom, and a comment in it going to its file.
 - **Gone.** Staging and unstaging files and lines, discarding, committing, amending and rewording, stashes, resetting,
