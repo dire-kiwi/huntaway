@@ -7,7 +7,7 @@ import { useState } from "react"
 import { useBoard } from "../../state/board"
 import { useNow } from "../../state/clock"
 import { useMutation } from "../../state/mutation"
-import { Button, Field, Input, Loading, timeAgo } from "../ui"
+import { Button, Field, Input, Loading, resultValue, timeAgo } from "../ui"
 import { Group, PanelHeading } from "./parts"
 import { useHostInfo } from "./Server"
 
@@ -64,7 +64,7 @@ const clock = (secs: number): string => `${Math.floor(secs / 60)}:${String(secs 
 /** Pairing mode while it is on: the PIN, how long it is good for, the wrong ones it takes still. */
 function PinCard({ pairing, onNew, onStop, busy }: { pairing: Pairing; onNew: () => void; onStop: () => void; busy: boolean }) {
   const now = useNow(1000)
-  const left = Math.max(0, Math.round((DateTime.toEpochMillis(DateTime.makeUnsafe(pairing.expires_at)) - now) / 1000))
+  const left = Math.max(0, Math.floor((DateTime.toEpochMillis(DateTime.makeUnsafe(pairing.expires_at)) - now) / 1000))
   return (
     <div className="rounded-xl border border-accent/40 bg-accent/5 px-4 py-3">
       <div className="text-[12.5px] text-muted">In the Huntaway app, pick this board and type the PIN:</div>
@@ -108,23 +108,23 @@ function DeviceRow({ device, onUnpair, busy }: { device: Device; onUnpair: () =>
 }
 
 /**
- * The phones paired with this board, and pairing one. While pairing mode is on the list is read every 2 seconds, so the
- * phone that pairs shows up and the PIN goes once it is used.
+ * The phones paired with this board, and pairing one. While the board's answer shows a PIN (whoever started pairing, and
+ * however long ago) the list is read every 2 seconds, so the phone that pairs shows up and the PIN goes once it is used
+ * or expires; then reading stops. Starting and stopping pairing read it again (a mutation of the `hub` group).
  */
 function PairedDevices({ hostId }: { hostId: string }) {
-  const [pairing, setPairing] = useState(false)
-  const result = useAtomValue(query("hub.devices.list", hostId, undefined, pairing ? { refresh: "2 seconds" } : undefined))
+  const [polling, setPolling] = useState(false)
+  const result = useAtomValue(query("hub.devices.list", hostId, undefined, polling ? { refresh: "2 seconds" } : undefined))
+  const read = resultValue(result)
+  // Null until the list is read (the other atom's first read, when polling turns on or off): no change then. Set while
+  // rendering, as React has state that follows what is drawn adjusted, rather than in an effect.
+  const showing = read === undefined ? null : read.pairing !== null
+  if (showing !== null && showing !== polling) setPolling(showing)
   const [start, startPairing] = useMutation("hub.devices.startPairing")
   const [stop, stopPairing] = useMutation("hub.devices.stopPairing")
   const [revoke, revokeDevice] = useMutation("hub.devices.revoke")
-  const begin = () => {
-    setPairing(true)
-    void startPairing(hostId, undefined)
-  }
-  const end = () => {
-    setPairing(false)
-    void stopPairing(hostId, undefined)
-  }
+  const begin = () => void startPairing(hostId, undefined)
+  const end = () => void stopPairing(hostId, undefined)
   const error = start.error ?? stop.error ?? revoke.error
   return (
     <Group

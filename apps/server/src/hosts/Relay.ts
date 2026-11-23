@@ -79,6 +79,22 @@ export interface RelayedFor {
   readonly device_id: DeviceId | null
 }
 
+/**
+ * The session a ticket asserts for the client `session` asks for, until `exp` (pure). `as` only ever narrows: whoever
+ * asks, the client's session gets no more than the asker's own scopes, and never `link`. A device stays itself (HE-91
+ * review): its `as` may narrow its scopes, never pass it off as the board or as another device.
+ */
+export const assertedFor = (session: SessionShape, as: RelayedFor | undefined, exp: number): AssertedSession => {
+  const own = { kind: session.kind, scopes: [...session.scopes], device_id: session.device_id }
+  const who = session.kind === "device" ? { ...own, scopes: as?.scopes ?? own.scopes } : (as ?? own)
+  return {
+    kind: who.kind === "link" ? "board" : who.kind,
+    scopes: who.scopes.filter((scope) => scope !== "link" && session.scopes.has(scope)),
+    device_id: who.kind === "device" ? who.device_id : null,
+    exp,
+  }
+}
+
 export class Relay extends Context.Service<
   Relay,
   {
@@ -152,14 +168,7 @@ export class Relay extends Context.Service<
         if (session.kind === "link" && as === undefined)
           return yield* new Conflict({ reason: "in_use", detail: "a host's own connection is relayed further only for a client of its own" })
         const now = yield* Clock.currentTimeMillis
-        // `as` only ever narrows: whoever asks, the client's session gets no more than the asker's own scopes.
-        const who = as ?? { kind: session.kind, scopes: [...session.scopes], device_id: session.device_id }
-        const asserted: AssertedSession = {
-          kind: who.kind === "link" ? "board" : who.kind,
-          scopes: who.scopes.filter((scope) => scope !== "link" && session.scopes.has(scope)),
-          device_id: who.kind === "device" ? who.device_id : null,
-          exp: now + Duration.toMillis(RELAYED),
-        }
+        const asserted = assertedFor(session, as, now + Duration.toMillis(RELAYED))
         const guard = yield* guardOf(session)
         // A device's own session here (not one a link asserts for a device of another board's).
         const device = session.kind === "device" && session.via_link === null ? session.device_id : null
