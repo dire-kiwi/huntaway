@@ -24,12 +24,26 @@ export function ThreadConfigSelect({ configs, value, onChange }: { configs: Read
 }
 
 /** This board's host, or a linked host with assistants, for a profile's assistant to run on. */
-export function AssistantHostSelect({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+export function AssistantHostSelect({
+  value,
+  onChange,
+  className = "h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none",
+  title,
+  disabled,
+  "aria-label": ariaLabel,
+}: {
+  value: string
+  onChange: (id: string) => void
+  className?: string | undefined
+  title?: string | undefined
+  disabled?: boolean | undefined
+  "aria-label"?: string | undefined
+}) {
   const local = useBoard((s) => s.hosts.find((h) => h.local))
   const hosts = useBoard(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected)))
   const picked = useBoard((s) => s.hosts.find((h) => h.id === value))
   return (
-    <Select value={value} onChange={onChange} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
+    <Select value={value} onChange={onChange} className={className} title={title} disabled={disabled} aria-label={ariaLabel}>
       <option value="">This host{local ? ` (${local.name})` : ""}</option>
       {hosts.map((h) => (
         <option key={h.id} value={h.id}>

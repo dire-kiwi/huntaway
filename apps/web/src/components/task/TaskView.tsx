@@ -34,6 +34,7 @@ import { openingTab } from "./openingTab"
 import { useSubagentView } from "./thread/subagentView"
 import { AgentIcon } from "../ui/AgentIcon"
 import { AgentsPill } from "../layout/AgentsPill"
+import { AssistantHostPicker } from "./AssistantHostPicker"
 import { ContextPill } from "./Context"
 import { TaskTypeBadge } from "./documentInfo"
 import { ReminderButton, StarButton, useCanMark } from "./Reminders"
@@ -397,6 +398,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
 
   const controls = (
     <>
+      {assistant && profileName && <AssistantHostPicker profile={profileName} onError={setMarkErr} />}
       {canMark && <ReminderButton task={task} onError={setMarkErr} />}
       <AgentsPill task={task} onReveal={() => setTab("thread")} />
       <ContextPill task={task} />
