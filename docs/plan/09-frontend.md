@@ -394,7 +394,9 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   and pasted text go back as JSON. It shows the download of Chrome as it goes, and says so when the desktop app has the
   page. Unmounted when closed: the page stays on the host. An `error` before the page has shown (no Chrome, its
   sandbox) is final, with Retry (a new stream); after, it's a dismissable note. A socket the server closes (the page went) is opened again
-  with a new ticket.
+  with a new ticket. HE-93: the socket is on the task's host (`hostSocketUrl`, as the terminal's): through the hub's
+  relay for a task on another host, which passes no query on, so the pane's size and start address go in `browser.open`
+  as well as the socket's query (the ticket's win; the query is for a server before HE-93).
 - The desktop shell: `main/paneDebugger.ts` (`huntaway:browser-debug`, `-send`, `-undebug`; only the board's own frame,
   only for a <webview> it embeds, and refused in remote mode; events relayed as `huntaway:browser-event`), and the
   preload's `paneDebugger`, given to the board only when `huntaway:pane-local` (`paneIsLocal`) says its server is here.

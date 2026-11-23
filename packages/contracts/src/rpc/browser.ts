@@ -10,8 +10,9 @@ import { Auth, RequiredScope } from "../session.ts"
 //
 // - `view`: the browser streamed from the host's headless Chrome. The server sends each frame of the page as a binary
 //   message (a JPEG) and waits for the client's `ack` before the next, and `BrowserServerFrame`s as JSON; the client
-//   sends `BrowserClientFrame`s (its size, the mouse, keys, text, addresses) as JSON. Query: `width`, `height` (the
-//   page's size in CSS pixels), `url` (where a browser the task doesn't have yet starts).
+//   sends `BrowserClientFrame`s (its size, the mouse, keys, text, addresses) as JSON. `width`, `height` (the page's
+//   size in CSS pixels) and `url` (where a browser the task doesn't have yet starts) go in `browser.open`, since a
+//   socket relayed to another host carries no query (HE-93); the socket's query has them too, for a server before that.
 // - `desktop`: the desktop app's own browser pane (a <webview>) for the task, given to the server to drive. The server
 //   sends DevTools protocol commands (`{id, method, params}`) as JSON; the client answers each with what the
 //   webview's debugger said (`{id, result}` or `{id, error: {message}}`) and sends its events (`{method, params}`).
@@ -82,7 +83,11 @@ export type BrowserClientFrame = typeof BrowserClientFrame.Type
 
 export class BrowserRpcs extends RpcGroup.make(
   /** A ticket for the task's browser's socket as a viewer of its stream: web pages only, so `operate` (a phone) may. */
-  Rpc.make("browser.open", { payload: { task_id: TaskId }, success: BrowserTicket, error: NotFound }).annotate(RequiredScope, "operate"),
+  Rpc.make("browser.open", {
+    payload: { task_id: TaskId, width: Schema.optional(Schema.Int), height: Schema.optional(Schema.Int), url: Schema.optional(Schema.String) },
+    success: BrowserTicket,
+    error: NotFound,
+  }).annotate(RequiredScope, "operate"),
   /**
    * A ticket for the socket as the desktop app's pane, whose page the agent then drives and whose address the tab
    * keeps: `terminal`, as the host's desktop view needs, since only the board's own app hands one over.

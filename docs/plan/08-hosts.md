@@ -77,7 +77,7 @@ const Hello = Schema.Struct({ host_id: HostId, name: Schema.String, protocol: Sc
   to this host it simply dials again.
 - **Dial-in (`inbound`)**: the host opens `wss://<hub>/api/link` with the hub token, calls `link.hello`, and then
   holds `link.attach` open. When the hub needs a socket to that host, it emits `OpenStream { id, path }`; the host
-  dials `wss://<hub>/api/link/stream/<id>` and pipes that socket to its own `path` (`/api/rpc`, or a terminal). The
+  dials `wss://<hub>/api/link/stream/<id>` and pipes that socket to its own `path` (`/api/rpc`, a terminal, or a task's browser). The
   hub pairs the arriving socket with whoever asked. So the hub talks to a dial-in host with the same RPC client it
   uses for a dialled one, over a socket the host opened for it. There is no multiplexing code.
 - **Keep-alive** is the RPC client's ping (interval 20 s, dead after 60 s without a frame from the peer), which
@@ -114,7 +114,8 @@ as it does a host that is down.
 A terminal is relayed the same way: `terminal.open` on the host's session returns a ticket for the host, and the
 client reaches `/api/terminal/<ticket>` through a relay ticket whose path is that terminal. As built (HE-74): the client's
 `hostSocketUrl(host, path)` (`packages/client/src/session/sessions.ts`) asks `hub.hosts.openRelay({ host_id, path })`
-for a host that isn't the page's own, and the Terminal tab opens that.
+for a host that isn't the page's own, and the Terminal tab opens that. A task's browser stream (`/api/browser/<ticket>`)
+is relayed the same way (HE-93), its size and start address in `browser.open` since the relay passes no query on.
 
 What this removes: the JSON-only HTTP proxy with its body limits and status rewriting, the tunnel's request and
 stream frames, the event socket's mixed-in call frames, `host_id` stamping of events, and the rule that uploads must

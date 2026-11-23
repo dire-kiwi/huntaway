@@ -88,7 +88,7 @@ export class HubHostRpcs extends RpcGroup.make(
   }).annotate(RequiredScope, "admin"),
   /**
    * A single-use ticket, good for a minute, for `/api/relay/<ticket>`: a socket to that host's `path` (`/api/rpc`, the
-   * default, or a terminal's), carrying this session's scopes. A neighbour's own connection (a session of kind `link`)
+   * default, a terminal's or a task's browser's), carrying this session's scopes. A neighbour's own connection (a session of kind `link`)
    * relays a client of its own further, through this host (HE-46): `as` is that client's session, which gets no more than
    * the connection's scopes, and never `link`.
    */
