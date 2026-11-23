@@ -22,7 +22,7 @@ function SessionLine({ host }: { readonly host: HostId }) {
         : state === "offline"
           ? "Offline"
           : state === "unauthorized"
-            ? "Token turned down"
+            ? "Turned down"
             : "Needs an update"
   const color = state === "live" ? colors.green : state === "connecting" ? colors.faint : colors.amber
   return <Text style={[s.muted, { color }]}>{label}</Text>
@@ -42,8 +42,10 @@ export default function BoardScreen() {
       <View style={s.card}>
         <Text style={s.title}>{hosts.find((h) => h.local)?.name ?? url}</Text>
         <Text style={s.faint}>{url}</Text>
-        {localHostId !== null ? <SessionLine host={localHostId} /> : <Text style={s.muted}>{authed === false ? "Token turned down" : "Connecting…"}</Text>}
-        {authed === false && <Text style={[s.muted, { color: colors.amber }]}>The board turned this token down. Connect again with its link.</Text>}
+        {localHostId !== null ? <SessionLine host={localHostId} /> : <Text style={s.muted}>{authed === false ? "Turned down" : "Connecting…"}</Text>}
+        {authed === false && (
+          <Text style={[s.muted, { color: colors.amber }]}>The board turned this phone down: it was unpaired, or its token changed. Pair with it again.</Text>
+        )}
       </View>
       {names.length > 1 && (
         <>
@@ -70,7 +72,7 @@ export default function BoardScreen() {
       <View style={{ paddingHorizontal: 12, gap: 8 }}>
         <Button title="Open on the web" onPress={() => void Linking.openURL(url)} />
         <Button title="Connect another board" onPress={() => router.push("/connect")} />
-        <Button title="Forget this board" kind="danger" onPress={() => void disconnect().then(() => router.replace("/connect"))} />
+        <Button title="Forget this board" kind="danger" onPress={() => disconnect(() => router.replace("/connect"))} />
       </View>
     </ScrollView>
   )

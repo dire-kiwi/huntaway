@@ -1,5 +1,6 @@
 import { Effect, Redacted } from "effect"
 import { NotFound, PublicRpcs } from "@huntaway/contracts"
+import { Devices } from "../hosts/Devices.ts"
 import { Identity } from "../platform/Identity.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { About } from "../settings/About.ts"
@@ -13,6 +14,7 @@ export const PublicHandlers = PublicRpcs.toLayer(
     const about = yield* About
     const identity = yield* Identity
     const config = yield* ServerConfig
+    const devices = yield* Devices
     return PublicRpcs.of({
       "public.health": () => about.health,
       // A loopback-only server gives it only for a loopback `Host` header, against DNS rebinding.
@@ -20,6 +22,7 @@ export const PublicHandlers = PublicRpcs.toLayer(
         config.openToken && (!isLoopbackOnly(config.host) || loopbackHost.test(headers["host"] ?? ""))
           ? Effect.succeed({ token: Redacted.value(identity.token) })
           : Effect.fail(new NotFound({ what: "route", id: "public.openToken" })),
+      "public.pair": ({ pin, name }) => devices.pair(pin, name),
     })
   }),
 )

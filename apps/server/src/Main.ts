@@ -39,6 +39,8 @@ import {
   GitRpcs,
   HostRpcGroup,
   HubHostRpcs,
+  // HE-91
+  DeviceRpcs,
   LinkRpcs,
   AdminRpcs,
   SettingsSyncRpcs,
@@ -114,6 +116,8 @@ import { LinkRepo } from "./hosts/LinkRepo.ts"
 import { Links } from "./hosts/Links.ts"
 import { Relay } from "./hosts/Relay.ts"
 import { SessionSeal } from "./hosts/SessionSeal.ts"
+import { DeviceRepo } from "./hosts/DeviceRepo.ts"
+import { Devices } from "./hosts/Devices.ts"
 import { SettingsSync } from "./hosts/SettingsSync.ts"
 import { SettingsSyncExchange } from "./hosts/SettingsSyncExchange.ts"
 import { SettingsSyncRepo } from "./hosts/SettingsSyncRepo.ts"
@@ -279,6 +283,7 @@ import { TaskDocumentHandlers } from "./rpc/taskDocuments.ts"
 import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
+import { DeviceHandlers } from "./rpc/devices.ts"
 import { PublicHandlers } from "./rpc/public.ts"
 import { PushHandlers } from "./rpc/push.ts"
 import { Push } from "./push/Push.ts"
@@ -487,6 +492,9 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
  */
 const UdpLive = Udp.layerNode({ createSocket, networkInterfaces })
 
+/** HE-91: the board's paired devices, which `Auth` and the relay ask about a device's token. */
+const DevicesLive = Devices.layer.pipe(Layer.provideMerge(DeviceRepo.layer))
+
 /**
  * The hosts area's connections (docs/plan/08-hosts.md), built before the board's MCP area, which asks them for the other
  * hosts a board tool call can go to (`OtherHosts`, 7.4): the links' connections, the hubs this host dialled in to, and
@@ -495,7 +503,7 @@ const UdpLive = Udp.layerNode({ createSocket, networkInterfaces })
 const HostLinksLive = Uplink.otherHosts.pipe(
   Layer.provideMerge(Layer.mergeAll(Uplink.layer, Hubs.layer)),
   Layer.provideMerge(LinkConnections.layer),
-  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, Ssh.layer)),
+  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, Ssh.layer, DevicesLive)),
 )
 
 /** The rest of the hosts area, over the board's MCP area: the directory, the relay, tools called from other hosts, settings sync, discovery. */
@@ -738,6 +746,7 @@ export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, ProjectLoops, Automat
 export const Served = PublicRpcs.merge(
   HostRpcGroup,
   HubHostRpcs,
+  DeviceRpcs,
   LinkRpcs,
   SettingsSyncRpcs,
   AdminRpcs,
@@ -794,6 +803,7 @@ export const HandlersLive = Layer.mergeAll(
   PublicHandlers,
   HostHandlers,
   HubHostHandlers,
+  DeviceHandlers,
   LinkHandlers,
   SettingsSyncHandlers,
   AdminHandlers,

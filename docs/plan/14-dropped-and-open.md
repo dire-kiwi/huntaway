@@ -35,14 +35,14 @@ variables `IA_TASK_KEY` and friends, the `ia.*` browser storage keys, tmux names
 
 ## Deferred
 
-**What the phone app has yet to get back** (the app itself is `apps/mobile` since HE-20, on one board's token): device
-pairing and device tokens, Expo push, answering a prompt from the lock screen (`/api/push-answer`), several boards,
+**What the phone app has yet to get back** (the app itself is `apps/mobile` since HE-20; it pairs by PIN since HE-91):
+Expo push, answering a prompt from the lock screen (`/api/push-answer`), several boards,
 sharing in, attachments and dictation. The Jest set-up is not carried: the app's logic is tested with Vitest like the
 rest. The old app keeps working against machines that have not switched and cannot reach one that has. The list,
 a task each, is in [09-frontend.md](09-frontend.md#the-phone-app).
 
-With it, Settings → Network access's paired phones (the old `settings/Devices.tsx`): the panel keeps the board's URL
-and token (6.12).
+Settings → Network access's paired phones (the old `settings/Devices.tsx`) came back with pairing (HE-91), without
+renaming a phone.
 
 As built in 6.8: the `expo` subscriptions a board has are listed in Settings and kept, not pushed to (a test push says
 so); `push_answer_tokens` stays in the schema, unused; a push carries no `answer`, and the service worker has no Allow

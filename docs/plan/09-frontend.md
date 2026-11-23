@@ -309,6 +309,12 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   (`git.readFile`) highlighted by the Changes tab's Shiki worker (`useTextHighlight` in `changes/highlight.ts`, files of
   up to 20,000 lines), a Markdown file as its preview first, and the README of the project's folder until a file is
   picked. Over 3,000 lines only the lines in view (and 80 each side) are drawn.
+- **Ignored files (HE-90).** Dotfiles git tracks or would are always listed. The eye button beside the finder
+  (`ia.code.ignored`, `codeIgnoredAtom`) shows what git ignores too, dimmed (`.env`, `node_modules/`…): `git.files` is
+  asked with `ignored` and every open folder (`filesAsked`; the server lists the ignored ones), so an ignored folder's
+  contents are read as it's opened, the last tree shown meanwhile. The question is made from the tab's state, never
+  from an answer: two answers that disagree on what's ignored (a `dist/` rebuilt) would each ask for the other. An ignored folder is never folded into one row with its only
+  folder. Its files are in the finder once listed.
 - **Symbols.** A click on a name (not a drag) takes the word under the caret (`wordAt`: not a keyword, unless it's a
   member's name after `.` or `::`) and looks it up (`git.symbol`):
   the side panel lists its definitions and uses by file, its uses in the file are marked, and a hit opens its file at
@@ -593,8 +599,9 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   rows show; so one started from a host's page ends for the hosts with no row shown too. A host whose server runs the
   hub's commit or one after it (ahead of the hub) answers up to date rather than restarting (`Updater.runsAlready`).
 - **Dropped.** Settings → Server's database line and Copy again, and the threads' batch rebuild (docs/plan/14: the
-  two-file database scheme, moving threads onto items). `Devices.tsx` and the paired phones under Network access, with
-  device pairing (14, Deferred).
+  two-file database scheme, moving threads onto items). The paired phones under Network access came back with device
+  pairing (HE-91): Pair a phone shows the PIN with how long it is good for and the tries left (the list is read every
+  2 s while it shows, so the phone that pairs appears and the PIN goes), and each phone with Unpair.
 - **Checks.** `tests/ui/projectSettings`, `proxyConfig` (on `--fake-claude`: Agent configs need a host that runs
   agents), `reviewerOptions`, `summarizers`, `systemPromptPreview`, `guide`, `settingsPanels` (the old `confirmErrors`'
   refused profile delete through `routeRpc`, a shortcut's key, onboarding) and the unarchive half of `archiveProjects`.
@@ -1148,9 +1155,17 @@ bundles for Hermes as it is (the client's atoms, sessions and thread are the web
 shape and its state modules are gone: `serverUrlAtom` and `tokenAtom` are set from the board kept in the keychain
 (`expo-secure-store`, `localStorage` on its web build), and everything else is atoms.
 
-- **Connect**: the link Settings → Network access shows (`http://<host>:<port>/?token=…`) pasted or typed, or an address
-  alone with its token apart, or none on a board started with `--open-token`. The board must answer `public.health`
-  within 10 s before it is kept. Plain HTTP to another machine is allowed with a warning (boards are reached over
+- **Connect** (HE-91): the boards on the phone's network first. The app asks every other address of its own /24 (from
+  `expo-network`; only on a private LAN, nearest first, 32 at a time, 1.5 s each) for `/api/health` on port 7879 (a
+  field changes it) and lists those that answer as a board, by the name their health gives (`state/discovery.ts`,
+  `logic/discovery.ts`). Plain HTTP, so it needs no native module and runs in Expo Go: mDNS (the boards' responder)
+  would need one. The web build asks only `127.0.0.1` (expo-network's web address lookup asks a service on the
+  internet), an Android build `10.0.2.2` too (an emulator's computer). Tapping a board asks for the PIN its Settings →
+  Network access shows (pairing, [08-hosts.md](08-hosts.md#paired-devices)); the phone keeps the device token it
+  gets. Below, an address typed in (Tailscale, another port) with a PIN, or the board's link with its token, or none
+  on a board started with `--open-token`. The board must answer `public.health` within 10 s before it is kept. Forget
+  this board unpairs the phone first (`hub.devices.unpair`; a board token's `Invalid` is ignored). iOS asks for the
+  local network (`NSLocalNetworkUsageDescription`). Plain HTTP to another machine is allowed with a warning (boards are reached over
   Tailscale and the like), so a release build allows cleartext (`expo-build-properties`, `NSAllowsArbitraryLoads`).
 - **Inbox**: every usable host's `permissions.pending` (read every 5 s while it shows: a prompt is no board event),
   Allow or Deny in place, a question or plan opening its task; and the tasks in Needs attention with no prompt.
@@ -1171,9 +1186,8 @@ What is left, a task each:
 
 1. **Run on a phone, and an APK in releases**: a development build or Expo Go on Android and iOS; the release
    workflow's Android job (signing key, `versionCode` from the version, as the old one did).
-2. **Device pairing**: a QR code in Settings → Network access, one-time codes, device tokens with `read` and
-   `operate` only (the `device` session kind is in the contract), revoking; the app's Pair screen replaces pasting
-   the board token.
+2. ~~**Device pairing**~~: done in HE-91, by a PIN rather than a QR code (the app finds the board on its network,
+   so only the PIN is left to type).
 3. **Several boards**: one atom registry per board (the client's atoms are per registry), an Inbox across them.
 4. **Expo push** and **answering from the lock screen**: the server's `expo` subscriptions are kept and not pushed to
    (6.8); with them, `push_answer_tokens` and the notification's Allow and Deny.

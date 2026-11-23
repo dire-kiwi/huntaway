@@ -181,9 +181,10 @@ the lint override.
 
 ## After the port: the phone app
 
-HE-20 built `apps/mobile` on `packages/client` (connect, Inbox, Assistant, Projects, a task's thread and composer). What
+HE-20 built `apps/mobile` on `packages/client` (connect, Inbox, Assistant, Projects, a task's thread and composer);
+HE-91 gave it boards found on its network and pairing by PIN. What
 it has yet to get back is a task each, listed in [09-frontend.md](09-frontend.md#the-phone-app): running it on phones
-and an APK in releases, device pairing, several boards, Expo push and lock-screen answers, sharing and attachments,
+and an APK in releases, several boards, Expo push and lock-screen answers, sharing and attachments,
 and one thread model for both apps.
 
 ## Order at a glance

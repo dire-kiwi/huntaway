@@ -5,6 +5,7 @@ import { Host } from "../host.ts"
 import { DeviceId, HostId, LinkId } from "../ids.ts"
 import { Auth, RequiredScope, Scope } from "../session.ts"
 import { UpdateResult } from "../update.ts"
+import { DeviceRpcs } from "./devices.ts"
 
 // What a server adds as the board a client opened (docs/plan/05-protocol.md, `hub.hosts`): the directory of hosts,
 // linking, and the relay to the others.
@@ -102,5 +103,5 @@ export class HubHostRpcs extends RpcGroup.make(
   }).annotate(RequiredScope, "read"),
 ).middleware(Auth) {}
 
-/** What a server adds as the board a client opened: the directory of hosts (push subscriptions and devices come later). */
-export const HubRpcs = HubHostRpcs
+/** What a server adds as the board a client opened: the directory of hosts and its paired devices (HE-91). */
+export const HubRpcs = HubHostRpcs.merge(DeviceRpcs)

@@ -230,6 +230,7 @@ const readPayloads = (f: ImportedFolder): Readonly<Record<string, unknown>> => {
     "hub.hosts.watch": undefined,
     "hub.hosts.list": undefined,
     "hub.hosts.openRelay": { host_id: "elsewhere" },
+    "hub.devices.unpair": undefined,
   }
 }
 

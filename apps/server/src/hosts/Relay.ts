@@ -6,6 +6,7 @@ import type { Rpc } from "effect/rpc"
 import { boardScopes, Conflict, HostOffline, Invalid, LinkId, LinkRefused, NotFound } from "@huntaway/contracts"
 import type { AssertedSession, DeviceId, HostId, Scope as SessionScope, SessionShape } from "@huntaway/contracts"
 import { Identity } from "../platform/Identity.ts"
+import { Devices } from "./Devices.ts"
 import { LinkConnections, sharedWith, STREAM_PATH } from "./LinkConnections.ts"
 import type { Live } from "./LinkConnections.ts"
 import { LinkRepo } from "./LinkRepo.ts"
@@ -55,6 +56,8 @@ interface Ticket {
   readonly session: AssertedSession
   readonly expires: number
   readonly guard: Guard | null
+  /** The device paired here that asked for it (HE-91): its relay ends when the device is unpaired. */
+  readonly device: DeviceId | null
 }
 
 /** A relay a client may now open: the socket to the host, and when its session ends. */
@@ -62,7 +65,10 @@ export interface Opened {
   /** For the scope of the relay. */
   readonly end: Effect.Effect<Pipeable, HostOffline, Scope.Scope>
   readonly expires: number
-  /** Done once the relay must end before then: the link its session came over went, or no longer lets it in. */
+  /**
+   * Done once the relay must end before then: the link its session came over went, or no longer lets it in, or the
+   * device it is for was unpaired.
+   */
   readonly revoked: Effect.Effect<void>
 }
 
@@ -71,6 +77,22 @@ export interface RelayedFor {
   readonly kind: "board" | "device"
   readonly scopes: ReadonlyArray<SessionScope>
   readonly device_id: DeviceId | null
+}
+
+/**
+ * The session a ticket asserts for the client `session` asks for, until `exp` (pure). `as` only ever narrows: whoever
+ * asks, the client's session gets no more than the asker's own scopes, and never `link`. A device stays itself (HE-91
+ * review): its `as` may narrow its scopes, never pass it off as the board or as another device.
+ */
+export const assertedFor = (session: SessionShape, as: RelayedFor | undefined, exp: number): AssertedSession => {
+  const own = { kind: session.kind, scopes: [...session.scopes], device_id: session.device_id }
+  const who = session.kind === "device" ? { ...own, scopes: as?.scopes ?? own.scopes } : (as ?? own)
+  return {
+    kind: who.kind === "link" ? "board" : who.kind,
+    scopes: who.scopes.filter((scope) => scope !== "link" && session.scopes.has(scope)),
+    device_id: who.kind === "device" ? who.device_id : null,
+    exp,
+  }
 }
 
 export class Relay extends Context.Service<
@@ -91,17 +113,18 @@ export class Relay extends Context.Service<
       const repo = yield* LinkRepo
       const mesh = yield* Mesh
       const identity = yield* Identity
+      const devices = yield* Devices
       const random = yield* SecureRandom.SecureRandom
       const tickets = yield* Ref.make<ReadonlyMap<string, Ticket>>(new Map())
 
-      const issue = (target: Target, path: string, session: AssertedSession, guard: Guard | null) =>
+      const issue = (target: Target, path: string, session: AssertedSession, guard: Guard | null, device: DeviceId | null = null) =>
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis
           const ticket = Hex.encode(yield* random.randomBytes(32))
           yield* Ref.update(tickets, (all) => {
             // Expired tickets go as new ones come.
             const next = new Map([...all].filter(([, t]) => t.expires > now))
-            return next.set(ticket, { target, path, session, expires: now + Duration.toMillis(TICKET_LIFE), guard })
+            return next.set(ticket, { target, path, session, expires: now + Duration.toMillis(TICKET_LIFE), guard, device })
           })
           return ticket
         })
@@ -145,24 +168,19 @@ export class Relay extends Context.Service<
         if (session.kind === "link" && as === undefined)
           return yield* new Conflict({ reason: "in_use", detail: "a host's own connection is relayed further only for a client of its own" })
         const now = yield* Clock.currentTimeMillis
-        // `as` only ever narrows: whoever asks, the client's session gets no more than the asker's own scopes.
-        const who = as ?? { kind: session.kind, scopes: [...session.scopes], device_id: session.device_id }
-        const asserted: AssertedSession = {
-          kind: who.kind === "link" ? "board" : who.kind,
-          scopes: who.scopes.filter((scope) => scope !== "link" && session.scopes.has(scope)),
-          device_id: who.kind === "device" ? who.device_id : null,
-          exp: now + Duration.toMillis(RELAYED),
-        }
+        const asserted = assertedFor(session, as, now + Duration.toMillis(RELAYED))
         const guard = yield* guardOf(session)
+        // A device's own session here (not one a link asserts for a device of another board's).
+        const device = session.kind === "device" && session.via_link === null ? session.device_id : null
         const id = LinkId.make(host)
         if ((yield* repo.get(id)) !== null) {
           const live = yield* connections.live(id)
-          return yield* issue({ _tag: "Link", host: live.id }, path, asserted, guard)
+          return yield* issue({ _tag: "Link", host: live.id }, path, asserted, guard, device)
         }
         const hop = yield* mesh.through(host)
         if (hop === null) return yield* new NotFound({ what: "host", id: host })
         yield* connections.live(hop)
-        return yield* issue({ _tag: "Mesh", host, hop }, path, asserted, guard)
+        return yield* issue({ _tag: "Mesh", host, hop }, path, asserted, guard, device)
       })
 
       const forDialIn = Effect.fn("Relay.forDialIn")(function* (over: Rpc.ServerClient, path: string, session: AssertedSession) {
@@ -215,7 +233,8 @@ export class Relay extends Context.Service<
         // Its link's connection gone, or that link no longer letting it in: as good as used.
         if (found.guard !== null && !(yield* holds(found.guard))) return Option.none<Opened>()
         const target = found.target
-        const opened = (end: Opened["end"]) => Option.some<Opened>({ end, expires: found.session.exp, revoked: revoked(found.guard) })
+        const ends = found.device === null ? revoked(found.guard) : Effect.raceFirst(revoked(found.guard), devices.revoked(found.device))
+        const opened = (end: Opened["end"]) => Option.some<Opened>({ end, expires: found.session.exp, revoked: ends })
         if (target._tag === "Link") {
           const live = yield* connections.live(target.host)
           return opened(live.open(found.path, found.session))

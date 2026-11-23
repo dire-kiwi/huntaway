@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema, Stream } from "effect"
 import { RpcSchema } from "effect/rpc"
 import type { Rpc, RpcGroup } from "effect/rpc"
-import { HubHostRpcs, Invalid, NotFound, PublicRpcs, RequiredScope, SpeechRpcs } from "@huntaway/contracts"
+import { DeviceRpcs, HubHostRpcs, Invalid, NotFound, PublicRpcs, RequiredScope, SpeechRpcs, Unavailable } from "@huntaway/contracts"
 import type { Host } from "@huntaway/contracts"
 import { LinkRepo } from "../hosts/LinkRepo.ts"
 import { linkEntry, localEntry } from "../hosts/Links.ts"
@@ -57,6 +57,7 @@ export const ReadOnlyPublicHandlers = PublicRpcs.toLayer(
     return PublicRpcs.of({
       "public.health": () => about.health,
       "public.openToken": () => Effect.fail(new NotFound({ what: "route", id: "public.openToken" })),
+      "public.pair": () => Effect.fail(new Unavailable({ what: "pairing", reason: "a read-only rehearsal pairs no device" })),
     })
   }),
 )
@@ -85,6 +86,20 @@ export const ReadOnlyHubHandlers = HubHostRpcs.toLayer(
       "hub.hosts.remove": () => changes,
       "hub.hosts.copyConfig": () => changes,
       "hub.hosts.pushUpdate": () => changes,
+    })
+  }),
+)
+
+/** `hub.devices.*` (HE-91): a rehearsal has no paired device, and pairs none. */
+export const ReadOnlyDeviceHandlers = DeviceRpcs.toLayer(
+  Effect.sync(() => {
+    const changes = Effect.die(new RefusedOnReadOnly({ rpc: "hub.devices" }))
+    return DeviceRpcs.of({
+      "hub.devices.list": () => Effect.succeed({ devices: [], pairing: null, current: null }),
+      "hub.devices.startPairing": () => Effect.fail(new Unavailable({ what: "pairing", reason: "a read-only rehearsal pairs no device" })),
+      "hub.devices.stopPairing": () => changes,
+      "hub.devices.revoke": () => changes,
+      "hub.devices.unpair": () => Effect.fail(new Invalid({ field: "session", reason: "a read-only rehearsal has no paired device" })),
     })
   }),
 )

@@ -10,6 +10,9 @@ export * from "./automation.ts"
 export * from "./capabilities.ts"
 // 6.10: computer use.
 export * from "./desktop.ts"
+// HE-91: paired devices.
+export * from "./device.ts"
+export * from "./rpc/devices.ts"
 // HE-35: Spaces.
 export * from "./space.ts"
 // HE-49: teleport sign-ins into a Space.

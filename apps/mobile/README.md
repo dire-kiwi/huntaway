@@ -9,9 +9,11 @@ cards, Stop / Start / Move and a composer, and the **Board** (its hosts, the pro
 
 ## Connecting
 
-On the board, Settings → Network access shows its link, `http://<host>:<port>/?token=…`. Paste it into Connect. The
-token gives full control of the board, so reach it over a network you trust (the same Wi-Fi, or Tailscale). A board
-started with `--open-token` (test servers) needs only its address.
+Connect lists the boards on the phone's Wi-Fi (every address of its /24 asked for `/api/health` on port 7879; the port
+can be changed). Tap one, then on the board choose Settings → Network access → Pair a phone and type the PIN it shows:
+the phone gets a device token of its own (`read` and `operate` only), which Unpair there revokes. A board it doesn't
+find is typed in by address, with its PIN; or its link with the board token (`http://<host>:<port>/?token=…`, full
+control). A board started with `--open-token` (test servers) needs only its address.
 
 ## Running it
 
@@ -38,4 +40,6 @@ The phone must reach the board's address: `127.0.0.1` is the phone itself (an An
   pnpm --filter huntaway-mobile export:web --output-dir $TMPDIR/mobile-web
   ```
 
-  The web build keeps the board in `localStorage` (the keychain is the phone's), and is for checks only.
+  The web build keeps the board in `localStorage` (the keychain is the phone's), and is for checks only. Its Connect
+  looks for boards on this machine only (`127.0.0.1`): type the test server's port beside the list, start pairing with
+  `huntaway rpc hub.devices.startPairing` (or on the board), and tap the board.

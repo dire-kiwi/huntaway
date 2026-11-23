@@ -1,6 +1,6 @@
 // HE-79: the Code tab's file tree, from `git.files`'s paths: folders first, each folder's contents in name order, a
 // folder with only one folder in it shown with it on one row (`src/components`), as GitHub and VS Code do. And the
-// file finder's matches.
+// file finder's matches. HE-90: with what git ignores when it's shown, marked as ignored.
 
 export interface Folder {
   readonly name: string
@@ -8,28 +8,45 @@ export interface Folder {
   readonly path: string
   readonly folders: Map<string, Folder>
   readonly files: Array<string>
+  /** Only what git ignores is in it. */
+  readonly ignored: boolean
 }
 
-const newFolder = (name: string, path: string): Folder => ({ name, path, folders: new Map(), files: [] })
+const newFolder = (name: string, path: string, ignored: boolean): Folder => ({ name, path, folders: new Map(), files: [], ignored })
 
-/** The tree of `paths` (from the top of the repository), from `root` (the project's folder, `web/`, or null for the top). */
-export function buildTree(paths: ReadonlyArray<string>, root: string | null): Folder {
-  const top = newFolder("", "")
-  for (const p of paths) {
-    const parts = p.split("/")
+/**
+ * The tree of `paths` (from the top of the repository), from `root` (the project's folder, `web/`, or null for the top),
+ * with what git ignores (`git.files`'s `ignored`: files, and folders ending in `/`).
+ */
+export function buildTree(paths: ReadonlyArray<string>, root: string | null, ignored: ReadonlyArray<string> = []): Folder {
+  const top = newFolder("", "", false)
+  const add = (p: string, isIgnored: boolean) => {
+    const folder = p.endsWith("/")
+    const parts = (folder ? p.slice(0, -1) : p).split("/")
     let at = top
-    for (let i = 0; i < parts.length - 1; i++) {
+    for (let i = 0; i < parts.length - (folder ? 0 : 1); i++) {
       const name = parts[i] ?? ""
       let next = at.folders.get(name)
-      if (!next) at.folders.set(name, (next = newFolder(name, parts.slice(0, i + 1).join("/"))))
+      if (!next) at.folders.set(name, (next = newFolder(name, parts.slice(0, i + 1).join("/"), isIgnored)))
       at = next
     }
-    at.files.push(p)
+    if (!folder) at.files.push(p)
   }
+  for (const p of paths) add(p, false)
+  for (const p of ignored) add(p, true)
   if (root === null) return top
   let at: Folder | undefined = top
   for (const name of root.replace(/\/+$/, "").split("/")) at = at?.folders.get(name)
-  return at ? { ...at, name: "" } : newFolder("", root.replace(/\/+$/, ""))
+  return at ? { ...at, name: "" } : newFolder("", root.replace(/\/+$/, ""), false)
+}
+
+/**
+ * What `git.files` is asked besides the task: with what git ignores, every open folder (the server lists what's in the
+ * ignored ones, and leaves the others). Made from the tab's state alone, never from an answer: two answers that disagree
+ * on what's ignored (a `dist/` rebuilt) would each ask for the other, and the tab would go back and forth between them.
+ */
+export function filesAsked(showIgnored: boolean, open: ReadonlySet<string>): { readonly ignored?: true; readonly open?: ReadonlyArray<string> } {
+  return showIgnored ? { ignored: true, open: [...open].toSorted() } : {}
 }
 
 /** A row of the tree as shown: a folder (open or not) or a file, how deep it is, and its name (a folder's run of names). */
@@ -39,32 +56,34 @@ export interface Row {
   readonly name: string
   readonly depth: number
   readonly open: boolean
+  readonly ignored: boolean
 }
 
 const byName = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })
 export const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1)
 
 /** The rows shown: the open folders' contents, folders first. */
-export function rows(tree: Folder, open: ReadonlySet<string>): Array<Row> {
+export function rows(tree: Folder, open: ReadonlySet<string>, ignored: ReadonlySet<string> = new Set()): Array<Row> {
   const out: Array<Row> = []
   const walk = (folder: Folder, depth: number) => {
     for (const name of [...folder.folders.keys()].toSorted(byName)) {
       let f = folder.folders.get(name)
       if (!f) continue
       let label = f.name
-      // A folder with nothing but one folder in it is one row with it.
-      for (let only = f; only.files.length === 0 && only.folders.size === 1;) {
+      // A folder with nothing but one folder in it is one row with it; not an ignored one, whose contents are listed only
+      // once it's opened (the click that opens it would make it another row, closed).
+      for (let only = f; !only.ignored && only.files.length === 0 && only.folders.size === 1;) {
         const [next] = only.folders.values()
         if (!next) break
         label = `${label}/${next.name}`
         only = f = next
       }
       const isOpen = open.has(f.path)
-      out.push({ kind: "folder", path: f.path, name: label, depth, open: isOpen })
+      out.push({ kind: "folder", path: f.path, name: label, depth, open: isOpen, ignored: f.ignored })
       if (isOpen) walk(f, depth + 1)
     }
     for (const p of folder.files.toSorted((a, b) => byName(baseName(a), baseName(b))))
-      out.push({ kind: "file", path: p, name: baseName(p), depth, open: false })
+      out.push({ kind: "file", path: p, name: baseName(p), depth, open: false, ignored: ignored.has(p) })
   }
   walk(tree, 0)
   return out

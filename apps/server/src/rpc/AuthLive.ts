@@ -1,7 +1,8 @@
 import { Context, Effect, Layer, Option, Redacted } from "effect"
 import { Mac } from "effect/crypto"
 import { Auth, boardScopes, Forbidden, LINK_HEADER, RequiredScope, Session, SESSION_HEADER, Unauthorized } from "@huntaway/contracts"
-import type { SessionShape } from "@huntaway/contracts"
+import type { DeviceId, SessionShape } from "@huntaway/contracts"
+import { Devices } from "../hosts/Devices.ts"
 import { SessionSeal } from "../hosts/SessionSeal.ts"
 import { Identity } from "../platform/Identity.ts"
 
@@ -24,6 +25,10 @@ const boardSession: SessionShape = { kind: "board", scopes: boardScopes, device_
 
 /** A host that dialled in, with the hub token every such host shares: `link` and nothing else. */
 const hubTokenSession: SessionShape = { kind: "link", scopes: new Set(["link"]), device_id: null, via_link: null }
+
+/** A paired device (HE-91): `read` and `operate`, and no more. */
+const deviceScopes = new Set(["read", "operate"] as const)
+const deviceSession = (id: DeviceId): SessionShape => ({ kind: "device", scopes: deviceScopes, device_id: id, via_link: null })
 
 /** A read-only server's one session: the board token's, narrowed to `read`. */
 const readOnlySession: SessionShape = { kind: "board", scopes: new Set(["read"]), device_id: null, via_link: null }
@@ -57,14 +62,16 @@ export const AuthReadOnly = Layer.effect(
  * puts before each request's own: such a request's session comes from the seal alone, and its bearer token is ignored.
  * A request header of the same name joins the upgrade's (`a, b`) and fails the seal, so a relayed client can spoil its
  * own session but never forge one. Otherwise the board token gives every scope but `link`, and the hub token (a host
- * that dials in) `link` alone. The RPC's `RequiredScope`
- * must be among the session's, and an RPC without one is refused.
+ * that dials in) `link` alone, and a paired device's token (HE-91) `read` and `operate`: a device's call, a stream's
+ * too, ends with `Unauthorized` once the device is unpaired. The RPC's `RequiredScope` must be among the session's,
+ * and an RPC without one is refused.
  */
 export const AuthLive = Layer.effect(
   Auth,
   Effect.gen(function* () {
     const identity = yield* Identity
     const seal = yield* SessionSeal
+    const devices = yield* Devices
     const token = Redacted.value(identity.token)
     const hubToken = Redacted.value(identity.hubToken)
     return Auth.of((effect, { headers, rpc }) => {
@@ -78,7 +85,14 @@ export const AuthLive = Layer.effect(
       const given = bearer(headers["authorization"])
       if (given !== null && sameSecret(given, token)) return withSession(boardSession)
       if (given !== null && sameSecret(given, hubToken)) return withSession(hubTokenSession)
-      return Effect.fail(new Unauthorized())
+      if (given === null) return Effect.fail(new Unauthorized())
+      return Effect.flatMap(
+        devices.byToken(given),
+        Option.match({
+          onNone: () => Effect.fail(new Unauthorized()),
+          onSome: (id) => Effect.raceFirst(withSession(deviceSession(id)), Effect.andThen(devices.revoked(id), Effect.fail(new Unauthorized()))),
+        }),
+      )
     })
   }),
 )

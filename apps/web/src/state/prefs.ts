@@ -62,3 +62,6 @@ export const browserShareAtom = storedBare("ia.browserShare", Schema.String, nul
 
 /** HE-62: the address a task's browser pane was last on (`ia.browser:<host>:<task>`). */
 export const browserUrlAtom = Atom.family((key: string) => storedBare(`ia.browser:${key}`, Schema.String, null))
+
+/** HE-90: whether the Code tab's tree shows what git ignores (`ia.code.ignored`). */
+export const codeIgnoredAtom = storedBare("ia.code.ignored", Flag, "0")
