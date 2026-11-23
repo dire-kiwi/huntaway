@@ -142,7 +142,7 @@ export function ProjectCreationDetail({ creation }: { creation: ProjectCreation 
         <Row label="Folder">
           <Mono>{creation.repo_path}</Mono>
           {!creation.exists ? (
-            <div className="text-[12px] text-amber-200/90">Doesn't exist yet: it's created.</div>
+            <div className="text-[12px] text-amber-200/90">Doesn't exist yet: it's created, as a git repository with a README.</div>
           ) : (
             !creation.git && <div className="text-[12px] text-faint">Not a git repository.</div>
           )}

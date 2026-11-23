@@ -514,9 +514,10 @@ describe("Relocation", () => {
         )
         const keys = [moving._tag === "Success" ? moving.success.key : null, taking._tag === "Success" ? taking.success.key : null]
         assert.strictEqual(keys.filter((k) => k === "NEW").length, 1, String(keys))
-        // The project says where its folder is: moved with the key, or (the key gone before it was checked) not moved.
+        // The project says where its folder is: moved with the key; not moved, the key gone before it was checked; or moved
+        // without the key, gone after it was checked and before it was stored.
         const at = (yield* getProject(p)).repo_path
-        assert.strictEqual(at, moving._tag === "Success" ? n : p.repo_path)
+        assert.include(moving._tag === "Success" ? [n] : [p.repo_path, n], at)
         assert.isTrue(yield* isDir(at))
 
         const rPath = `${yield* temp}/renamed`

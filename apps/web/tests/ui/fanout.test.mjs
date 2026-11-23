@@ -21,6 +21,8 @@ beforeAll(async () => {
   profile = await server.rpc("profiles.create", { profile: { name: "Default", claude_config_ids: [config.id] } })
   const create = (p) => server.rpc("projects.create", { project: { profile_id: profile.id, ...p } })
   project = await create({ name: "Shop", repo_path: repo, key: "SHOP" })
+  // A folder that already exists, so it stays a plain one (a folder made for a project becomes a repository).
+  mkdirSync(`${server.dataDir}/plain`)
   plain = await create({ name: "Plain", repo_path: `${server.dataDir}/plain`, key: "PL", use_worktrees: false })
   // A git repository whose tasks don't get worktrees unless they ask.
   mkdirSync(`${server.dataDir}/cart`)
