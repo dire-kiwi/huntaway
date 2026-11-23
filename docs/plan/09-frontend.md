@@ -1290,6 +1290,11 @@ What is left, a task each:
 - **A profile's assistant on another host (7.4, HE-8).** `assistantHome`'s offline and no-profile notes, the settings
   card's uplink note, `assistant.get` with `here: true` on the host it found, and the Routines tab's "left behind"
   routines (`task/RoutinesLeftBehind.tsx`, the old `LeftBehind`, one line in `Routines.tsx`) are back.
+- **Which host's assistant, on its page (HE-103).** `task/AssistantHostPicker.tsx` is a dropdown of where the
+  assistant runs (the profile form's `AssistantHostSelect`: this host or a linked one, an offline one marked), in the
+  assistant's header and on the page shown while it can't be opened. Picking one saves the board's host's profile's
+  `assistant_host` at once (`profiles.update`), and the page follows it there. It's shown when the profile form shows
+  the field: a linked host is connected, or one is picked. `assistantHost.test.mjs` moves it there and back.
 - **Checks.** `tests/ui/assistant.test.mjs` (every old case; the held save is `assistant.writeMemoryFile` held with
   `routeRpc`, and "Ctrl+S on today's empty log saves nothing" counts the page's calls), `brief.test.mjs` (every old
   case; the brief and the ratings answered with `routeRpc`) and `routines.test.mjs` (both old cases, on
