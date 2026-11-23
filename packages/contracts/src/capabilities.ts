@@ -17,5 +17,7 @@ export const Capability = {
    * that dialled in), and its directory lists the hosts its neighbours reach.
    */
   mesh: "mesh",
+  /** A phone pairs with it by a PIN (`public.pair`, HE-91) and gets a device token of its own. */
+  devicePairing: "device_pairing",
 } as const
 export type Capability = (typeof Capability)[keyof typeof Capability]

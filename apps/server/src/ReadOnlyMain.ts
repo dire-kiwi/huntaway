@@ -25,6 +25,8 @@ import {
   GitRpcs,
   HostRpcGroup,
   HubHostRpcs,
+  // HE-91
+  DeviceRpcs,
   LinkRpcs,
   PenRpcs,
   PermissionRpcs,
@@ -159,7 +161,7 @@ import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
 import { PushHandlers } from "./rpc/push.ts"
-import { ReadOnlyHubHandlers, ReadOnlyPublicHandlers, refuseAll, refuseChanges } from "./rpc/readOnly.ts"
+import { ReadOnlyDeviceHandlers, ReadOnlyHubHandlers, ReadOnlyPublicHandlers, refuseAll, refuseChanges } from "./rpc/readOnly.ts"
 import { TaskDocumentHandlers } from "./rpc/taskDocuments.ts"
 import { TaskHandlers } from "./rpc/tasks.ts"
 import { ThreadHandlers } from "./rpc/threads.ts"
@@ -331,6 +333,7 @@ export const ReadOnlyAreas = Layer.mergeAll(Board.layer, LinkRepo.layer).pipe(
 export const ReadOnlyServed = PublicRpcs.merge(
   HostRpcGroup,
   HubHostRpcs,
+  DeviceRpcs,
   LinkRpcs,
   SettingsSyncRpcs,
   AdminRpcs,
@@ -374,6 +377,7 @@ export const ReadOnlyRpcHandlers = Layer.mergeAll(
   ReadOnlyPublicHandlers,
   HostHandlers,
   ReadOnlyHubHandlers,
+  ReadOnlyDeviceHandlers,
   ProfileHandlers,
   ConfigHandlers,
   ProjectHandlers,
