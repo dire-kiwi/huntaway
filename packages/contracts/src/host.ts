@@ -90,6 +90,8 @@ export const Health = Schema.Struct({
   capabilities: Schema.Array(Schema.String),
   /** The commit it runs, if it runs from a checkout. */
   commit: Schema.NullOr(Schema.String),
+  /** Its name, for a phone that found it on the network to show (HE-91); absent from hosts before it. */
+  name: Schema.optionalKey(Schema.String),
 })
 export interface Health extends Schema.Schema.Type<typeof Health> {}
 

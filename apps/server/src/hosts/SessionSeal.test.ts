@@ -1,7 +1,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 import * as NodeWS from "@effect/platform-node/NodeWS"
 import { assert, describe, it } from "@effect/vitest"
-import { Clock, Effect, Exit, Layer, Redacted, Schema } from "effect"
+import { Clock, Effect, Exit, Fiber, Layer, Redacted, Schema } from "effect"
 import { Headers, HttpRouter, HttpServer } from "effect/http"
 import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc"
 import { Socket } from "effect/socket"
@@ -10,6 +10,8 @@ import type { AssertedSession } from "@huntaway/contracts"
 import { TestPlatform } from "@huntaway/testing"
 import { Identity } from "../platform/Identity.ts"
 import { AuthLive } from "../rpc/AuthLive.ts"
+import { DeviceRepo } from "./DeviceRepo.ts"
+import { Devices } from "./Devices.ts"
 import { SessionSeal } from "./SessionSeal.ts"
 
 // 7.0, the first check (docs/plan/08-hosts.md, To check early): the headers of a websocket's upgrade request reach the
@@ -29,9 +31,16 @@ class Checks extends RpcGroup.make(
   Rpc.make("check.read", { success: WhoAmI }).annotate(RequiredScope, "read"),
   Rpc.make("check.admin", { success: WhoAmI }).annotate(RequiredScope, "admin"),
   Rpc.make("check.link", { success: WhoAmI }).annotate(RequiredScope, "link"),
+  /** A call that never answers: how a stream's call stays open. */
+  Rpc.make("check.wait", { success: WhoAmI }).annotate(RequiredScope, "read"),
 ).middleware(Auth) {}
 
-const handlers = Checks.toLayer({ "check.read": () => whoAmI, "check.admin": () => whoAmI, "check.link": () => whoAmI })
+const handlers = Checks.toLayer({
+  "check.read": () => whoAmI,
+  "check.admin": () => whoAmI,
+  "check.link": () => whoAmI,
+  "check.wait": () => Effect.andThen(whoAmI, Effect.never),
+})
 
 /** The checks on a real server on a free port, with the server's `Auth` over a test identity. */
 const server = HttpRouter.serve(
@@ -41,7 +50,11 @@ const server = HttpRouter.serve(
     Layer.provide(AuthLive),
   ),
   { disableListenLog: true, disableLogger: true },
-).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provideMerge(SessionSeal.layer), Layer.provideMerge(TestPlatform()))
+).pipe(
+  Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provideMerge(Layer.mergeAll(SessionSeal.layer, Devices.layer.pipe(Layer.provideMerge(DeviceRepo.layer)))),
+  Layer.provideMerge(TestPlatform()),
+)
 
 /**
  * A client over one websocket whose upgrade request carries `upgrade` headers; each request carries `request` headers
@@ -152,6 +165,22 @@ describe("a relayed socket's session (7.0)", () => {
       assert.strictEqual(yield* failure(device["check.admin"]()), "Forbidden")
       const link = yield* connect(yield* sealed(yield* asserted({ kind: "link", scopes: ["link", "read"] })))
       assert.deepStrictEqual(yield* link["check.link"](), { kind: "link", scopes: ["link", "read"], via_link: HUB })
+    }).pipe(Effect.scoped, Effect.provide(server)),
+  )
+
+  it.live("a paired device's token (HE-91): read and operate only, refused once it is unpaired, and its open calls end", () =>
+    Effect.gen(function* () {
+      const devices = yield* Devices
+      const { pin } = yield* devices.startPairing
+      const paired = yield* devices.pair(pin, "Pixel")
+      const phone = yield* connect({}, { authorization: `Bearer ${paired.token}` })
+      assert.deepStrictEqual(yield* phone["check.read"](), { kind: "device", scopes: ["operate", "read"], via_link: null })
+      assert.strictEqual(yield* failure(phone["check.admin"]()), "Forbidden")
+      assert.strictEqual(yield* failure(phone["check.link"]()), "Forbidden")
+      const open = yield* Effect.forkChild(failure(phone["check.wait"]()))
+      yield* devices.revoke(paired.device.id)
+      assert.strictEqual(yield* Fiber.join(open), "Unauthorized")
+      assert.strictEqual(yield* failure(phone["check.read"]()), "Unauthorized")
     }).pipe(Effect.scoped, Effect.provide(server)),
   )
 })

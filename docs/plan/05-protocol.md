@@ -61,8 +61,8 @@ export class Auth extends RpcMiddleware.Service<Auth, { provides: Session }>()("
 - **Every RPC states the scope it needs**, as an annotation on its definition. The `Auth` middleware resolves the
   session and fails with `Forbidden` when the scope is missing. A structural test fails on an RPC without one.
 - **Who gets what.** The board token: every scope but `link`. A link: `link`, and, when it relays for a client, that
-  client's scopes and no more. A paired device (`read` and `operate` only) is the third kind of session; it is in
-  the contract so that scopes are designed for it, and is implemented with the phone app, later. On a
+  client's scopes and no more. A paired device (`read` and `operate` only) is the third kind of session: a phone
+  that paired by PIN (HE-91, [08-hosts.md](08-hosts.md#paired-devices)). On a
   [read-only server](06-server.md#a-read-only-server) (a rehearsal of an import) every session has `read` and no
   more, whatever it presents, and `host.info` says `read_only: true`. Read-only narrows a session's scopes; it does not
   open the board: the board token is still required, there is no open token, and the hub token and relayed sessions

@@ -24,7 +24,8 @@ export class About extends Context.Service<About, AboutShape>()("huntaway-server
     const config = yield* ServerConfig
     const dataDir = yield* DataDir
     const settings = yield* SettingsRepo
-    const capabilities: ReadonlyArray<string> = rehearsal === null ? [Capability.settingsSync, Capability.mesh] : [Capability.readOnly]
+    const capabilities: ReadonlyArray<string> =
+      rehearsal === null ? [Capability.settingsSync, Capability.mesh, Capability.devicePairing] : [Capability.readOnly]
     // The commit it runs: a checkout's HEAD when it started, else the release's or the deployment's (`ServerConfig`).
     const proc = yield* Proc
     const head =
@@ -37,7 +38,7 @@ export class About extends Context.Service<About, AboutShape>()("huntaway-server
     const commit = head ?? config.commit
     // How it updates when a hub asks: its checkout, else the releases it follows.
     const updatesFrom = rehearsal !== null ? null : config.sourceDir !== null ? "checkout" : config.releaseRepo !== null ? "releases" : null
-    const health: Health = { ok: true, host_id: identity.hostId, version: config.version, protocol: PROTOCOL, capabilities, commit }
+    const health: Health = { ok: true, host_id: identity.hostId, name: identity.hostName, version: config.version, protocol: PROTOCOL, capabilities, commit }
     const fs = yield* FileSystem.FileSystem
     const path = yield* Config.String("PATH").pipe(Config.withDefault(""))
     /** Whether a program is there: a path that exists, or a name on `PATH` (the old `on_path`). */

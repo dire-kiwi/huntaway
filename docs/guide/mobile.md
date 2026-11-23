@@ -49,11 +49,20 @@ automations) are pushed the same way.
 
 ## The mobile app
 
-The phone app (`apps/mobile` in the old repository, an Expo app for Android and iOS) is not available for the new
-server yet. The old app keeps working against machines that still run the old server, but it can't reach one that has
-switched. What came with it waits for it too: pairing a phone and its device tokens, push through Expo, answering a
-prompt from the lock screen, and the paired phones in Settings → Network access (which keeps the board's URL and
-token).
+The phone app (`apps/mobile`, an Expo app for Android and iOS; see its README to run it) shows the board's Inbox,
+assistant, projects and tasks. It doesn't push yet: for notifications, use the board in the phone's browser as above.
 
-Until then, use the board in the phone's browser: open it at an HTTPS address as above (or any address the phone can
-reach, without push), installed on the Home Screen if you like, and turn on push there.
+**Connecting a phone.** With the phone on the same Wi-Fi as the board, the app's Connect screen lists the boards it
+finds there (it asks each address of the network on port 7879; change the port beside the list if yours listens on
+another). Tap the board, then on the board open Settings → Network access → **Pair a phone**: it shows a 6-digit PIN.
+Type it in the app. The PIN is good for 5 minutes and one phone, and 5 wrong PINs end pairing (start it again for a new
+one), so someone else on the network can't guess their way in.
+
+A paired phone gets a token of its own, which can see the board and work its tasks (answer prompts and questions,
+send messages, start, stop and move tasks), on this host and every host it links, but not change settings, open
+terminals, touch git or link hosts. Settings → Network access lists the paired phones; **Unpair** cuts one off at once.
+_Forget this board_ in the app unpairs it too.
+
+A board the phone can't find (over Tailscale, on another network, an older board) can be typed in under _Or type its
+address_: its address and the PIN, or its link from Settings → Network access with the board's token (full control).
+Plain HTTP travels unencrypted, so use your own Wi-Fi or Tailscale.
