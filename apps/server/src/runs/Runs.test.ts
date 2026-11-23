@@ -451,6 +451,9 @@ describe("Runs.send", () => {
         assert.deepStrictEqual(yield* userMessages(id), [])
         const told = only(yield* agent.input)
         assert.deepInclude(told, { type: "control_request", request: { subtype: "apply_flag_settings", settings: { outputStyle: "Explanatory" } } })
+        // What follows its line (the composer's comments, attached files) goes on to the agent.
+        const after = yield* send(id, "/output-style Terse\n\nAttached files:\n- a.png")
+        assert.deepStrictEqual([after.output_style, after.steering.map((st) => st.text)], ["Terse", ["Attached files:\n- a.png"]])
       }),
     ),
   )

@@ -1488,7 +1488,10 @@ board has its own, for a Claude task:
 
 - **`/output-style <name>`** (`queue.ts` `outputStyleCommand`, handled in `Runs.send` like `/new`, under the task's
   lock) sets the task's `output_style` (a text column, `2026-11-24-output-style.ts`; null is whatever Claude Code's
-  settings say) and writes an info notice. It is no message for the agent and starts no run. Every later launch gives
+  settings say) and writes an info notice. It is no message for the agent and starts no run, so it neither answers
+  the agent's questions nor skips its permission prompts (`reachesAgent`, in `UserMessages` and `Assistant.send`). The
+  name is the rest of its first line: what follows (the composer's line comments, attached files) is sent on to the
+  agent as the user's message, as `/new <message>`'s is, and that one does answer and skip. Every later launch gives
   it as a setting (`--settings '{"outputStyle": …}'`, with the hooks when there are any), which outranks the settings
   files; a running agent is also sent `apply_flag_settings { outputStyle }` on its input, which Claude Code takes for
   its next turn (a run whose input has closed is ended, and the next is launched with it).

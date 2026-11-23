@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { combine, decideSend, isCompact, newCommand, outputStyleCommand } from "./queue.ts"
+import { combine, decideSend, isCompact, newCommand, outputStyleCommand, reachesAgent } from "./queue.ts"
 import type { SendFacts } from "./queue.ts"
 
 // What happens to a message (huntaway's runner/send.ts and queue.ts), as plain functions: the decisions the service
@@ -143,7 +143,24 @@ describe("the queue", () => {
         outputStyleCommand("/output-styles"),
         outputStyleCommand("use /output-style"),
       ],
-      ["", "Explanatory", null, null],
+      [{ name: "", rest: "" }, { name: "Explanatory", rest: "" }, null, null],
     )
+  })
+
+  // HE-102: the composer puts line comments and attached files after the message.
+  it("takes an `/output-style`'s name from its line, and what follows as a message for the agent", () => {
+    assert.deepStrictEqual(outputStyleCommand("/output-style Explanatory\n\nAttached files:\n- a.png"), {
+      name: "Explanatory",
+      rest: "Attached files:\n- a.png",
+    })
+    assert.deepStrictEqual(outputStyleCommand("/output-style\nfix this"), { name: "", rest: "fix this" })
+    assert.deepStrictEqual(["hi", "  ", "/output-style Explanatory", "/output-style\n", "/output-style X\n\nfix this", "/new"].map(reachesAgent), [
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+    ])
   })
 })

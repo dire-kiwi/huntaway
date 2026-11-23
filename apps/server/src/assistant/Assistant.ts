@@ -11,6 +11,7 @@ import { Identity } from "../platform/Identity.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { Runs } from "../runs/Runs.ts"
 import type { SendRefused } from "../runs/Runs.ts"
+import { reachesAgent } from "../runs/queue.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import type { TaskNotFound } from "../tasks/Tasks.ts"
 import { formatNumber } from "../prompts/memory.ts"
@@ -169,8 +170,9 @@ export class Assistant extends Context.Service<Assistant, AssistantShape>()("hun
       const send = Effect.fn("Assistant.send")(function* (profile: ProfileId, text: string, local = false) {
         const task = yield* get(profile, local)
         const after = yield* runs.send(task.id, { text, source: "user" })
-        // The user's reply answers the questions it asked, and skips its permission prompts, so that it reads the reply now.
-        if (text.trim() !== "") {
+        // The user's reply answers the questions it asked, and skips its permission prompts, so that it reads the reply now;
+        // a board command it never sees (HE-102: `/output-style`) doesn't.
+        if (reachesAgent(text)) {
           yield* questions.settle(after.id, "replied")
           yield* permissions.skipFor(after.id)
         }

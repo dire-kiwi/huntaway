@@ -651,10 +651,16 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         return done
       })
 
-      const send = Effect.fn("Runs.send")(function* (id: TaskId, message: Outgoing) {
-        // HE-102: `/output-style [name]` is the board's: it sets the task's style and starts no run.
+      const send = Effect.fn("Runs.send")(function* (id: TaskId, given: Outgoing) {
+        let message = given
+        // HE-102: `/output-style [name]` is the board's: it sets the task's style and starts no run. What follows its line
+        // (line comments, attached files) is a message for the agent, as `/new`'s is.
         const style = message.source === "user" ? outputStyleCommand(message.text) : null
-        if (style !== null) return yield* withLock(id, outputStyleLocked(id, style))
+        if (style !== null) {
+          const styled = yield* withLock(id, outputStyleLocked(id, style.name))
+          if (style.rest === "") return styled
+          message = { ...message, text: style.rest }
+        }
         // `/new [message]` starts a new conversation first.
         const rest = message.source === "user" ? newCommand(message.text) : null
         if (rest !== null) {
