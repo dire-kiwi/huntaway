@@ -39,6 +39,7 @@ terminal      Terminals · Pty
 desktop       CuaDriver · DesktopClaims
 spaces        Docker · Spaces · TeleportRepo · Teleport · SpacesTools
 browser       ChromeInstall · Browsers · BrowserTools
+speech        SpeechEngine · Speech (HE-89: dictation)
 update        Supervisor · Restarts · Systemd · Releases · Service · Updater
 analytics     Analytics · Disk
 board         Board

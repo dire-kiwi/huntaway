@@ -20,6 +20,7 @@ import {
   ConfigRpcs,
   DesktopRpcs,
   SpacesRpcs,
+  SpeechRpcs,
   FanoutRpcs,
   GithubRepoRpcs,
   GitRpcs,
@@ -362,6 +363,8 @@ export const ReadOnlyServed = PublicRpcs.merge(
   AutomationRpcs,
   AssistantRpcs,
   WorkflowRpcs,
+  // HE-89: dictation transcribes with a model it would load, so it is refused here.
+  SpeechRpcs,
 )
 
 /**

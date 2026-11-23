@@ -24,6 +24,7 @@
     "effect": "catalog:",
     "sharp": "catalog:",
     "tldts": "catalog:",
+    "transcribe-cpp": "catalog:",
     "undici": "catalog:"
   },
   "devDependencies": {

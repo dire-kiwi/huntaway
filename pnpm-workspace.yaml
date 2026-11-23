@@ -24,6 +24,8 @@ catalog:
   tldts: 7.5.4
   # HE-67: the SOCKS5 proxy agent the preview checks go through (the version @effect/platform-node's HTTP client has).
   undici: 8.12.4
+  # HE-89: the speech engine dictation runs (transcribe.cpp, prebuilt per platform), in its worker (src/speech-worker.ts).
+  transcribe-cpp: 0.4.2
   # The desktop shell (apps/desktop): Electron and its packager, as the old app had them or newer.
   electron: 45.3.0
   electron-builder: 26.18.0
@@ -41,3 +43,5 @@ allowBuilds:
   electron: true
   "@parcel/watcher": false
   electron-winstaller: false
+  # transcribe-cpp's FFI: its install script only picks one of the prebuilt binaries it ships, which it finds anyway.
+  koffi: false

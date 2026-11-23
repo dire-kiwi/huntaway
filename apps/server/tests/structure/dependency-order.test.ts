@@ -44,6 +44,8 @@ const order: ReadonlyArray<ReadonlyArray<string>> = [
   ["spaces"],
   // HE-62: each task's web browser, with its MCP server's tools.
   ["browser"],
+  // HE-89: dictation, its models and its speech engine.
+  ["speech"],
   ["update"],
   ["analytics"],
   // The board's subscription, which reads every area (moved out of lifecycle/ in 9.1, so a read-only server serves it).
@@ -52,7 +54,7 @@ const order: ReadonlyArray<ReadonlyArray<string>> = [
   // The transports.
   ["rpc", "http", "mcp/transport", "cli"],
   // The entry files.
-  ["Main.ts", "ReadOnlyMain.ts", "serve.ts", "bin.ts", "entry.ts", "codex-run.ts", "acp-run.ts", "mcp-stdio.ts"],
+  ["Main.ts", "ReadOnlyMain.ts", "serve.ts", "bin.ts", "entry.ts", "codex-run.ts", "acp-run.ts", "mcp-stdio.ts", "speech-worker.ts"],
 ]
 
 /** A file's place: its folder (`mcp/transport` before `mcp`) or, at the top of src, its name. */

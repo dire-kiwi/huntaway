@@ -25,6 +25,9 @@ export * from "./pen.ts"
 // HE-34: plugins.
 export * from "./plugin.ts"
 export * from "./rpc/plugins.ts"
+// HE-89: dictation.
+export * from "./speech.ts"
+export * from "./rpc/speech.ts"
 export * from "./profile.ts"
 export * from "./project.ts"
 export * from "./rpc/agentTools.ts"
