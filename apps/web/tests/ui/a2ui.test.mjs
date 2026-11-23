@@ -4,7 +4,7 @@
 // and a click with that surface updated.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { seedAgentBoard, startServer, withBrowser } from "./harness.mjs"
+import { eventually, seedAgentBoard, startServer, withBrowser } from "./harness.mjs"
 
 let server, board
 beforeAll(async () => {
@@ -47,7 +47,9 @@ test("an interactive reply is drawn, a click reaches the agent, and its update r
     const joined = 'Clicked “Skip”\n\n```a2ui-action\n{"surfaceId":"fake-form","name":"skip","sourceComponentId":"x","context":{}}\n```\n\nalso rename it'
     await server.rpc("tasks.send", { id: task.id, text: joined })
     await page.locator("[data-a2ui-action='fake-form']", { hasText: "Clicked “Skip”" }).waitFor()
-    await page.getByText("also rename it").waitFor()
+    // While the run from the click before is still going, the message waits in the composer's queue as it was typed
+    // (the fence too) until the agent takes it: once it has, it's in the thread alone.
+    await eventually(async () => assert.equal(await page.getByText("also rename it").count(), 1), 15000)
     assert.equal(await page.getByText('"sourceComponentId":"x"').count(), 0)
     await ui.run([`shot ${process.env.TMPDIR ?? "/tmp"}/a2ui-form.png`])
   })

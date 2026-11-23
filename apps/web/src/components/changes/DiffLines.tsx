@@ -1,6 +1,6 @@
 // A file's diff in the Changes tab (HA-10): its hunks' lines, unified or side by side, highlighted for the file's
 // language, with the comments for the agent on them shown under their lines (and the ones being written). Changes.tsx
-// gives it the lines picked (a cursor and a range when staging, lines picked by their numbers elsewhere).
+// gives it the lines picked by their numbers.
 import { clsx } from "clsx"
 import { MessageSquare, MessageSquarePlus } from "lucide-react"
 import {
@@ -130,38 +130,27 @@ export function DiffLines({
   file,
   layout,
   source,
-  cursor = -1,
   chosen = null,
   pick = null,
   onLine,
   onComment,
-  hunkActions,
-  onHunk,
 }: {
   file: FileDiff
   layout: Layout
   /** Where its lines are from, for comments on them: none without. */
   source?: CommentSource | undefined
-  cursor?: number
   chosen?: ReadonlySet<number> | null
-  /** Which lines the mouse picks: changed ones, pressed anywhere (staging), or any, by its numbers. */
-  pick?: "changed" | "numbers" | null
+  /** Whether the mouse picks lines, by their numbers. */
+  pick?: "numbers" | null
   onLine?: (i: number, how: PickHow) => void
   /** The comment button on a row. */
   onComment?: (i: number) => void
-  hunkActions?: ("stage" | "unstage" | "discard")[]
-  onHunk?: (hunk: number, what: "stage" | "unstage" | "discard") => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const seen = useSeen(ref)
   const runs = useHighlight(file, seen)
   const rows = useMemo(() => diffRows(file), [file])
   const split = layout === "split"
-  // The cursor kept in view, here and as the layout changes.
-  const cursorAt = cursor >= 0 ? `${cursor}:${layout}` : null
-  useLayoutEffect(() => {
-    if (cursorAt !== null) ref.current?.querySelector(`[data-i="${cursorAt.split(":")[0]}"]`)?.scrollIntoView({ block: "nearest" })
-  }, [cursorAt])
   const pairs = useMemo(() => (split ? splitRows(file, rows) : null), [split, file, rows])
   const width = String(Math.max(...file.hunks.map((h) => Math.max(h.oldStart + h.oldCount, h.newStart + h.newCount)))).length
   // The same handlers every render, so lines that haven't changed don't render again.
@@ -226,7 +215,6 @@ export function DiffLines({
         nums={nums}
         width={width}
         on={i !== null && !!chosen?.has(i)}
-        cur={i !== null && i === cursor}
         pick={pick}
         split={split}
         h={handlers}
@@ -234,32 +222,13 @@ export function DiffLines({
     )
   }
   const head = (i: number) => {
-    const hunk = rows[i]?.hunk ?? -1
-    const h = file.hunks[hunk]
+    const h = file.hunks[rows[i]?.hunk ?? -1]
     if (!h) return null
     return (
-      <div key={`h${i}`} data-i={i} className="group flex items-center gap-2 bg-accent/[0.06] px-1.5 text-accent/90">
+      <div key={`h${i}`} data-i={i} className="flex items-center gap-2 bg-accent/[0.06] px-1.5 text-accent/90">
         <span className={clsx("whitespace-pre", split && "min-w-0 truncate")}>
           @@ -{h.oldStart},{h.oldCount} +{h.newStart},{h.newCount} @@<span className="text-faint">{h.heading}</span>
         </span>
-        {hunkActions && onHunk && (
-          <span className="sticky right-1.5 ml-auto flex shrink-0 gap-1 opacity-0 group-hover:opacity-100">
-            {hunkActions.map((a) => (
-              <button
-                key={a}
-                tabIndex={-1}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => onHunk(hunk, a)}
-                className={clsx(
-                  "rounded border px-1.5 text-[10.5px] leading-4 capitalize",
-                  a === "discard" ? "border-red-500/30 text-red-300 hover:bg-red-500/15" : "border-line-strong text-muted hover:bg-white/10 hover:text-fg",
-                )}
-              >
-                {a} hunk
-              </button>
-            ))}
-          </span>
-        )}
       </div>
     )
   }
@@ -334,7 +303,6 @@ const Cell = memo(function Cell({
   nums,
   width,
   on,
-  cur,
   pick,
   split,
   h,
@@ -345,14 +313,11 @@ const Cell = memo(function Cell({
   nums: "both" | "old" | "new"
   width: number
   on: boolean
-  cur: boolean
-  pick: "changed" | "numbers" | null
+  pick: "numbers" | null
   split: boolean
   h: Handlers
 }) {
   if (!l) return <div className={clsx("bg-white/[0.015]", split && "w-1/2 border-r border-line/50 last:border-r-0")} />
-  const changed = l.kind !== " "
-  const byLine = pick === "changed" && changed
   const down = (e: ReactMouseEvent) => {
     if (e.button !== 0) return
     e.preventDefault()
@@ -371,15 +336,12 @@ const Cell = memo(function Cell({
     <div
       data-i={i}
       data-line={nums}
-      onMouseDown={byLine ? down : undefined}
-      onMouseEnter={pick && (pick === "numbers" || changed) ? () => h.line(i, "enter") : undefined}
+      onMouseEnter={pick ? () => h.line(i, "enter") : undefined}
       className={clsx(
         "flex",
         split ? "w-1/2 min-w-0 border-r border-line/50 last:border-r-0" : "whitespace-pre",
         on ? "bg-accent/30 text-fg" : LINE_BG[l.kind],
         !runs && !on && LINE_FG[l.kind],
-        byLine && "cursor-pointer",
-        cur && "outline outline-1 -outline-offset-1 outline-accent/70",
       )}
     >
       {nums !== "new" && num(l.kind === "+" ? undefined : l.old, nums === "both" ? width + 2 : width + 1)}

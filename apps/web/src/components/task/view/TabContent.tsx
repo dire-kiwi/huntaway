@@ -66,6 +66,7 @@ export function TabContent({
   wide,
   summaries,
   onShowThread,
+  onShowCode,
 }: {
   task: Task
   project: Project | undefined
@@ -78,6 +79,8 @@ export function TabContent({
   /** The summaries of its changes show folded at the bottom of the thread (HE-55). */
   summaries: boolean
   onShowThread: () => void
+  /** To the Code tab (a file opened from the Changes tab, HE-96). */
+  onShowCode: () => void
 }) {
   useEffect(preloadTabs, [])
   const placeholder = isAssistant(task)
@@ -102,7 +105,7 @@ export function TabContent({
     )
   // A document has a composer of its own, for asking for changes to it (6.2).
   if (docShown) return <DocumentView key={`${task.id}:${docShown}`} task={task} label={docShown} onShowThread={onShowThread} />
-  const content = tabView(task, mode, tab, shown, wide, onShowThread)
+  const content = tabView(task, mode, tab, shown, wide, onShowThread, onShowCode)
   if (!content) return null
   // Every other tab keeps the thread's composer under it, and a message sent from it shows the thread (HA-334).
   return (
@@ -121,14 +124,14 @@ export function TabContent({
  * review (task/Review.tsx), a workflow's tabs (task/Workflows.tsx, 6.6), the assistant's memory,
  * brief, routines and action log (6.7), and the task's details (HE-31).
  */
-function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, wide: boolean, onShowThread: () => void): ReactNode {
+function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, wide: boolean, onShowThread: () => void, onShowCode: () => void): ReactNode {
   return shown === "memory" ? (
     <Suspense fallback={null}>
       <MemoryView key={`${task.host_id}:${task.id}`} task={task} onShowThread={onShowThread} />
     </Suspense>
   ) : tab === "changes" ? (
     <Suspense fallback={null}>
-      <ChangesView task={task} />
+      <ChangesView task={task} onShowCode={onShowCode} />
     </Suspense>
   ) : tab === "code" ? (
     <Suspense fallback={null}>

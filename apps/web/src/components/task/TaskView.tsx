@@ -548,6 +548,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             wide={wide}
             summaries={summaries}
             onShowThread={() => setTab("thread")}
+            onShowCode={() => setTab("code")}
           />
         </main>
         {desktop && (

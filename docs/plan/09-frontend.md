@@ -327,7 +327,36 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 - **Checks.** `tests/ui/code.test.mjs`: the README first, `t` to a file, a name clicked and its use in another file
   followed, back, Escape.
 
+### The Changes tab as a tree of changes (HE-96)
+
+The lazygit-style view that step 1 brought over (below) is replaced: the Changes tab is laid out as the Code tab is.
+
+- **What it shows.** The task's own work against where it started, uncommitted and untracked files too
+  (`git.taskDiff`, as the old Status panel's diff), read again every 4 s while the page is shown. On the left the Code
+  tab's `FileTree` of the files in that diff alone (every folder open until closed, each file marked A, D, R or M, the
+  finder on `t`); on the right the diff of the file picked, or all of them, with the branch's commits, until one is
+  (Esc goes back to all). Every new file is in the tree (`untracked`), though the diff reads only the first 50 new
+  files' contents: picking one of the others says so and opens it in the Code tab. A diff cut at 2 MB says so above the
+  tree, and the count says `n+`. The file picked and the folders closed are kept for the page's life, by host and task
+  (`changesState`), as the Code tab's place is. `j`/`k` go to the next or previous file in the tree's order, `|` switches unified and split.
+- **Into the Code tab.** The file's title bar, and each file's header in the diffs, have *Open in the Code tab* (not
+  for a deleted file): it sets the Code tab's place (`codeState`, `goTo`) to the file at its first changed line and
+  switches the task view's tab (`onShowCode`, from `TaskView` through `TabContent`). Narrow, the Code tab opens on the
+  file when it has a place to go to, rather than on its tree.
+- **Comments for the agent** stay: lines picked by their numbers (`n`, or a line's comment button) on the branch's
+  diff (`branchSource`), the review bar at the bottom, and a comment in it going to its file.
+- **Gone.** Staging and unstaging files and lines, discarding, committing, amending and rewording, stashes, resetting,
+  the commits and the agent's turns as panels, and the keys and dialogs for them (`git/{MainPanel,SidePanels,Panels,
+  Dialogs,useGit*,useStaging,useFileDiffs,useShownDiffs}`, `diffs.ts`'s `linesPatch` and `fileRows`, `DiffLines`'s
+  cursor and hunk buttons). A turn is still rewound from the thread. The server's `git.*` writes stay, for a later
+  view or a client that wants them.
+- **Checks.** `tests/ui/changes.test.mjs`: only the changed files listed, a file's diff alone, `j`/`k`, Esc, a folder
+  folding, the finder, *Open in the Code tab* to the file's first changed line and back, new changes coming, the page's keys left
+  alone. `tests/ui/lineComments.test.mjs`: comments on the branch's diff.
+
 ### Step 1 as done for `changes/` (4.2, HE-5)
+
+Superseded by HE-96 (above): kept as the record of what came over.
 
 - **What came over.** All of the old `components/changes/` but `Compare.tsx`: `Changes.tsx`, `DiffLines.tsx`,
   `diffs.ts`, `lineComments.ts`, `highlight.ts` with its worker, and `git/*`. The task view's Changes tab mounts it as the
