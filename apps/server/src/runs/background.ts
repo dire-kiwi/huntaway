@@ -188,11 +188,16 @@ export const leftAtEnd = (killed: ReadonlyArray<BackgroundTask>, detached: Reado
 // ---- dev servers left running (HA-409) ----------------------------------------------------------------------------
 
 /**
- * Words that make a command a server's, as whole words of it (`pnpm dev`, `python3 -m http.server`); `start` only as a
- * package manager's script (`npm start`, `pnpm run start`), not another command's (`ia-api start`).
+ * Words that make a command a server's, as whole words of it (`pnpm dev`, `python3 -m http.server`), or names ending
+ * in `-server` or `_server` (`kiwipass-server`, `npx http-server`); `start` only as a package manager's script (`npm
+ * start`, `pnpm run start`) or a dev server tool's (`expo start`), not another command's (`ia-api start`).
  */
 const SERVER_WORDS = new Set(["dev", "serve", "server", "preview", "storybook", "runserver", "http.server"])
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"])
+/** Tools whose `start` runs a server (`npx expo start`, `next start`, `react-native start`), as a package manager's does (HE-95). */
+const START_TOOLS = new Set(["expo", "next", "react-native"])
+/** Commands that only run the one after them (`exec target/release/app-server`, `nohup ./server`) (HE-95). */
+const LAUNCHERS = new Set(["exec", "nohup", "setsid", "env", "command"])
 /** Words of a command that ends by itself and that the agent waits on: a test run, a build, a check. */
 const WAITED_WORDS = new Set([
   "test",
@@ -216,10 +221,14 @@ const WAITED_COMMANDS = new Set(["timeout", "until", "while", "for", "sleep", "w
 /** Commands that only set up the next one (`cd apps/server && …`) or say something (`echo server $?`). */
 const SETUP_COMMANDS = new Set(["cd", "pushd", "export", "source", ".", "echo", "printf"])
 
+/** A word's last path part (`target/release/app-server` → `app-server`). */
+const baseName = (w: string): string => w.slice(w.lastIndexOf("/") + 1)
+
 /**
  * Whether a background shell's command looks like a server's (`astro dev`, `pnpm preview`, `python3 -m http.server`,
- * `vite`), by its words, not its text: redirections (`> $TMPDIR/test.log`, `2>/dev/null`), `cd` and the like, variables
- * set before a command, and words with a `/` (paths such as `apps/server`) don't count. A build, test, check or wait
+ * `vite`, `exec target/release/app-server`), by its words, not its text: redirections (`> $TMPDIR/test.log`,
+ * `2>/dev/null`), `cd` and the like, variables and launchers (`exec`, `nohup`) before a command, and words with a `/`
+ * (paths such as `apps/server`) don't count, but for the program's own path, which counts by its name. A build, test, check or wait
  * (`pnpm test`, `test:ui`, `cargo …`, `timeout …`, an `until` loop) anywhere in it makes it one the agent waits to hear
  * the end of, even if what it runs listens on ports (a test run's servers). The old `looks_like_server` (HA-409).
  */
@@ -233,19 +242,21 @@ export const looksLikeServer = (command: string | null | undefined): boolean => 
       .split(/\s+/u)
       .map((w) => w.replace(/^["']+|["']+$/gu, ""))
       .filter((w) => w !== "")
-    while (words.length > 0 && /^[A-Za-z_]\w*=/u.test(words[0] ?? "")) words.shift()
+    while (words.length > 0 && (/^[A-Za-z_]\w*=/u.test(words[0] ?? "") || LAUNCHERS.has(words[0] ?? ""))) words.shift()
     const first = words[0]
     if (first === undefined || SETUP_COMMANDS.has(first)) continue
     if (WAITED_COMMANDS.has(first)) return false
     for (let i = 0; i < words.length; i++) {
-      const w = (words[i] ?? "").toLowerCase()
-      if (w.includes("/")) continue
+      const raw = (words[i] ?? "").toLowerCase()
+      if (raw.includes("/") && i > 0) continue
+      const w = baseName(raw)
       const head = w.split(":")[0] ?? w
       if (WAITED_WORDS.has(head) || WAITED_WORDS.has(w)) return false
-      if (SERVER_WORDS.has(w) || (w.includes(":") && SERVER_WORDS.has(head))) server = true
+      if (SERVER_WORDS.has(w) || (w.includes(":") && SERVER_WORDS.has(head)) || /[-_]server$/u.test(w)) server = true
       if (w === "vite" && words[i + 1] !== "build") server = true
-      const before = (words[i - 1] === "run" ? words[i - 2] : words[i - 1])?.toLowerCase()
-      if (w === "start" && before !== undefined && PACKAGE_MANAGERS.has(before)) server = true
+      const prev = words[i - 1] === "run" ? words[i - 2] : words[i - 1]
+      const before = prev === undefined ? undefined : baseName(prev.toLowerCase())
+      if (w === "start" && before !== undefined && (PACKAGE_MANAGERS.has(before) || START_TOOLS.has(before))) server = true
     }
   }
   return server

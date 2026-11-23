@@ -360,6 +360,14 @@ describe("background work", () => {
         "python3 -m http.server 0 --bind 127.0.0.1",
         "bundle exec rails server",
         "pnpm run storybook",
+        // HE-95: KIW2-5's, held its task in In progress.
+        "exec npx expo start --web --port 8091 > .expo/web.log 2>&1",
+        "export GNUPGHOME=/tmp/g KIWIPASS_TOKEN=t\nexec target/release/kiwipass-server --bind 127.0.0.1:7979 --web-dir web/dist > target/tmp/server.log 2>&1",
+        "CI=1 exec npx expo start --web --port 8091 > $TMPDIR/expo.log 2>&1",
+        "nohup ./bin/api-server --port 0",
+        "npx http-server -p 8080",
+        "./node_modules/.bin/react-native start",
+        "next start -p 3001",
       ]) {
         assert.isTrue(looksLikeServer(c), c)
       }
@@ -381,6 +389,11 @@ describe("background work", () => {
         "tail -f /var/log/dev.log",
         ". $TMPDIR/ia330-env; scripts/ia-api start TES-1 >/dev/null; scripts/ia-api wait-idle TES-1 --timeout 400 --approve",
         "cd /var/tmp/mobile/server-ts && (npm ci > $TMPDIR/ci-server.log 2>&1; echo server $?)",
+        "cargo build --release -p kiwipass-server",
+        "nohup timeout 900 pnpm test",
+        "node apps/server/dist/main.js",
+        "tail -f logs/api-server",
+        "cd mobile/android && ./gradlew assembleDebug --no-daemon -q > build-log.txt 2>&1",
         null,
       ]) {
         assert.isFalse(looksLikeServer(c), String(c))
