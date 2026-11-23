@@ -54,6 +54,9 @@ a new version, and unsaved changes are kept as a draft), and **New document** on
 agent published as HTML is a mockup, which opens in the design editor: inspect and change its elements, comment on
 them, and save the changed mockups as a new version.
 
+A document opened from a task (or a board, or another of the board's pages) has **‹ Back to** that task or page at the
+top, beside the document's own **‹ All documents**; moving between documents and their pages keeps it.
+
 Selecting text in a page offers a comment, as on the hosted site: write it in the popup, and it's saved when you click
 away and shows as a bubble beside the text it quotes. **Send** sends the unsent comments and answers, as one message, to the task that
 published the document; agents also read them with the docs server's `get_feedback`. A task's thread links each
