@@ -410,7 +410,8 @@ MCP tools whose effect lands here: `request_user_input` (sets `runs.attention`),
 CLI subcommands: `huntaway codex-run <codex.json>` (adapter), `huntaway gh-hook`, `huntaway approval-hook '<rules>'`
 (Claude PreToolUse hooks; they load only their own modules because agents start them often).
 
-Slash commands handled by the board: `/new`, `/compact`, `/plan`.
+Slash commands handled by the board: `/new`, `/compact`, `/plan`; and in the new server `/output-style` (HE-102,
+[07-agents.md](../07-agents.md#output-styles)).
 
 ## 8. Events
 

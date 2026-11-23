@@ -455,6 +455,11 @@ export const Task = Schema.Struct({
   effort: Schema.NullOr(Effort),
   /** null inherits the project's, then the host's. */
   permission_mode: Schema.NullOr(PermissionMode),
+  /**
+   * The output style its Claude Code runs are given (HE-102, `/output-style <name>`): a name Claude Code knows; null
+   * for what Claude Code's own settings say. Absent from older servers.
+   */
+  output_style: Schema.optional(Schema.NullOr(Schema.String)),
   /** The agent config it runs with, picked when it is created; null (or deleted since) means its project's or profile's default. */
   claude_config_id: Schema.NullOr(AgentConfigId),
   /** Tool rules always allowed for it. */

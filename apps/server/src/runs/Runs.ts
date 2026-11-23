@@ -2,6 +2,8 @@ import { Cause, Clock, Context, Effect, Exit, Fiber, FiberMap, FileSystem, Layer
 import { SecureRandom } from "effect/crypto"
 import { DocumentLabel, RunId, threadKindOf } from "@huntaway/contracts"
 import type { NewTask, ProjectId, Task, TaskId, Timestamp } from "@huntaway/contracts"
+import { AgentTools } from "../agents/AgentTools.ts"
+import { styleNamed } from "../agents/agentTools/outputStyles.ts"
 import { ContextMeter } from "../agents/ContextMeter.ts"
 import { planRest, startInstructions } from "../agents/prompts/start.ts"
 import { worthAsking } from "../agents/titles/text.ts"
@@ -12,7 +14,7 @@ import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { Usage } from "../profiles/Usage.ts"
 import { isResetDue } from "../profiles/usage/limits.ts"
 import { Actor, Changes } from "../platform/Changes.ts"
-import { nowTimestamp } from "../platform/columns.ts"
+import { nowTimestamp, toJson } from "../platform/columns.ts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
@@ -28,7 +30,7 @@ import { TaskNotFound } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
 import type { WriteNo } from "../threads/model.ts"
 import { LaunchFacts } from "./LaunchFacts.ts"
-import { combine, decideSend, isCompact, newCommand, rowOf } from "./queue.ts"
+import { combine, decideSend, isCompact, newCommand, outputStyleCommand, rowOf } from "./queue.ts"
 import type { Outgoing, Refusal, Take } from "./queue.ts"
 import type { Run, RunKind } from "./Run.ts"
 import { AgentRequests } from "./AgentRequests.ts"
@@ -171,6 +173,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       const dependencies = yield* Dependencies
       const background = yield* BackgroundWork
       const meter = yield* ContextMeter
+      const agentTools = yield* AgentTools
       const titles = yield* Titles
       const usage = yield* Usage
       const profileRepo = yield* ProfileRepo
@@ -594,7 +597,70 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         return done
       })
 
-      const send = Effect.fn("Runs.send")(function* (id: TaskId, message: Outgoing) {
+      /**
+       * HE-102: `/output-style [name]` (docs/plan/07-agents.md, Output styles): the task's runs are given the style from
+       * now on, and a running agent is told at once, for its next turn (`apply_flag_settings`). Without a name, or with
+       * one its agent didn't list, the thread says which there are.
+       */
+      const outputStyleLocked = Effect.fnUntraced(function* (id: TaskId, name: string) {
+        const task = yield* load(id)
+        const cfg = yield* facts.config(task)
+        if (cfg !== null && cfg.agent !== "claude") {
+          yield* threads.notice(id, "warning", "Output styles are Claude Code's", `${cfg.name} isn't a Claude Code config, so /output-style does nothing here`)
+          return task
+        }
+        const listing = yield* agentTools.taskSkills(id)
+        const styles = listing.output_styles ?? []
+        const names = styles.map((s) => s.name).join(", ")
+        const reported = listing.output_style !== undefined && listing.output_style !== null
+        if (name === "") {
+          const now = task.output_style ?? listing.output_style ?? null
+          yield* threads.notice(
+            id,
+            "info",
+            now === null ? "Output style: as Claude Code's settings say" : `Output style: ${now}`,
+            `The styles: ${names}. /output-style <name> picks one for this task.`,
+          )
+          return task
+        }
+        // Before its agent has listed them, a style of a plugin's is taken as it is named.
+        const picked = styleNamed(styles, name) ?? (reported ? null : name)
+        if (picked === null) {
+          yield* threads.notice(id, "warning", `No output style is called ${name}`, `The styles: ${names}`)
+          return task
+        }
+        const at = yield* nowTimestamp
+        const done = yield* db.tx(
+          Effect.gen(function* () {
+            const after = yield* write(task, { output_style: picked }, at)
+            yield* threads.notice(id, "info", `Output style: ${picked}`, "The agent's replies are in this style from its next turn")
+            return after
+          }),
+        )
+        yield* changes.offer({ _tag: "TaskChanged", before: task, after: done, cause: Actor.user })
+        // A run that takes input changes now; one that doesn't (or whose input has closed) ends, and the next is given it.
+        const run = yield* liveRun(id)
+        if (run !== null && run.kind !== "compact") {
+          const line = yield* toJson({
+            type: "control_request",
+            request_id: `output-style-${yield* uuid}`,
+            request: { subtype: "apply_flag_settings", settings: { outputStyle: picked } },
+          })
+          yield* dir.appendInput(run.id, line).pipe(Effect.catch((e) => Effect.logWarning(`run=${run.id} telling it its output style: ${e.reason}`)))
+        }
+        return done
+      })
+
+      const send = Effect.fn("Runs.send")(function* (id: TaskId, given: Outgoing) {
+        let message = given
+        // HE-102: `/output-style [name]` is the board's: it sets the task's style and starts no run. What follows its line
+        // (line comments, attached files) is a message for the agent, as `/new`'s is.
+        const style = message.source === "user" ? outputStyleCommand(message.text) : null
+        if (style !== null) {
+          const styled = yield* withLock(id, outputStyleLocked(id, style.name))
+          if (style.rest === "") return styled
+          message = { ...message, text: style.rest }
+        }
         // `/new [message]` starts a new conversation first.
         const rest = message.source === "user" ? newCommand(message.text) : null
         if (rest !== null) {

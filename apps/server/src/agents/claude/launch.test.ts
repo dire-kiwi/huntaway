@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { TaskId } from "@huntaway/contracts"
 import type { PermissionMode } from "@huntaway/contracts"
 import type { Rules } from "@huntaway/shared"
@@ -48,6 +48,10 @@ const cases: Readonly<Record<string, Partial<ClaudeLaunchInput>>> = {
     } satisfies Rules,
   },
 }
+
+/** A launch's `--settings`, read. */
+const settingsOf = (args: ReadonlyArray<string>) =>
+  Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(args[args.indexOf("--settings") + 1] ?? "").pipe(Effect.orDie)
 
 const inputOf = (golden: LaunchGolden, own: Partial<ClaudeLaunchInput>): ClaudeLaunchInput => ({
   run: "RUN",
@@ -118,6 +122,19 @@ describe("claudeLaunch", () => {
       assert.isFalse(spec.args.includes("mcp__docs"))
       assert.isTrue(spec.args.includes("mcp__gh__pr_view"))
       assert.deepStrictEqual(Object.keys(spec.mcpServers ?? {}), [])
+    }),
+  )
+
+  // HE-102
+  it.effect("a task's output style is a setting, beside the hooks or on its own", () =>
+    Effect.gen(function* () {
+      const golden = goldenOf("a task's first run")
+      const hooked = yield* claudeLaunch({ ...inputOf(golden, {}), outputStyle: "Explanatory" })
+      const withHooks = yield* settingsOf(hooked.args)
+      assert.deepInclude(withHooks, { outputStyle: "Explanatory" })
+      assert.property(withHooks, "hooks")
+      const alone = yield* claudeLaunch({ ...inputOf(golden, {}), exe: null, outputStyle: "Learning" })
+      assert.deepStrictEqual(yield* settingsOf(alone.args), { outputStyle: "Learning" })
     }),
   )
 
