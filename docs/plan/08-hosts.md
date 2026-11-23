@@ -234,9 +234,35 @@ As built (7.5):
   are the archive's entries, as the old one's were (6.12, HE-7: it was a count). A login already there without
   `overwrite` is `Invalid` (`overwrite`). `profile` (copying a profile's login, hosts before API 20) is refused.
 
-Paired devices (codes, device tokens, revocation) wait for the phone app. The session and scope design already has
-their place: a device's session carries `read` and `operate`, checked by the host that serves each call, which
-closes the old gap where a linked host could not tell a phone from the board.
+### Paired devices (HE-91)<a id="paired-devices"></a>
+
+A phone pairs with a board by a PIN, and gets a token of its own whose session is a device's: `read` and `operate`,
+checked by the host that serves each call, which closes the old gap where a linked host could not tell a phone from the
+board.
+
+- **Pairing mode** (`hub.devices.startPairing`, Settings → Network access → Pair a phone): a 6-digit PIN
+  (`SecureRandom`), good for 5 minutes and one phone, and ended by 5 wrong PINs, so a guesser on the network has 5
+  chances in a million; a new PIN replaces the one showing, and `stopPairing` ends it. It lives in memory only (a
+  restart ends it), as the old pairing codes did. The old one-time codes are this, with the tries added: the old code
+  was 8 characters and untried guesses were free.
+- **`public.pair { pin, name }`** needs no session: a right PIN gives `{ token, device, host_id, host_name }` and ends
+  pairing mode; a wrong one is `Invalid` (`pin`, with the tries left); none showing, expired, or the last wrong try is
+  `Unavailable` (`pairing`). A rehearsal pairs none.
+- **Tokens** are 32 random bytes (base64url), kept as their SHA-256 in `device_tokens` (the old table, unchanged), and
+  every paired device's hash in memory (a `SubscriptionRef` in `Devices`), so `Auth` reads no row for a call;
+  `last_used_at` is written at most once a minute. `Auth` tries the board token, the hub token, then a device's.
+- **Through the relay** a device's session reaches every host the board links, as the board's own does: the ticket
+  asserts kind `device` and its scopes, and the host gives a device no more than `read` and `operate`
+  (`SessionSeal.sessionOf`).
+- **Unpairing** (`hub.devices.revoke` from the board; `hub.devices.unpair` by the phone itself, when it forgets the
+  board) deletes the row and the hash: `Devices.revoked(id)` ends, which `Auth` races every call of that device's
+  against (so its open streams end with `Unauthorized`), and the relay against each socket it opened for it (a ticket
+  remembers the device paired here that asked for it, not one a link asserts for a device of another board's). The
+  old close code 1008 is not kept: the client sees `Unauthorized` and its session's `unauthorized` state.
+- **Not kept**: renaming a device (it is named by what the phone calls itself), and its push subscriptions' deletion
+  (the phone app has none until Expo push).
+- `public.health` (and `GET /api/health`) gained the host's `name`, optional, and hosts that pair report the
+  `device_pairing` capability, so a phone that found a board on its network can show it and knows it pairs.
 
 ### As built (7.2, 7.3, HE-6)
 
