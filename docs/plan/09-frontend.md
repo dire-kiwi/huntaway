@@ -311,8 +311,9 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   picked. Over 3,000 lines only the lines in view (and 80 each side) are drawn.
 - **Ignored files (HE-90).** Dotfiles git tracks or would are always listed. The eye button beside the finder
   (`ia.code.ignored`, `codeIgnoredAtom`) shows what git ignores too, dimmed (`.env`, `node_modules/`…): `git.files` is
-  asked with `ignored` and the open folders that are ignored ones (`openIgnored`), so an ignored folder's contents are
-  read as it's opened, the last tree shown meanwhile. An ignored folder is never folded into one row with its only
+  asked with `ignored` and every open folder (`filesAsked`; the server lists the ignored ones), so an ignored folder's
+  contents are read as it's opened, the last tree shown meanwhile. The question is made from the tab's state, never
+  from an answer: two answers that disagree on what's ignored (a `dist/` rebuilt) would each ask for the other. An ignored folder is never folded into one row with its only
   folder. Its files are in the finder once listed.
 - **Symbols.** A click on a name (not a drag) takes the word under the caret (`wordAt`: not a keyword, unless it's a
   member's name after `.` or `::`) and looks it up (`git.symbol`):

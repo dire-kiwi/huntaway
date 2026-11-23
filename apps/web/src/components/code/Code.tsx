@@ -19,7 +19,7 @@ import { FileTree } from "./FileTree"
 import { CodeLines } from "./FileView"
 import { codeState, goBack, goTo, toggleFolder } from "./state"
 import { OutlinePanel, SymbolPanel } from "./SymbolPanel"
-import { ancestors, openIgnored } from "./tree"
+import { ancestors, filesAsked } from "./tree"
 
 /** Below this width the tree and the file take turns, and the side panel goes under the file. */
 const NARROW = 760
@@ -39,12 +39,11 @@ export function CodeView({ task }: { task: Task }) {
   const [s, setS] = useAtom(codeState(key))
   const [ignoredFlag, setIgnoredFlag] = useAtom(codeIgnoredAtom)
   const showIgnored = ignoredFlag === "1"
-  // The last tree read: which of its open folders are ignored ones (listed only when asked), and shown while the tree
-  // is read again with another folder opened.
+  // The last tree read, shown while the tree is read again with another folder opened.
   const [last, setLast] = useState<{ readonly key: string; readonly tree: GitTree } | null>(null)
   const lastTree = last?.key === key ? last.tree : undefined
-  const opened = useMemo(() => (showIgnored ? openIgnored(lastTree?.ignored ?? [], s.open) : []), [showIgnored, lastTree, s.open])
-  const treeResult = useAtomValue(query("git.files", h, showIgnored ? { id, ignored: true, open: opened } : { id }, reads))
+  const asked = useMemo(() => filesAsked(showIgnored, s.open), [showIgnored, s.open])
+  const treeResult = useAtomValue(query("git.files", h, { id, ...asked }, reads))
   const fresh = resultValue(treeResult)
   if (fresh !== undefined && fresh !== lastTree) setLast({ key, tree: fresh })
   const root = useRef<HTMLDivElement>(null)

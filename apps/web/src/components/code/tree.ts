@@ -40,10 +40,13 @@ export function buildTree(paths: ReadonlyArray<string>, root: string | null, ign
   return at ? { ...at, name: "" } : newFolder("", root.replace(/\/+$/, ""), false)
 }
 
-/** The folders of `open` that are ignored ones (or in one), whose contents `git.files` lists only when asked. */
-export function openIgnored(ignored: ReadonlyArray<string>, open: ReadonlySet<string>): Array<string> {
-  const folders = ignored.filter((p) => p.endsWith("/"))
-  return [...open].filter((p) => folders.some((f) => `${p}/`.startsWith(f))).toSorted()
+/**
+ * What `git.files` is asked besides the task: with what git ignores, every open folder (the server lists what's in the
+ * ignored ones, and leaves the others). Made from the tab's state alone, never from an answer: two answers that disagree
+ * on what's ignored (a `dist/` rebuilt) would each ask for the other, and the tab would go back and forth between them.
+ */
+export function filesAsked(showIgnored: boolean, open: ReadonlySet<string>): { readonly ignored?: true; readonly open?: ReadonlyArray<string> } {
+  return showIgnored ? { ignored: true, open: [...open].toSorted() } : {}
 }
 
 /** A row of the tree as shown: a folder (open or not) or a file, how deep it is, and its name (a folder's run of names). */

@@ -1,6 +1,6 @@
 import { assert, it as test } from "@effect/vitest"
 import { pieces, splitLines } from "../../../src/components/code/lines"
-import { ancestors, buildTree, findFiles, openIgnored, rows } from "../../../src/components/code/tree"
+import { ancestors, buildTree, filesAsked, findFiles, rows } from "../../../src/components/code/tree"
 
 // HE-79: the Code tab's tree, finder and lines.
 
@@ -35,8 +35,10 @@ test("what git ignores, when shown: its folders (their contents once listed) and
     rows(buildTree([], null, ["node_modules/", "node_modules/pkg/"]), new Set(["node_modules"])).map((r) => r.name),
     ["node_modules", "pkg"],
   )
-  // Of the open folders, the ignored ones (and those in them) are what `git.files` is asked to list.
-  assert.deepStrictEqual(openIgnored(ignored, new Set(["src", "dist/sub", "dist", "distant"])), ["dist", "dist/sub"])
+  // `git.files` is asked for every open folder (the server lists the ignored ones), from the tab's state alone: an answer
+  // that no longer has `dist/` asks the same, rather than going back to the one before (an endless render).
+  assert.deepStrictEqual(filesAsked(true, new Set(["src", "dist/sub", "dist"])), { ignored: true, open: ["dist", "dist/sub", "src"] })
+  assert.deepStrictEqual(filesAsked(false, new Set(["dist"])), {})
 })
 
 test("the finder: in the name first, then across folders, then scattered", () => {
