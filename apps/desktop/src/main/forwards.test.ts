@@ -52,22 +52,27 @@ const fakeTailcat = Effect.map(tempDir, (dir) => {
 case "$2" in ${OLD}) p=40001;; ${NEW}) p=40002;; *) p=40003;; esac
 if [ "$2" = ${SLOW} ]; then
   trap 'echo "# forwarding 127.0.0.1:40009 -> remote localhost:$3" >&2' USR1
-  echo $$ > "${dir}/$2.pid"
+  echo $$ > "${dir}/$2.pid.new" && mv "${dir}/$2.pid.new" "${dir}/$2.pid"
   while :; do sleep 60 & wait $!; done
 fi
-echo $$ > "${dir}/$2.pid"
+echo $$ > "${dir}/$2.pid.new" && mv "${dir}/$2.pid.new" "${dir}/$2.pid"
 echo "# forwarding 127.0.0.1:$p -> remote localhost:$3" >&2
 exec sleep 60`,
   )
   const pidFile = (address: string) => join(dir, `${address}.pid`)
+  /** The pid `address`'s tailcat wrote (whole: to another name, then moved): never 0 or less, a process group to `kill`. */
+  const pid = (address: string) => {
+    const read = Number(readFileSync(pidFile(address), "utf8"))
+    return Number.isInteger(read) && read > 0 ? read : assert.fail(`${pidFile(address)} has no pid`)
+  }
   return {
     bin,
-    pid: (address: string) => Number(readFileSync(pidFile(address), "utf8")),
+    pid,
     /** Once `address`'s tailcat has started, after turns of the event loop (no sleep: it is real). */
     started: (address: string) =>
       Effect.gen(function* () {
         for (let i = 0; i < 100_000 && !existsSync(pidFile(address)); i++) yield* Effect.promise(() => setImmediate())
-        return Number(readFileSync(pidFile(address), "utf8"))
+        return existsSync(pidFile(address)) ? pid(address) : assert.fail(`${address}'s tailcat never started`)
       }),
     starts: () =>
       readFileSync(join(dir, "starts"), "utf8")

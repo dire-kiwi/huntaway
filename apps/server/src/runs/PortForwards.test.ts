@@ -62,7 +62,7 @@ const slowOn5101 = (dir: string) =>
     `echo "$4" >> ${argsFile(dir)}
 if [ "$4" != 5101 ]; then echo '{"listenAddr":"tcQUICK'$$'"}'; exec sleep 600; fi
 trap 'echo "{\\"listenAddr\\":\\"tcSLOW$$\\"}"' USR1
-echo $$ > ${join(dir, "slow.pid")}
+echo $$ > ${join(dir, "slow.pid.new")} && mv ${join(dir, "slow.pid.new")} ${join(dir, "slow.pid")}
 while :; do sleep 600 & wait $!; done`,
   )
 
@@ -125,14 +125,16 @@ const test = <A, E>(
     20_000,
   )
 
-/** Once `file` is there, after turns of the event loop (no sleep: the fake tailcat writing it is real). */
-const appeared = (file: string) =>
+/**
+ * The pid a fake tailcat wrote to `file` (whole: written to another name and moved there), once it's there, after turns
+ * of the event loop (no sleep: the fake is real). Never 0 or less, which `process.kill` takes as a process group.
+ */
+const pidIn = (file: string) =>
   Effect.gen(function* () {
-    for (let i = 0; i < 100_000; i++) {
-      if (existsSync(file)) return readFileSync(file, "utf8")
-      yield* Effect.promise(() => setImmediate())
-    }
-    return assert.fail(`${file} never appeared`)
+    for (let i = 0; i < 100_000 && !existsSync(file); i++) yield* Effect.promise(() => setImmediate())
+    if (!existsSync(file)) return assert.fail(`${file} never appeared`)
+    const pid = Number(readFileSync(file, "utf8"))
+    return Number.isInteger(pid) && pid > 0 ? pid : assert.fail(`${file} has no pid`)
   })
 
 describe("tailcat's output", () => {
@@ -268,7 +270,7 @@ describe("PortForwards", () => {
       // Two clicks on the slow port, and its tailcat started.
       const first = yield* Effect.forkChild(forwards.forward(task, 5101))
       const second = yield* Effect.forkChild(forwards.forward(task, 5101))
-      const pid = Number(yield* appeared(join(dir, "slow.pid")))
+      const pid = yield* pidIn(join(dir, "slow.pid"))
       // Meanwhile, the task's other port and another task's: no wait for it.
       assert.match((yield* forwards.forward(task, 5102)).address, /^tcQUICK\d+$/)
       assert.match((yield* forwards.forward(other, 5103)).address, /^tcQUICK\d+$/)
