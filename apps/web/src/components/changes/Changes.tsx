@@ -120,6 +120,8 @@ function ChangesTree({ task, onShowCode }: { task: Task; onShowCode: () => void 
   useEffect(focusView, [focusView])
   const pickFile = (path: string | null) => {
     setAt(path)
+    // The button clicked for it may be gone now ("All changes"), which would leave the focus nowhere.
+    focusView()
     if (path !== null) setTreeShown(false)
     scroller.current?.scrollTo({ top: 0 })
   }
@@ -188,6 +190,8 @@ function ChangesTree({ task, onShowCode }: { task: Task; onShowCode: () => void 
 
   const onKey = (e: ReactKeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.metaKey || e.ctrlKey || e.altKey) return
+    // A dialog open over the view (Discard the comments) has the keys.
+    if (dialog || (e.target instanceof Element && e.target.closest("[data-modal]"))) return
     const step = (by: number) => {
       const i = at === null ? -1 : order.indexOf(at)
       const next = order[Math.max(0, Math.min(order.length - 1, i < 0 ? (by > 0 ? 0 : order.length - 1) : i + by))]
@@ -252,6 +256,11 @@ function ChangesTree({ task, onShowCode }: { task: Task; onShowCode: () => void 
       // The keys that work on every page leave this view's alone (usePageShortcuts).
       data-own-keys
       onKeyDown={onKey}
+      // Keys go to the view after a click anywhere in it (a line number picked doesn't take the focus), but in a field,
+      // a dialog or a menu.
+      onMouseDownCapture={(e) => {
+        if (!(e.target instanceof Element && e.target.closest("input, textarea, [data-modal], [role^=menu]"))) focusView()
+      }}
       className="flex h-full min-h-0 flex-col outline-none"
       data-testid="changes-view"
     >
@@ -264,7 +273,13 @@ function ChangesTree({ task, onShowCode }: { task: Task; onShowCode: () => void 
             <div className="flex min-w-0 flex-1 flex-col">
               <div className="flex h-9 shrink-0 items-center gap-1 border-b border-line px-2">
                 {narrow && (
-                  <IconButton title="Files" onClick={() => setTreeShown(true)}>
+                  <IconButton
+                    title="Files"
+                    onClick={() => {
+                      setTreeShown(true)
+                      focusView()
+                    }}
+                  >
                     <FolderTree size={14} />
                   </IconButton>
                 )}

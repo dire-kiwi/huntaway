@@ -71,6 +71,19 @@ test("the tree lists only the changed files, and shows the diff of the one picke
     await ui.run([`click ${tree("src/lib")}`, `gone ${tree("util.txt")}`, `click ${tree("src/lib")}`, `wait ${tree("util.txt")}`])
     // The finder (`t`) goes to a changed file.
     await ui.run(["press t", "type new", "press Enter", "wait css=[data-testid=changes-path][title='new.txt']"])
+    // "All changes" goes away as it's clicked: the keys still go to the view.
+    await ui.run(["click All changes", "gone css=[data-testid=changes-path]", "press j", "wait css=[data-testid=changes-path]"])
+  })
+})
+
+// Review of HE-96: the confirm dialog over the view has the keys, not the view behind it.
+test("Escape closes the Discard dialog and leaves the file picked", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    await ui.run([`goto /t/${task.id}`, "click Changes", `click ${tree("util.txt")}`, "wait css=[data-testid=changes-path][title='src/lib/util.txt']"])
+    await ui.page.locator("[data-diff='src/lib/util.txt'] [data-line]", { hasText: "two" }).locator("> span").first().click()
+    await ui.run(["press n", "wait What should the agent know", "type A note.", "press Enter", "wait 1 comment for the agent"])
+    await ui.run(["click role=button[name='Discard']", "wait Discard the comments", "press j", "press Escape", "gone Discard the comments"])
+    await ui.run(["wait css=[data-testid=changes-path][title='src/lib/util.txt']", "wait 1 comment for the agent"])
   })
 })
 

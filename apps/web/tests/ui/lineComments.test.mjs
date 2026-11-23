@@ -83,7 +83,9 @@ test("comments on a file's lines reach the agent in one message", async () => {
   await withBrowser(server, {}, async (ui) => {
     await ui.run(openFile())
     const at = await diffRows(ui)
-    // The removed line 3: its number, n, a note, Enter.
+    // The removed line 3: its number, n, a note, Enter; with the focus in the thread's composer before (a line number
+    // picked brings the keys to the view).
+    await ui.page.locator("textarea").first().click()
     await pickThree(ui)
     await ui.run(["press n", `wait ${DRAFT}`, "type Name it after its value.", "press Enter", `gone ${DRAFT}`, "wait Comment for the agent on removed line 3"])
     // Line 10 (removed and added): a click, then a shift-click.
