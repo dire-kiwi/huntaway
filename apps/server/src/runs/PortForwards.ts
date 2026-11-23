@@ -1,11 +1,15 @@
-import { Context, Deferred, Effect, FiberMap, Layer, Option, Ref, Schema, Semaphore, Stream } from "effect"
+import { Context, DateTime, Deferred, Effect, FiberMap, Layer, Option, Ref, Schema, Semaphore, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
-import { Invalid, NotFound, Unavailable } from "@huntaway/contracts"
-import type { PortForward, TaskId } from "@huntaway/contracts"
+import { SqlClient } from "effect/sql"
+import { Invalid, NotFound, TaskId, Timestamp, Unavailable } from "@huntaway/contracts"
+import type { PortForward, TaskServer } from "@huntaway/contracts"
+import { Db } from "../platform/Db.ts"
+import { Events } from "../platform/Events.ts"
 import { WATCHDOG } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
+import { sharedSince } from "./devServers/proc.ts"
 
 // HE-81: a task's dev server (`Task.servers`, see `DevServers`) shared with tailcat (https://tailscale.com/tailcat), so
 // a client on another machine reaches it as its own localhost: the host runs `tailcat --json serve --key=new <port>`,
@@ -16,6 +20,11 @@ import { TaskNotFound } from "../tasks/Tasks.ts"
 // One share per task and port, made when a client asks and kept while the task lists that server: asking again gives
 // the same address. A new key each time, so an address stops working once its share ends. The address is a secret
 // (whoever has it can connect), so it is never logged.
+//
+// HE-83: while a share lasts, the task's server says so (`TaskServer.forwarded`, when it started), written as it starts
+// and cleared as it ends, and shown to every client as a task event; `reset` clears what a board that stopped left. Only
+// that it's shared, not the address: a task goes to every client and agent that reads the board (`get_task`, other
+// profiles' agents, the phone's cache), and the address is a key to the server, so it comes only from `forward`.
 
 /** How long tailcat has to print its address. */
 export const START_TIMEOUT = "30 seconds"
@@ -46,6 +55,37 @@ export const whyNotStarted = (code: number | null, stderr: string, bin: string):
   return last === "" ? `tailcat stopped${code === null ? "" : ` with exit code ${code}`} before it printed an address` : `tailcat: ${last}`
 }
 
+/** The server shown shared since `since`. */
+const marked =
+  (since: Timestamp) =>
+  (s: TaskServer): TaskServer =>
+    s.forwarded === since ? s : sharedSince(s, since)
+
+/** The server shown not shared, if it was shown shared since `since` (any share, with none). */
+const unmarked =
+  (since?: Timestamp) =>
+  (s: TaskServer): TaskServer =>
+    s.forwarded === undefined || (since !== undefined && s.forwarded !== since) ? s : sharedSince(s, undefined)
+
+/** Rewrites a task's servers on `port` (every port, for null) with `f`, and shows the task if that changed it. */
+const rewriter = Effect.gen(function* () {
+  const db = yield* Db
+  const tasks = yield* TaskRepo
+  const events = yield* Events
+  return (task: TaskId, port: number | null, f: (s: TaskServer) => TaskServer) =>
+    db.tx(
+      Effect.gen(function* () {
+        const row = yield* tasks.get(task)
+        if (row === null) return
+        const servers = row.servers.map((s) => (port === null || s.port === port ? f(s) : s))
+        if (servers.every((s, i) => s === row.servers[i])) return
+        yield* tasks.write(task, { servers }, Timestamp.make(DateTime.formatIso(yield* DateTime.now)))
+        const after = yield* tasks.get(task)
+        if (after !== null) yield* events.emit({ type: "task", task: after })
+      }),
+    )
+})
+
 export class PortForwards extends Context.Service<
   PortForwards,
   {
@@ -61,6 +101,7 @@ export class PortForwards extends Context.Service<
     Effect.gen(function* () {
       const tasks = yield* TaskRepo
       const config = yield* ServerConfig
+      const shownAs = yield* rewriter
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
       // The shares that printed their address, by `task:port`.
       const shared = yield* Ref.make<ReadonlyMap<string, PortForward>>(new Map())
@@ -72,7 +113,7 @@ export class PortForwards extends Context.Service<
       const listed = (task: TaskId, port: number) => Effect.map(tasks.get(task), (row) => row !== null && row.servers.some((s) => s.port === port))
 
       /** tailcat's share of `port` until it stops or the task no longer lists the server; `ready` gets its address. */
-      const share = (task: TaskId, port: number, key: string, ready: Deferred.Deferred<string, Unavailable>) =>
+      const share = (task: TaskId, port: number, key: string, ready: Deferred.Deferred<PortForward, Unavailable>) =>
         Effect.scoped(
           Effect.gen(function* () {
             const child = yield* spawner
@@ -108,13 +149,22 @@ export class PortForwards extends Context.Service<
               )
               return yield* unavailable(whyNotStarted(code, yield* Ref.get(stderr), config.tailcatBin))
             }
-            yield* Ref.update(shared, (m) => new Map([...m, [key, { address: address.value, port }]]))
-            yield* Deferred.succeed(ready, address.value)
+            const since = Timestamp.make(DateTime.formatIso(yield* DateTime.now))
+            const made: PortForward = { address: address.value, port, since }
+            yield* Ref.update(shared, (m) => new Map([...m, [key, made]]))
+            // Shown shared from now until the share ends, however it ends; gone from `shared` first, so that a client
+            // told it ended and asking again gets a new one.
+            const forget = Ref.update(shared, (m) => new Map([...m].filter(([k]) => k !== key)))
+            yield* Effect.addFinalizer(() => Effect.andThen(forget, shownAs(task, port, unmarked(since))))
+            yield* shownAs(task, port, marked(since))
+            yield* Deferred.succeed(ready, made)
             yield* Effect.logInfo(`task ${task}: sharing its server on port ${port} with tailcat`)
             const gone = Effect.gen(function* () {
               while (true) {
                 yield* Effect.sleep(CHECK_EVERY)
                 if (!(yield* listed(task, port))) return "its server is gone"
+                // Listed again after a scan that missed it (and wrote it without `forwarded`): shown shared again.
+                yield* shownAs(task, port, marked(since))
               }
             })
             const exited = child.exitCode.pipe(
@@ -148,21 +198,36 @@ export class PortForwards extends Context.Service<
         )(
           Effect.gen(function* () {
             const have = (yield* Ref.get(shared)).get(key)
-            if (have !== undefined) return have
-            const ready = yield* Deferred.make<string, Unavailable>()
+            if (have !== undefined) {
+              if (have.since !== undefined) yield* shownAs(task, port, marked(have.since))
+              return have
+            }
+            const ready = yield* Deferred.make<PortForward, Unavailable>()
             yield* FiberMap.run(shares, key, share(task, port, key, ready))
-            const address = yield* Deferred.await(ready).pipe(
+            return yield* Deferred.await(ready).pipe(
               Effect.timeoutOrElse({
                 duration: START_TIMEOUT,
                 orElse: () => Effect.andThen(FiberMap.remove(shares, key), Effect.fail(unavailable("tailcat didn't print an address in time"))),
               }),
             )
-            return { address, port }
           }),
         )
       })
 
       return PortForwards.of({ forward })
     }).pipe(Effect.annotateLogs({ module: "servers" })),
+  )
+
+  /**
+   * As the board starts: no server is shown shared, as the shares ended with the board that made them. With the loops
+   * (`Main.RunLoops`), not in the layer: a read-only server builds that and changes nothing.
+   */
+  static readonly reset = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      const rewrite = yield* rewriter
+      const rows = yield* sql<{ readonly id: string }>`SELECT id FROM tasks WHERE servers LIKE '%"forwarded"%'`.pipe(Effect.orDie)
+      for (const r of rows) yield* rewrite(TaskId.make(r.id), null, unmarked())
+    }),
   )
 }

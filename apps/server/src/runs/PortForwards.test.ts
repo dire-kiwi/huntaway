@@ -3,12 +3,13 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { setImmediate } from "node:timers/promises"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Stream } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { fakeTask, TestRuns } from "@huntaway/testing"
 import { Timestamp } from "@huntaway/contracts"
-import type { TaskId } from "@huntaway/contracts"
+import type { BoardEvent, TaskId } from "@huntaway/contracts"
+import { Events } from "../platform/Events.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { CHECK_EVERY, listenAddressOf, PortForwards, whyNotStarted } from "./PortForwards.ts"
 
@@ -39,6 +40,22 @@ const listOn = (task: TaskId, ports: ReadonlyArray<number>) =>
     const servers = ports.map((port) => ({ port, address: "127.0.0.1", pid: 1, pgid: 1, command: "vite", since, detached: false }))
     yield* repo.write(task, { servers }, since)
   })
+
+/** What the task shows of its servers: port and since when it's shared. */
+const shownShared = (task: TaskId): Effect.Effect<ReadonlyArray<readonly [number, string | null]>, never, TaskRepo> =>
+  Effect.gen(function* () {
+    const row = yield* (yield* TaskRepo).get(task)
+    return (row?.servers ?? []).map((s) => [s.port, s.forwarded ?? null] as const)
+  })
+
+/** The task's `forwarded` on its first server, from its next task event. */
+const nextShown = (live: Stream.Stream<BoardEvent>) =>
+  live.pipe(
+    Stream.filter((e) => e.type === "task"),
+    Stream.map((e) => (e.type === "task" ? (e.task.servers[0]?.forwarded ?? null) : null)),
+    Stream.runHead,
+    Effect.map((o) => (o._tag === "Some" ? o.value : "no event")),
+  )
 
 /** Whether the process `pid` is there. */
 const alive = (pid: number) => {
@@ -91,9 +108,14 @@ describe("PortForwards", () => {
       const forwards = yield* PortForwards
       const task = yield* fakeTask
       yield* listOn(task, [4173])
+      const watch = yield* (yield* Events).watch(undefined)
       const first = yield* forwards.forward(task, 4173)
       assert.match(first.address, /^tcFAKE\d+$/)
       assert.strictEqual(first.port, 4173)
+      // The task shows it shared, since the share started, and every client is told.
+      assert.isString(first.since)
+      assert.deepStrictEqual(yield* shownShared(task), [[4173, first.since ?? null]])
+      assert.strictEqual(yield* nextShown(watch.live), first.since)
       assert.include(readFileSync(argsFile, "utf8"), "--json serve --key=new 4173")
       // Asked again: the same share.
       assert.deepStrictEqual(yield* forwards.forward(task, 4173), first)
@@ -109,6 +131,57 @@ describe("PortForwards", () => {
       yield* listOn(task, [4173])
       const second = yield* forwards.forward(task, 4173)
       assert.notStrictEqual(second.address, first.address)
+    }),
+  )
+
+  test(
+    "shows the share ended when tailcat exits, and asks again for a new one",
+    serving,
+    Effect.gen(function* () {
+      const forwards = yield* PortForwards
+      const task = yield* fakeTask
+      yield* listOn(task, [4180])
+      const first = yield* forwards.forward(task, 4180)
+      assert.deepStrictEqual(yield* shownShared(task), [[4180, first.since ?? null]])
+      // A scan that missed the server and found it again wrote it without `forwarded`: shown shared again.
+      yield* listOn(task, [4180])
+      yield* TestClock.adjust(CHECK_EVERY)
+      assert.deepStrictEqual(yield* shownShared(task), [[4180, first.since ?? null]])
+      // tailcat exits on the host: the task no longer shows it shared.
+      const watch = yield* (yield* Events).watch(undefined)
+      process.kill(Number(first.address.slice("tcFAKE".length)), "SIGTERM")
+      assert.isNull(yield* nextShown(watch.live))
+      assert.deepStrictEqual(yield* shownShared(task), [[4180, null]])
+      yield* TestClock.adjust("1 second")
+      const second = yield* forwards.forward(task, 4180)
+      assert.notStrictEqual(second.address, first.address)
+      assert.deepStrictEqual(yield* shownShared(task), [[4180, second.since ?? null]])
+    }),
+  )
+
+  test(
+    "shows no server shared as the board starts",
+    null,
+    Effect.gen(function* () {
+      const repo = yield* TaskRepo
+      const task = yield* fakeTask
+      const since = Timestamp.make("2026-11-23T00:00:00.000Z")
+      const server = { port: 4190, address: "127.0.0.1", pid: 1, pgid: 1, command: "vite", since, detached: false }
+      yield* repo.write(
+        task,
+        {
+          servers: [
+            { ...server, forwarded: since },
+            { ...server, port: 4191 },
+          ],
+        },
+        since,
+      )
+      yield* Layer.build(PortForwards.reset)
+      assert.deepStrictEqual(yield* shownShared(task), [
+        [4190, null],
+        [4191, null],
+      ])
     }),
   )
 

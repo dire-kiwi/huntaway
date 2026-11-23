@@ -12,8 +12,8 @@ import { desktopForward, desktopForwards, forwardCommand } from "./forwardPort"
 /**
  * What the task's agent left going (HA-405), above its composer: the shells it has running in the background (a dev
  * server, a watcher), each with a Stop that ends it and leaves the agent be, and the servers its processes listen on,
- * with Open, Forward port (HE-81: shared with tailcat, for a client on another machine) and Stop. Once the agent's turn has ended with only those left it's idle, not working, and a message reaches
- * it at once.
+ * with Open, Forward port (HE-81: shared with tailcat, for a client on another machine) and Stop. Once the agent's turn
+ * has ended with only those left it's idle, not working, and a message reaches it at once.
  */
 export function BackgroundBanner({ task }: { task: Task }) {
   const shells = task.running ? (task.background_work?.tasks ?? []).filter((b) => b.kind !== "subagent") : []
@@ -76,8 +76,11 @@ function ServerRow({ task, server, onError }: { task: Task; server: TaskServer; 
   const url = serverUrl(server, location.hostname)
   const [state, stopServer] = useMutation("tasks.stopServer")
   const [forwarding, forwardServer] = useMutation("tasks.forwardServer")
-  // The host's share, and where the desktop app forwarded it (or why it didn't).
-  const [shared, setShared] = useState<{ readonly share: PortForward; readonly local: string | null; readonly error: string | null } | null>(null)
+  // The host's share as Forward port last gave it, and where the desktop app forwarded it (or why it didn't).
+  const [given, setShared] = useState<{ readonly share: PortForward; readonly local: string | null; readonly error: string | null } | null>(null)
+  // HE-83: shown while the task says that share lasts (`forwarded`, when it started), so not once it ended or another
+  // replaced it. A host older than HE-83 says neither, and it's shown until the row goes.
+  const shared = given !== null && given.share.since === server.forwarded ? given : null
   const [opening, setOpening] = useState(false)
   const forward = () => {
     onError(null)
@@ -110,6 +113,12 @@ function ServerRow({ task, server, onError }: { task: Task; server: TaskServer; 
         <span className="min-w-0 flex-1 truncate text-muted" title={`${server.command}\nListening on ${server.address}:${server.port} (pid ${server.pid})`}>
           <span className="text-fg">localhost:{server.port}</span>
           {server.detached && <span className="text-faint"> · outlives its run</span>}
+          {server.forwarded !== undefined && (
+            <span className="text-faint" data-server-shared>
+              {" "}
+              · Shared with tailcat
+            </span>
+          )}
           <span className="text-faint"> · {server.command}</span>
         </span>
         <a
@@ -123,7 +132,11 @@ function ServerRow({ task, server, onError }: { task: Task; server: TaskServer; 
         </a>
         <RowButton
           busy={forwarding.busy || opening}
-          title={`Share this server with tailcat, so that it's localhost:${server.port} on this computer too, wherever the board's host is`}
+          title={
+            server.forwarded !== undefined && shared === null
+              ? `Shared with tailcat: show how to make it localhost:${server.port} on this computer too`
+              : `Share this server with tailcat, so that it's localhost:${server.port} on this computer too, wherever the board's host is`
+          }
           onClick={forward}
         >
           {!(forwarding.busy || opening) && <Cable size={10} />} Forward port

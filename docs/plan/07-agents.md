@@ -1417,6 +1417,17 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   it; test boards have none. The desktop app's `forwardPort` (preload, `main/forwards.ts`) runs
   `tailcat forward <address> 0:<port>` and answers its `127.0.0.1` URL; a browser shows the command instead. Mobile has
   no servers banner yet, so no Forward port.
+- **Shown shared (HE-83, new)**: while a share lasts, the task's server says so: `TaskServer.forwarded`, the time the
+  share started (`PortForward.since` too), written by `PortForwards` as tailcat prints its address and cleared by the
+  share's finalizer, however it ends (tailcat exits, the server goes, the board stops), each as a `task` event. A scan
+  (`devServers/proc.shown`) keeps it by port; one that missed the server for a pass and wrote it without, the share's
+  next `CHECK_EVERY` writes back. `PortForwards.reset` (in `RunLoops`, not the layer: a read-only server builds that)
+  clears what a board that stopped left, as its shares died with it. The banner shows "Shared with tailcat" from the
+  task, and the command or local URL it was given only while `forwarded` is that share's `since`, so it goes when the
+  share does; Forward port then asks again, and gets the same share while it lasts. The task says only *that* it's
+  shared, never the address: a task goes to every client and every agent that reads the board (`get_task`, the
+  `huntaway` MCP tools of other profiles' agents, the phone's cache, logs of events), while the address is a key to
+  the server, so it comes only from `tasks.forwardServer`, to a client that asks for it.
 - **Also**: `tasks.waitForLimit { id }` (`Runs.waitForReset`, the old `wait_for_reset`); `Runs.created(task, input)`,
   which `tasks.create` calls: `start` starts the agent, and a task with only a description gets its title written
   first (`Titles.generateLater`, starting it after if asked); `tasks.create` can then fail as `tasks.send` does

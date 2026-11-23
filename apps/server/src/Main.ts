@@ -699,10 +699,11 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3, A, E4, R4>(
 /** Every area's services. */
 /**
  * The runs area's loops: tasks whose usage limit reset carry on (every 30 s), idle sessions are compacted (every
- * minute), the task's dev servers are looked for in `/proc` (every 4 s). Not in `areasLayer`, so a test board's clock
+ * minute), the task's dev servers are looked for in `/proc` (every 4 s); and, once, no server is shown shared with tailcat
+ * (`PortForwards.reset`: the shares ended with the last board). Not in `areasLayer`, so a test board's clock
  * moves without them (a day on the test clock was 20,000 scans of the machine's `/proc`); tests run a pass themselves.
  */
-export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.scanner)
+export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.scanner, PortForwards.reset)
 
 /**
  * The pull requests' loops (4.5): the in-review watcher (every 15 s) and the merged watcher (30 s after start, then every

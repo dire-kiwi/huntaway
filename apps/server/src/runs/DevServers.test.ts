@@ -8,7 +8,7 @@ import { Timestamp } from "@huntaway/contracts"
 import type { TaskId, TaskServer } from "@huntaway/contracts"
 import { Leftovers } from "../tasks/Leftovers.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
-import { leftRunning, parseStat, parseTcp, shellsServe, shown, TASK_ENV, taskOf } from "./devServers/proc.ts"
+import { leftRunning, parseStat, parseTcp, sharedSince, shellsServe, shown, TASK_ENV, taskOf } from "./devServers/proc.ts"
 import type { LeftoverProc } from "../tasks/Leftovers.ts"
 import { DevServers, SUPPORTED } from "./DevServers.ts"
 
@@ -121,6 +121,14 @@ describe("DevServers' /proc readers", () => {
       listed(4000, 2, "b"),
     ])
     assert.deepStrictEqual(shown(before, []), [])
+  })
+
+  it("keeps that a port is shared with tailcat, by port", () => {
+    const forwarded = Timestamp.make("2026-11-23T01:00:00.000Z")
+    const before = [sharedSince(listed(3000, 1, "a"), forwarded)]
+    assert.strictEqual(shown(before, [listed(3000, 1, "b")]), null)
+    // Another process on the port: still shared (tailcat serves the port).
+    assert.deepStrictEqual(shown(before, [listed(3000, 2, "b"), listed(4000, 3, "b")]), [sharedSince(listed(3000, 2, "b"), forwarded), listed(4000, 3, "b")])
   })
 })
 
