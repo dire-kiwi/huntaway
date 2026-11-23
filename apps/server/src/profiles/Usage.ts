@@ -9,6 +9,7 @@ import { expandTilde } from "../settings/Folders.ts"
 import { AgentConfigRepo } from "./AgentConfigRepo.ts"
 import type { AgentConfigRow } from "./AgentConfigRepo.ts"
 import { settingsBaseUrl } from "./AgentConfigs.ts"
+import { makeClaudeLogins } from "./claudeLogin.ts"
 import { codexOutUntil, field, mergeLimits, parseLimits, parseTime, poolLimits, readRateLimit } from "./usage/limits.ts"
 
 // Subscription usage (session and weekly limits) of each agent config (huntaway's agent/usage.ts).
@@ -137,6 +138,7 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
       const path = yield* Path.Path
       const server = yield* ServerConfig
       const client = yield* HttpClient.HttpClient
+      const logins = yield* makeClaudeLogins
       const state = yield* Ref.make<ReadonlyMap<string, Entry>>(new Map())
       const codexReader = yield* Ref.make<CodexLimitsReader | null>(null)
 
@@ -177,14 +179,14 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
       /** A Claude login's usage, from Anthropic's endpoint: its plan and limits. */
       const fetchClaude = Effect.fnUntraced(function* (row: AgentConfigRow) {
         const dir = folder(row)
-        const file = path.join(dir, ".credentials.json")
-        const raw = yield* fs
-          .readFileString(file)
-          .pipe(
-            Effect.mapError(
-              (e) => new FetchFailed({ reason: e.reason._tag === "NotFound" ? `No Claude login in ${dir}` : `Can't read ${file}: ${e.message}` }),
-            ),
-          )
+        // HE-87: on a Mac, from the keychain, where Claude Code keeps it.
+        const login = logins.of(row)
+        const file = login.file
+        const raw = yield* login.read
+        if (raw === null) {
+          const why = yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))
+          return yield* new FetchFailed({ reason: why ? `Can't read ${file}` : `No Claude login in ${dir}` })
+        }
         const creds = yield* decodeJson(raw).pipe(Effect.mapError((e) => new FetchFailed({ reason: `Can't parse ${file}: ${e.message}` })))
         const oauth = field(creds, "claudeAiOauth")
         if (oauth === undefined || oauth === null) return yield* new FetchFailed({ reason: "Not signed in with a Claude subscription" })

@@ -309,6 +309,8 @@ export interface ServerConfigShape {
   readonly dockerBin: string
   /** HE-81: `HUNTAWAY_TAILCAT`, the tailcat that shares the tasks' dev servers (default `tailcat` on PATH; tests give none). */
   readonly tailcatBin: string
+  /** HE-87: `HUNTAWAY_SECURITY`, macOS's `security`, which reads and writes the keychain Claude Code keeps its logins in there. */
+  readonly securityBin: string
   /** HE-35: `HUNTAWAY_SPACES_IMAGE`, the image Spaces are built on (default Cua's Linux image with spacesd). */
   readonly spacesImage: string
   /** HE-62: `HUNTAWAY_CHROME`, a Chrome or Chromium for the tasks' browser instead of the chrome-headless-shell it downloads. */
@@ -488,6 +490,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         const spacesImage = yield* Config.String("HUNTAWAY_SPACES_IMAGE").pipe(Config.withDefault(""))
         // HE-81
         const tailcatBin = yield* Config.String("HUNTAWAY_TAILCAT").pipe(Config.withDefault(""))
+        // HE-87
+        const securityBin = yield* Config.String("HUNTAWAY_SECURITY").pipe(Config.withDefault(""))
         // HE-62
         const chromeBin = yield* Config.String("HUNTAWAY_CHROME").pipe(Config.withDefault(""))
         const chromeRelease = yield* Config.schema(Schema.fromJsonString(ChromeReleaseConfig), "HUNTAWAY_CHROME_RELEASE").pipe(Config.option)
@@ -542,6 +546,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           ),
           dockerBin: dockerBin === "" ? "docker" : expand(dockerBin),
           tailcatBin: tailcatBin === "" ? "tailcat" : expand(tailcatBin),
+          securityBin: securityBin === "" ? "/usr/bin/security" : expand(securityBin),
           spacesImage: spacesImage === "" ? SPACES_IMAGE : spacesImage,
           chromeBin: chromeBin === "" ? null : expand(chromeBin),
           chromeRelease: Option.getOrNull(chromeRelease),
@@ -611,6 +616,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         dockerBin: `${config.dataDir}/no-docker-in-tests`,
         // HE-81: never this machine's tailcat, which would reach tailcat's relays: a test gives a fake.
         tailcatBin: `${config.dataDir}/no-tailcat-in-tests`,
+        // HE-87: never this machine's keychain (tests run as linux-x64, which has none): a test gives a fake.
+        securityBin: `${config.dataDir}/no-security-in-tests`,
         spacesImage: SPACES_IMAGE,
         // HE-62: never a download, nor this machine's Chrome: a test that drives a browser gives one.
         chromeBin: `${config.dataDir}/no-chrome-in-tests`,

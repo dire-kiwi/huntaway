@@ -9,10 +9,16 @@ import { expandTilde } from "../settings/Folders.ts"
 import { AgentConfigNotFound } from "./AgentConfigs.ts"
 import { AgentConfigRepo } from "./AgentConfigRepo.ts"
 import type { AgentConfigRow } from "./AgentConfigRepo.ts"
+import { makeClaudeLogins } from "./claudeLogin.ts"
 
 // 6.11: a config's login and settings as one host hands them to another (the old `api/claude_configs.ts` archives):
 // a gzipped tar of a fixed list of entries, in base64. Plain calls, so that copying a config between hosts (7.5) is an
 // export on one and an import on the other.
+//
+// HE-87: a Claude config's login goes as `.credentials.json` whichever host it's on, though on macOS Claude Code keeps
+// it in the keychain (`claudeLogin.ts`): a Mac's export takes it from there, and a Mac's import puts it there. For a
+// config in `~/.claude`, which a plain `claude` in a terminal uses too, its account (`oauthAccount` in `.claude.json`)
+// goes into `~/.claude.json` as well, where that `claude` reads it.
 
 /** What makes a Claude Code config folder usable elsewhere. History, caches and snapshots stay put. */
 export const CLAUDE_ENTRIES = [
@@ -38,6 +44,15 @@ export const CODEX_ENTRIES = ["auth.json", "config.toml", "AGENTS.md", "skills",
  * its own settings and instructions, and its config (skills). Conversations and temporary files stay put.
  */
 export const ACP_ENTRIES = ["antigravity-acp/acp_token.json", "antigravity-acp/settings.json", "settings.json", "GEMINI.md", "config"] as const
+
+/** Where a plain `claude` keeps its settings and account, beside a `~/.claude` folder rather than in it. */
+const HOME_CLAUDE_JSON = ".claude.json"
+/** What of `.claude.json` says whose login it is, and that Claude Code needn't ask for one. */
+const ACCOUNT_KEYS = ["oauthAccount", "hasCompletedOnboarding"] as const
+
+const JsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown))
+const decodeObject = Schema.decodeUnknownOption(JsonObject)
+const encodeObject = Schema.encodeEffect(JsonObject)
 
 /** tar couldn't be run. */
 export class ArchiveUnavailable extends Schema.TaggedError<ArchiveUnavailable, { readonly brand: unique symbol }>()("ArchiveUnavailable", {
@@ -99,6 +114,7 @@ export class ConfigArchives extends Context.Service<ConfigArchives, ConfigArchiv
       const fs = yield* FileSystem.FileSystem
       const path = yield* Path.Path
       const config = yield* ServerConfig
+      const logins = yield* makeClaudeLogins
 
       const getRow = (id: AgentConfigId) =>
         Effect.flatMap(repo.get(id), Option.match({ onNone: () => Effect.fail(new AgentConfigNotFound({ id })), onSome: Effect.succeed }))
@@ -118,25 +134,88 @@ export class ConfigArchives extends Context.Service<ConfigArchives, ConfigArchiv
         )
       }
 
+      /** Whether the config is a Claude one in `~/.claude`, which a plain `claude` in a terminal uses too. */
+      const terminalClaude = (row: AgentConfigRow, dir: string) =>
+        row.agent !== "codex" && row.agent !== "acp" && dir.replace(/\/+$/, "") === path.join(config.home, ".claude")
+
       const exportArchive = Effect.fn("ConfigArchives.exportArchive")(function* (id: AgentConfigId) {
-        const files = configFiles(yield* getRow(id), config.home)
+        const row = yield* getRow(id)
+        const files = configFiles(row, config.home)
         const present = yield* Effect.filter(files.entries, (e) => exists(path.join(files.dir, e)), { concurrency: 4 })
-        if (present.length === 0) return yield* new Invalid({ field: "config_dir", reason: `nothing to copy in ${files.dir}` })
-        const out = yield* tar(["czf", "-", "-C", files.dir, ...present], new Uint8Array(0))
+        // A Claude config's login is staged beside the folder: on a Mac it's in the keychain, not the file. So is a
+        // plain `claude`'s `.claude.json` (in the home folder) for a `~/.claude` that has none of its own.
+        const staged: Array<readonly [string, string]> = []
+        if (files.login === ".credentials.json") {
+          const login = yield* logins.of(row).read
+          if (login !== null) staged.push([".credentials.json", login])
+          if (terminalClaude(row, files.dir) && !present.includes(".claude.json")) {
+            const home = yield* fs.readFileString(path.join(config.home, HOME_CLAUDE_JSON)).pipe(Effect.orElseSucceed(() => null))
+            if (home !== null) staged.push([".claude.json", home])
+          }
+        }
+        const fromDir = present.filter((e) => !staged.some(([name]) => name === e))
+        if (fromDir.length + staged.length === 0) return yield* new Invalid({ field: "config_dir", reason: `nothing to copy in ${files.dir}` })
+        const out = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const args = ["czf", "-"]
+            if (staged.length > 0) {
+              const tmp = yield* fs.makeTempDirectoryScoped({ prefix: "huntaway-login-" })
+              for (const [name, text] of staged) yield* fs.writeFileString(path.join(tmp, name), text, { mode: 0o600 })
+              args.push("-C", tmp, ...staged.map(([name]) => name))
+            }
+            if (fromDir.length > 0) args.push("-C", files.dir, ...fromDir)
+            return yield* tar(args, new Uint8Array(0))
+          }).pipe(Effect.catchTag("PlatformError", (e) => Effect.fail(new ArchiveUnavailable({ reason: e.message })))),
+        )
         if (out.code !== 0) return yield* new Invalid({ field: "config_dir", reason: `tar failed: ${out.stderr}` })
-        return { archive: Base64.encode(out.stdout), files: present, bytes: out.stdout.length }
+        const names = new Set([...staged.map(([name]) => name), ...fromDir])
+        return { archive: Base64.encode(out.stdout), files: files.entries.filter((e) => names.has(e)), bytes: out.stdout.length }
+      })
+
+      /** A plain `claude`'s `~/.claude.json` told whose the copied login is (the rest of it is this host's own). */
+      const tellTerminalClaude = Effect.fnUntraced(function* (dir: string) {
+        const copied = Option.getOrNull(decodeObject(yield* fs.readFileString(path.join(dir, ".claude.json")).pipe(Effect.orElseSucceed(() => ""))))
+        if (copied === null) return
+        const file = path.join(config.home, HOME_CLAUDE_JSON)
+        const own = Option.getOrElse(decodeObject(yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""))), () => ({}))
+        const next: Record<string, unknown> = { ...own }
+        for (const key of ACCOUNT_KEYS) if (key in copied) next[key] = copied[key]
+        const tmp = `${file}.huntaway-copy`
+        yield* fs.writeFileString(tmp, yield* encodeObject(next), { mode: 0o600 })
+        yield* fs.rename(tmp, file)
       })
 
       const importArchive = Effect.fn("ConfigArchives.importArchive")(function* (id: AgentConfigId, archive: string, overwrite: boolean) {
-        const files = configFiles(yield* getRow(id), config.home)
-        if (!overwrite && (yield* exists(path.join(files.dir, files.login)))) {
+        const row = yield* getRow(id)
+        const files = configFiles(row, config.home)
+        const claude = files.login === ".credentials.json"
+        const login = logins.of(row)
+        const hasLogin = claude ? (yield* login.read) !== null : yield* exists(path.join(files.dir, files.login))
+        if (!overwrite && hasLogin) {
           return yield* new Conflict({ reason: "in_use", detail: `${files.dir} already has a login; choose overwrite to replace it` })
         }
         const bytes = yield* Effect.fromResult(decodeArchive(archive))
         yield* fs.makeDirectory(files.dir, { recursive: true }).pipe(Effect.mapError((e) => new ArchiveUnavailable({ reason: e.message })))
         yield* fs.chmod(files.dir, 0o700).pipe(Effect.ignore)
+        const listed = yield* tar(["tzf", "-"], bytes)
+        if (listed.code !== 0) return yield* new Invalid({ field: "archive", reason: `tar failed: ${listed.stderr}` })
+        const entries = new Set(
+          new TextDecoder()
+            .decode(listed.stdout)
+            .split("\n")
+            .map((l) => l.replace(/^\.\//, "").replace(/\/$/, "")),
+        )
         const out = yield* tar(["xzf", "-", "-C", files.dir], bytes)
         if (out.code !== 0) return yield* new Invalid({ field: "archive", reason: `tar failed: ${out.stderr}` })
+        if (claude && logins.mac && entries.has(".credentials.json")) {
+          const copied = yield* fs.readFileString(login.file).pipe(Effect.mapError((e) => new ArchiveUnavailable({ reason: e.message })))
+          yield* login.saveInKeychain(copied).pipe(Effect.mapError((e) => new ArchiveUnavailable({ reason: e.reason })))
+          // As Claude Code does once its login is in the keychain.
+          yield* fs.remove(login.file, { force: true }).pipe(Effect.ignore)
+        }
+        if (claude && terminalClaude(row, files.dir) && entries.has(".claude.json")) {
+          yield* tellTerminalClaude(files.dir).pipe(Effect.mapError((e) => new ArchiveUnavailable({ reason: `~/.claude.json: ${e.message}` })))
+        }
         return { dir: files.dir }
       })
 
