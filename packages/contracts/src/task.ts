@@ -235,6 +235,11 @@ export const TaskServer = Schema.Struct({
   since: Timestamp,
   /** It outlives the run that started it. */
   detached: Schema.Boolean,
+  /**
+   * HE-83: since when the host shares it with tailcat (`tasks.forwardServer`), absent while it doesn't: written as a
+   * share starts and cleared as it ends. Only that it's shared: the address comes from `tasks.forwardServer`.
+   */
+  forwarded: Schema.optional(Timestamp),
 })
 export interface TaskServer extends Schema.Schema.Type<typeof TaskServer> {}
 
@@ -247,6 +252,8 @@ export const PortForward = Schema.Struct({
   address: Schema.String,
   /** The server's port on its host, which the share serves. */
   port: Schema.Int,
+  /** When the share started: the task's server says `forwarded` with it while it lasts (HE-83). Absent from older servers. */
+  since: Schema.optional(Timestamp),
 })
 export interface PortForward extends Schema.Schema.Type<typeof PortForward> {}
 

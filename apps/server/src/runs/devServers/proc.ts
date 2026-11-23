@@ -1,4 +1,4 @@
-import type { TaskServer } from "@huntaway/contracts"
+import type { TaskServer, Timestamp } from "@huntaway/contracts"
 import { serverWords, shimOf } from "../../tasks/Leftovers.ts"
 import type { LeftoverProc } from "../../tasks/Leftovers.ts"
 
@@ -105,6 +105,12 @@ export const commandLine = (cmdline: string): string => {
 /** The socket inode a `/proc/<pid>/fd/<n>` link names, if it is a socket. */
 export const socketInode = (link: string): string | null => /^socket:\[(\d+)\]$/.exec(link)?.[1] ?? null
 
+/** `s` shown shared with tailcat since `forwarded` (HE-83), or not shared for none. */
+export const sharedSince = (s: TaskServer, forwarded: Timestamp | undefined): TaskServer => {
+  const plain = { port: s.port, address: s.address, pid: s.pid, pgid: s.pgid, command: s.command, since: s.since, detached: s.detached }
+  return forwarded === undefined ? plain : { ...plain, forwarded }
+}
+
 /** Whether two servers are shown alike. */
 const same = (a: TaskServer, b: TaskServer | undefined) =>
   b !== undefined &&
@@ -114,17 +120,23 @@ const same = (a: TaskServer, b: TaskServer | undefined) =>
   a.pgid === b.pgid &&
   a.command === b.command &&
   a.since === b.since &&
-  a.detached === b.detached
+  a.detached === b.detached &&
+  a.forwarded === b.forwarded
 
 /**
  * What a task shows after a scan found `found`, given what it showed (`before`): when each was first seen kept, one per
- * port (a server listening on both IPv4 and IPv6 is one), by port. Null when nothing changed.
+ * port (a server listening on both IPv4 and IPv6 is one), by port, and whether its port is shared with tailcat
+ * (`forwarded`, which `PortForwards` writes). Null when nothing changed.
  */
 export const shown = (before: ReadonlyArray<TaskServer>, found: ReadonlyArray<TaskServer>): ReadonlyArray<TaskServer> | null => {
   const list = found
     .map((f) => {
       const old = before.find((b) => b.port === f.port && b.pid === f.pid)
-      return old === undefined ? f : { port: f.port, address: f.address, pid: f.pid, pgid: f.pgid, command: f.command, since: old.since, detached: f.detached }
+      const forwarded = before.find((b) => b.port === f.port)?.forwarded
+      return sharedSince(
+        old === undefined ? f : { port: f.port, address: f.address, pid: f.pid, pgid: f.pgid, command: f.command, since: old.since, detached: f.detached },
+        forwarded,
+      )
     })
     .filter((f, i, all) => all.findIndex((g) => g.port === f.port) === i)
     .toSorted((a, b) => a.port - b.port)

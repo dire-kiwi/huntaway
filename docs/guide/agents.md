@@ -106,7 +106,10 @@ your next message at once.
   `127.0.0.1` address. It keeps the forward until the app quits (or the server is shared again, with a new address,
   which it forwards instead). In a browser the banner shows the command to run on your computer, `tailcat forward tc… 4331`,
   after which the server is `localhost:4331` there. The address is a key to the server, so keep it to yourself; each
-  share gets a new one, and it lasts until the server stops (or the board restarts).
+  share gets a new one, and it lasts until the server stops (or the board restarts). While it lasts, the server's row
+  says "Shared with tailcat", on every computer and tab looking at the task; once it ends that goes, and so does the
+  command, as its address no longer works. Forward port gives the same address again while the share lasts, and a new
+  one after.
 
 ## Interactive replies
 
