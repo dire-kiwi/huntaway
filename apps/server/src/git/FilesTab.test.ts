@@ -115,6 +115,32 @@ describe("FilesTab", () => {
     ),
   )
 
+  it.live("lists what git ignores when asked, an ignored folder's contents once it's opened", () =>
+    run(
+      Effect.gen(function* () {
+        const { id, wt } = yield* taskRepo
+        const c = yield* FilesTab
+        yield* write(`${wt}/.gitignore`, "dist/\n.env\nout\n")
+        yield* write(`${wt}/.env`, "SECRET=1\n")
+        yield* write(`${wt}/dist/out.js`, "built\n")
+        yield* write(`${wt}/dist/sub/deep.js`, "deep\n")
+        yield* write(`${wt}/dist/.git/config`, "not shown\n")
+        const outside = yield* tempDir
+        yield* write(`${outside}/secret.txt`, "secret\n")
+        yield* symlink(outside, `${wt}/out`)
+        const ignored = (open: ReadonlyArray<string>) => c.files(id, { ignored: true, open }).pipe(Effect.orDie)
+        const closed = yield* ignored([])
+        assert.deepStrictEqual(closed.files, [".gitignore", "README.md", "src/parse.ts", "src/util.ts"])
+        assert.deepStrictEqual(closed.ignored, [".env", "dist/", "out"])
+        // Open: its files and folders, one level; a folder git doesn't ignore, or a link out, adds nothing.
+        assert.deepStrictEqual((yield* ignored(["dist", "src", "out", "../x"])).ignored, [".env", "dist/", "dist/out.js", "dist/sub/", "out"])
+        assert.deepStrictEqual((yield* ignored(["dist", "dist/sub"])).ignored, [".env", "dist/", "dist/out.js", "dist/sub/", "dist/sub/deep.js", "out"])
+        // Not asked: as before.
+        assert.isUndefined((yield* files(id)).ignored)
+      }),
+    ),
+  )
+
   it.live("reads a file, but nothing outside the working tree, in .git or through a link out", () =>
     run(
       Effect.gen(function* () {

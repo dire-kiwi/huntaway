@@ -149,6 +149,8 @@ export interface GitShown extends Schema.Schema.Type<typeof GitShown> {}
  * HE-79: the Code tab's files, at the top of the folder `git.status` shows: the working tree's files git tracks or would
  * (untracked ones not ignored), from the top of the repository (all in `folder` when the project's folder is only part
  * of it). At most 50,000, `truncated` when there were more; `available: false` with `reason` when it isn't a repository.
+ * HE-90: asked for, `ignored` has what git ignores: its files, and its folders (ending in `/`) as one entry each, with
+ * what's in the ones asked to be opened (one level, its folders as folders again).
  */
 export const GitTree = Schema.Struct({
   available: Schema.Boolean,
@@ -156,6 +158,7 @@ export const GitTree = Schema.Struct({
   folder: Schema.optional(Schema.NullOr(Schema.String)),
   files: Schema.Array(Schema.String),
   truncated: Schema.Boolean,
+  ignored: Schema.optional(Schema.Array(Schema.String)),
 })
 export interface GitTree extends Schema.Schema.Type<typeof GitTree> {}
 
@@ -249,8 +252,15 @@ export class GitRpcs extends RpcGroup.make(
     success: GitShown,
     error: ChangesErrors,
   }).annotate(RequiredScope, "read"),
-  /** HE-79: the Code tab's files: what's in the working tree, but what git ignores. */
-  Rpc.make("git.files", { payload: { id: TaskId }, success: GitTree, error: ChangesErrors }).annotate(RequiredScope, "read"),
+  /**
+   * HE-79: the Code tab's files: what's in the working tree, but what git ignores. HE-90: with `ignored`, what it ignores
+   * too, and what's in `open`'s ignored folders (from the top of the repository, without a slash at the end).
+   */
+  Rpc.make("git.files", {
+    payload: { id: TaskId, ignored: Schema.optional(Schema.Boolean), open: Schema.optional(Schema.Array(Schema.String)) },
+    success: GitTree,
+    error: ChangesErrors,
+  }).annotate(RequiredScope, "read"),
   /** HE-79: a file of the working tree, from the top of the repository (none in `.git`, none through a link out of it). */
   Rpc.make("git.readFile", { payload: { id: TaskId, path: Schema.String }, success: GitFileContent, error: ChangesErrors }).annotate(RequiredScope, "read"),
   /** HE-79: where a symbol (a name) is defined and used in the working tree; `path`, the file it was looked up from, comes first. */

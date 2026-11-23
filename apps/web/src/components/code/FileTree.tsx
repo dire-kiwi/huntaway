@@ -1,9 +1,11 @@
 // HE-79: the Code tab's file tree, with a finder over it (`t` goes to it): the working tree's files, folders open as
-// they're clicked, and the files with changes marked as the Changes tab lists them.
+// they're clicked, and the files with changes marked as the Changes tab lists them. HE-90: the eye button shows what git
+// ignores too, dimmed.
 import type { GitFile, GitTree } from "@huntaway/contracts"
 import { clsx } from "clsx"
-import { ChevronDown, ChevronRight, FileText, Search } from "lucide-react"
+import { ChevronDown, ChevronRight, Eye, EyeOff, FileText, Search } from "lucide-react"
 import { memo, useDeferredValue, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react"
+import { IconButton } from "../ui"
 import { baseName, ancestors, buildTree, findFiles, rows, type Row } from "./tree"
 
 /** A file's change as one letter, and its colour; folders with changes in them get a dot. */
@@ -20,6 +22,8 @@ export function FileTree({
   open,
   at,
   filterRef,
+  showIgnored,
+  onIgnored,
   onOpen,
   onToggle,
 }: {
@@ -28,6 +32,9 @@ export function FileTree({
   open: ReadonlySet<string>
   at: string | null
   filterRef: RefObject<HTMLInputElement | null>
+  /** Whether what git ignores is shown (`tree.ignored`, when it was asked for). */
+  showIgnored: boolean
+  onIgnored: (show: boolean) => void
   onOpen: (path: string) => void
   onToggle: (folder: string) => void
 }) {
@@ -35,9 +42,12 @@ export function FileTree({
   const [pick, setPick] = useState(0)
   const query = useDeferredValue(filter)
   const folder = tree.folder ?? null
-  const root = useMemo(() => buildTree(tree.files, folder), [tree.files, folder])
-  const shown = useMemo(() => rows(root, open), [root, open])
-  const found = useMemo(() => findFiles(tree.files, query), [tree.files, query])
+  const ignored = showIgnored ? tree.ignored : undefined
+  const root = useMemo(() => buildTree(tree.files, folder, ignored), [tree.files, folder, ignored])
+  const ignoredFiles = useMemo(() => new Set(ignored?.filter((p) => !p.endsWith("/"))), [ignored])
+  const findable = useMemo(() => [...tree.files, ...ignoredFiles], [tree.files, ignoredFiles])
+  const shown = useMemo(() => rows(root, open, ignoredFiles), [root, open, ignoredFiles])
+  const found = useMemo(() => findFiles(findable, query), [findable, query])
   const marks = useMemo(() => {
     const files = new Map(changed.map((f) => [f.path, changeOf(f)]))
     const folders = new Set(changed.flatMap((f) => ancestors(f.path)))
@@ -52,7 +62,7 @@ export function FileTree({
       setPick(Math.max(0, Math.min(found.length - 1, shownPick + (e.key === "ArrowDown" ? 1 : -1))))
     } else if (e.key === "Enter") {
       // What's typed, though the list may not have caught up with it yet.
-      const p = (query === filter ? found : findFiles(tree.files, filter))[shownPick]
+      const p = (query === filter ? found : findFiles(findable, filter))[shownPick]
       if (p) {
         onOpen(p)
         setFilter("")
@@ -66,7 +76,7 @@ export function FileTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="p-2">
+      <div className="flex items-center gap-1 p-2">
         <label className="flex items-center gap-1.5 rounded-md border border-line bg-bg px-2 py-1 focus-within:border-accent/60">
           <Search size={12} className="shrink-0 text-faint" />
           <input
@@ -83,6 +93,14 @@ export function FileTree({
           />
           {!filter && <kbd className="rounded border border-line px-1 text-[10px] text-faint">t</kbd>}
         </label>
+        <IconButton
+          title={showIgnored ? "Hide ignored files" : "Show ignored files"}
+          aria-pressed={showIgnored}
+          onClick={() => onIgnored(!showIgnored)}
+          className={clsx("shrink-0", showIgnored && "bg-raised text-fg")}
+        >
+          {showIgnored ? <Eye size={14} /> : <EyeOff size={14} />}
+        </IconButton>
       </div>
       <div className="min-h-0 flex-1 overflow-auto pb-2 text-[12.5px]" role="tree" aria-label="Files">
         {finding ? (
@@ -99,7 +117,7 @@ export function FileTree({
                 onMouseEnter={() => setPick(i)}
                 className={clsx("flex w-full min-w-0 items-baseline gap-2 px-3 py-0.5 text-left", i === shownPick ? "bg-raised text-fg" : "text-muted")}
               >
-                <span className="shrink-0">{baseName(p)}</span>
+                <span className={clsx("shrink-0", ignoredFiles.has(p) && "opacity-60")}>{baseName(p)}</span>
                 <span className="truncate text-[11px] text-faint">{p.slice(folder?.length ?? 0, p.length - baseName(p).length)}</span>
               </button>
             ))
@@ -145,7 +163,7 @@ const TreeRow = memo(function TreeRow({
       role="treeitem"
       aria-expanded={folder ? r.open : undefined}
       aria-selected={selected}
-      title={r.path}
+      title={r.ignored ? `${r.path} (ignored by git)` : r.path}
       onClick={() => (folder ? onToggle(r.path) : onOpen(r.path))}
       className={clsx(
         "flex w-full min-w-0 items-center gap-1 py-[3px] pr-2 text-left",
@@ -162,7 +180,7 @@ const TreeRow = memo(function TreeRow({
       ) : (
         <FileText size={12} className="mx-[0.5px] shrink-0 text-faint" />
       )}
-      <span className={clsx("min-w-0 flex-1 truncate", mark?.className)}>{r.name}</span>
+      <span className={clsx("min-w-0 flex-1 truncate", mark?.className, r.ignored && "opacity-60")}>{r.name}</span>
       {mark && <span className={clsx("shrink-0 text-[10.5px] font-medium", mark.className)}>{mark.letter}</span>}
       {dot && <span className="size-1.5 shrink-0 rounded-full bg-amber-300/70" title="Has changes" />}
     </button>

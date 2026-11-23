@@ -1,6 +1,6 @@
 import { assert, it as test } from "@effect/vitest"
 import { pieces, splitLines } from "../../../src/components/code/lines"
-import { ancestors, buildTree, findFiles, rows } from "../../../src/components/code/tree"
+import { ancestors, buildTree, filesAsked, findFiles, rows } from "../../../src/components/code/tree"
 
 // HE-79: the Code tab's tree, finder and lines.
 
@@ -17,6 +17,28 @@ test("the tree: folders first, by name, a folder of one folder on one row", () =
   assert.deepStrictEqual(shown(["web/src"], "web/"), ["v src", "  App.tsx", "package.json"])
   assert.deepStrictEqual(ancestors("src/a/b/deep.ts"), ["src", "src/a", "src/a/b"])
   assert.deepStrictEqual(ancestors("README.md"), [])
+})
+
+test("what git ignores, when shown: its folders (their contents once listed) and files, marked", () => {
+  const ignored = [".env", "dist/", "dist/out.js", "dist/sub/", "src/gen.ts"]
+  const tree = buildTree(PATHS, null, ignored)
+  const ignoredFiles = new Set([".env", "dist/out.js", "src/gen.ts"])
+  const withIgnored = (open: ReadonlyArray<string>) =>
+    rows(tree, new Set(open), ignoredFiles).map(
+      (r) => `${"  ".repeat(r.depth)}${r.kind === "folder" ? (r.open ? "v " : "> ") : ""}${r.name}${r.ignored ? " *" : ""}`,
+    )
+  assert.deepStrictEqual(withIgnored([]), ["> dist *", "> src", "> web", ".env *", "Cargo.toml", "README.md"])
+  assert.deepStrictEqual(withIgnored(["dist"]).slice(0, 3), ["v dist *", "  > sub *", "  out.js *"])
+  assert.deepStrictEqual(withIgnored(["src"]).slice(1, 6), ["v src", "  > a/b", "  > util", "  gen.ts *", "  main.ts"])
+  // An ignored folder of one folder stays a row of its own: what's in it is listed only once it's opened.
+  assert.deepStrictEqual(
+    rows(buildTree([], null, ["node_modules/", "node_modules/pkg/"]), new Set(["node_modules"])).map((r) => r.name),
+    ["node_modules", "pkg"],
+  )
+  // `git.files` is asked for every open folder (the server lists the ignored ones), from the tab's state alone: an answer
+  // that no longer has `dist/` asks the same, rather than going back to the one before (an endless render).
+  assert.deepStrictEqual(filesAsked(true, new Set(["src", "dist/sub", "dist"])), { ignored: true, open: ["dist", "dist/sub", "src"] })
+  assert.deepStrictEqual(filesAsked(false, new Set(["dist"])), {})
 })
 
 test("the finder: in the name first, then across folders, then scattered", () => {
