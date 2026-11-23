@@ -30,6 +30,8 @@ test("the settings' tabs are in groups, with help behind a ? in the tabs and the
       "|",
       "Notifications",
       "Keyboard shortcuts",
+      // HE-89
+      "Voice input",
       "|",
       "Server",
       "Network access",
