@@ -67,9 +67,13 @@ function ChangesTree({ task, onShowCode }: { task: Task; onShowCode: () => void 
   const diff = useKept(resultValue(result))
   const files = useMemo(() => parseDiff(diff?.patch ?? ""), [diff])
   const byPath = useMemo(() => new Map(files.map((f) => [f.path, f])), [files])
-  const paths = useMemo(() => files.map((f) => f.path), [files])
+  // New files whose contents the diff hasn't (only the first 50's are read), listed all the same.
+  const unread = useMemo(() => new Set((diff?.untracked ?? []).filter((p) => !byPath.has(p))), [diff, byPath])
+  const paths = useMemo(() => [...files.map((f) => f.path), ...unread], [files, unread])
   const tree = useMemo<GitTree>(() => ({ available: true, files: paths, folder: null, truncated: false }), [paths])
-  const changed = useMemo(() => files.map(asChanged), [files])
+  const changed = useMemo(() => [...files.map(asChanged), ...[...unread].map((path) => ({ path, orig_path: null, x: "A", y: " " }))], [files, unread])
+  // The diff was cut (at 2 MB): the files after the cut aren't in it, nor in the tree.
+  const cut = diff?.patch?.includes("\n… [truncated") ?? false
   const [{ at, closed }, setPlace] = useAtom(changesState(`${h}:${id}`))
   const setAt = (path: string | null) => setPlace((p) => ({ ...p, at: path }))
   // Every folder open, but those closed.
@@ -83,15 +87,19 @@ function ChangesTree({ task, onShowCode }: { task: Task; onShowCode: () => void 
     [paths],
   )
   const file = at === null ? undefined : byPath.get(at)
+  // A new file picked whose contents the diff hasn't.
+  const unreadAt = at !== null && unread.has(at) ? at : null
+  const pickedPath = file?.path ?? unreadAt
   const shownFiles = useMemo(() => (file ? [file] : files), [file, files])
   const [layout, setLayout] = useAtom(layoutAtom)
   const toggleLayout = () => setLayout(layout === "split" ? "unified" : "split")
   const source = useMemo(() => branchSource(diff?.base), [diff?.base])
   const setCode = useAtomSet(codeState(`${h}:${id}`))
-  const openInCode = (f: FileDiff) => {
-    setCode((s) => goTo(s, { path: f.path, line: firstChange(f) }))
+  const openPath = (path: string, line: number | null) => {
+    setCode((s) => goTo(s, { path, line }))
     onShowCode()
   }
+  const openInCode = (f: FileDiff) => openPath(f.path, firstChange(f))
 
   const root = useRef<HTMLDivElement>(null)
   const filterRef = useRef<HTMLInputElement>(null)
@@ -267,7 +275,14 @@ function ChangesTree({ task, onShowCode }: { task: Task; onShowCode: () => void 
       <CommentsContext.Provider value={comments}>
         <div className="flex min-h-0 flex-1">
           {(!narrow || treeShown) && (
-            <aside className={clsx("flex min-h-0 flex-col border-r border-line", narrow ? "w-full" : "w-64 shrink-0")}>{treeView}</aside>
+            <aside className={clsx("flex min-h-0 flex-col border-r border-line", narrow ? "w-full" : "w-64 shrink-0")}>
+              {cut && (
+                <div className="shrink-0 border-b border-line px-3 py-1.5 text-[11.5px] text-amber-300" role="note">
+                  The diff is too big to read whole: the files after its first 2 MB aren&apos;t listed.
+                </div>
+              )}
+              {treeView}
+            </aside>
           )}
           {(!narrow || !treeShown) && (
             <div className="flex min-w-0 flex-1 flex-col">
@@ -283,7 +298,7 @@ function ChangesTree({ task, onShowCode }: { task: Task; onShowCode: () => void 
                     <FolderTree size={14} />
                   </IconButton>
                 )}
-                {file ? (
+                {pickedPath !== null ? (
                   <>
                     <button
                       className="shrink-0 text-[12px] text-muted hover:text-fg hover:underline"
@@ -293,24 +308,28 @@ function ChangesTree({ task, onShowCode }: { task: Task; onShowCode: () => void 
                       All changes
                     </button>
                     <span className="shrink-0 px-1 text-faint">/</span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-fg" title={file.path} data-testid="changes-path">
-                      {file.path}
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-fg" title={pickedPath} data-testid="changes-path">
+                      {pickedPath}
                     </span>
-                    <span className="shrink-0 px-1 font-mono text-[11px]">
-                      <span className="text-emerald-400">+{file.adds}</span> <span className="text-red-400">−{file.dels}</span>
-                    </span>
-                    <IconButton title="Copy the path" onClick={() => copyText(file.path)}>
+                    {file && (
+                      <span className="shrink-0 px-1 font-mono text-[11px]">
+                        <span className="text-emerald-400">+{file.adds}</span> <span className="text-red-400">−{file.dels}</span>
+                      </span>
+                    )}
+                    <IconButton title="Copy the path" onClick={() => copyText(pickedPath)}>
                       <Copy size={13} />
                     </IconButton>
-                    {file.newPath !== null && (
-                      <IconButton title="Open in the Code tab" onClick={() => openInCode(file)}>
+                    {(file ? file.newPath !== null : true) && (
+                      <IconButton title="Open in the Code tab" onClick={() => (file ? openInCode(file) : openPath(pickedPath, null))}>
                         <FileCode size={14} />
                       </IconButton>
                     )}
                   </>
                 ) : (
                   <span className="min-w-0 flex-1 truncate text-[12px] text-muted">
-                    {diff?.available ? `${files.length} file${files.length === 1 ? "" : "s"} changed${diff.base ? ` against ${diff.base}` : ""}` : "Changes"}
+                    {diff?.available
+                      ? `${paths.length}${cut ? "+" : ""} file${paths.length === 1 ? "" : "s"} changed${diff.base ? ` against ${diff.base}` : ""}`
+                      : "Changes"}
                   </span>
                 )}
                 <span className="shrink-0 font-mono text-[11px]">
@@ -320,6 +339,14 @@ function ChangesTree({ task, onShowCode }: { task: Task; onShowCode: () => void 
               <div ref={scroller} className="@container min-h-0 flex-1 overflow-auto bg-bg py-1.5 font-mono text-[12px] leading-[18px]">
                 {diff && !diff.available ? (
                   <Note error>Diff unavailable: {diff.reason}</Note>
+                ) : unreadAt !== null ? (
+                  <div className="px-1.5 font-sans text-[13px] text-muted">
+                    A new file. Its contents aren&apos;t in the diff, which reads only the first 50 new files and its first 2 MB:{" "}
+                    <button className="text-accent hover:underline" onClick={() => openPath(unreadAt, null)}>
+                      open it in the Code tab
+                    </button>{" "}
+                    to see it.
+                  </div>
                 ) : (
                   diff && (
                     <PatchView

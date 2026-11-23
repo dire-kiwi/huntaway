@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { afterAll, beforeAll, test } from "vite-plus/test"
 import { eventually, makeProfile, startServer, withBrowser } from "./harness.mjs"
 
@@ -117,4 +117,31 @@ test("the keys that work on every page leave the Changes tab's alone", async () 
     await ui.run(["press a", "press p", "press Shift+P", "sleep 200"])
     assert.equal(ui.page.url(), at)
   })
+})
+
+// Review of HE-96: the diff reads only the first 50 new files' contents and its first 2 MB; the tree lists every new
+// file all the same, and says when the diff was cut.
+test("every new file is listed, those whose contents the diff hasn't too, and a diff cut short says so", async () => {
+  mkdirSync(`${wt}/gen`)
+  for (let i = 1; i <= 55; i++) writeFileSync(`${wt}/gen/n${String(i).padStart(2, "0")}.txt`, `file ${i}\n`)
+  writeFileSync(
+    `${wt}/big.txt`,
+    lines(250_000, (i) => `a long enough line, number ${i}`),
+  )
+  try {
+    await withBrowser(server, {}, async (ui) => {
+      await ui.run([
+        `goto /t/${task.id}`,
+        "click Changes",
+        `wait ${tree("n55.txt")}`,
+        "wait The diff is too big to read whole",
+        "wait text=/\\d+\\+ files changed/",
+      ])
+      await ui.run([`click ${tree("n55.txt")}`, "wait css=[data-testid=changes-path][title='gen/n55.txt']", "wait Its contents aren't in the diff"])
+      await ui.run(["click open it in the Code tab", "wait css=[data-testid=code-path][title='gen/n55.txt']"])
+    })
+  } finally {
+    rmSync(`${wt}/gen`, { recursive: true })
+    rmSync(`${wt}/big.txt`)
+  }
 })

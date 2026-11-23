@@ -335,7 +335,9 @@ The lazygit-style view that step 1 brought over (below) is replaced: the Changes
   (`git.taskDiff`, as the old Status panel's diff), read again every 4 s while the page is shown. On the left the Code
   tab's `FileTree` of the files in that diff alone (every folder open until closed, each file marked A, D, R or M, the
   finder on `t`); on the right the diff of the file picked, or all of them, with the branch's commits, until one is
-  (Esc goes back to all). The file picked and the folders closed are kept for the page's life, by host and task
+  (Esc goes back to all). Every new file is in the tree (`untracked`), though the diff reads only the first 50 new
+  files' contents: picking one of the others says so and opens it in the Code tab. A diff cut at 2 MB says so above the
+  tree, and the count says `n+`. The file picked and the folders closed are kept for the page's life, by host and task
   (`changesState`), as the Code tab's place is. `j`/`k` go to the next or previous file in the tree's order, `|` switches unified and split.
 - **Into the Code tab.** The file's title bar, and each file's header in the diffs, have *Open in the Code tab* (not
   for a deleted file): it sets the Code tab's place (`codeState`, `goTo`) to the file at its first changed line and

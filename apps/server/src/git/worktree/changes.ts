@@ -117,20 +117,34 @@ const PATCH_LIMIT = 2_000_000
 const DIFF = ["diff", "--no-color", "--no-ext-diff"]
 const PATCH = [...DIFF, "--src-prefix=a/", "--dst-prefix=b/"]
 
+/**
+ * Where `dir` is in its repository: the top, and the folder from there (`web/`, or "" at the top). HE-96: a project
+ * whose folder is only part of its repository has its changes in that folder alone, with paths from the top, as the
+ * Code tab has them.
+ */
+const placeOf = Effect.fnUntraced(function* (g: GitShape, dir: string) {
+  const [top = dir, prefix = ""] = (yield* g.ok(dir, ["rev-parse", "--show-toplevel", "--show-prefix"])).split("\n")
+  return { top, prefix, scope: prefix !== "" ? ["--", "."] : [] }
+})
+
+/** How many new files' contents a task's diff has (they're diffed one by one); `untracked` names them all. */
+const UNTRACKED_DIFFS = 50
+
 /** A diff of the changes in `dir`, the task's worktree or the project's folder, uncommitted and untracked ones too. */
 export const dirDiff = Effect.fnUntraced(function* (g: GitShape, get: Lookup, dir: string, task: Task, project: Project | null) {
   const { base, start } = yield* changesBase(g, get, dir, task, project)
   const from = start ?? "HEAD"
+  const { top, scope } = yield* placeOf(g, dir)
   // Marking untracked files intent-to-add would change the index; they're diffed one by one instead.
-  const stat = (yield* g.run(dir, [...DIFF, "--stat=200", from])).stdout
-  const patch = (yield* g.run(dir, [...PATCH, from])).stdout
+  const stat = (yield* g.run(dir, [...DIFF, "--stat=200", from, ...scope])).stdout
+  const patch = (yield* g.run(dir, [...PATCH, from, ...scope])).stdout
   // NUL-separated, so names git would quote (not ASCII, or with a newline) come as they are, and after `--`, so a name
-  // starting with `-` isn't taken for an option.
-  const untracked = (yield* g.ok(dir, ["ls-files", "-z", "--others", "--exclude-standard"])).split("\0").filter((f) => f !== "")
+  // starting with `-` isn't taken for an option. From the top, as the diff's are, and diffed from there.
+  const untracked = (yield* g.ok(dir, ["ls-files", "-z", "--others", "--exclude-standard", "--full-name"])).split("\0").filter((f) => f !== "")
   let untrackedPatch = ""
-  for (const f of untracked.slice(0, 50)) {
+  for (const f of untracked.slice(0, UNTRACKED_DIFFS)) {
     // It exits 1 when the files differ, which they do.
-    untrackedPatch += (yield* g.run(dir, [...PATCH, "--no-index", "--", "/dev/null", f])).stdout
+    untrackedPatch += (yield* g.run(top, [...PATCH, "--no-index", "--", "/dev/null", f])).stdout
   }
   const commits = start !== null ? (yield* g.run(dir, ["log", "--oneline", `${start}..HEAD`])).stdout : ""
   const out: DiffResult = { available: true, dir, base, merge_base: start, commits, stat, patch: truncate(patch + untrackedPatch, PATCH_LIMIT), untracked }
@@ -147,8 +161,9 @@ export const branchDiff = Effect.fnUntraced(function* (g: GitShape, get: Lookup,
   }
   const { base, start } = yield* changesBaseAt(g, get, repo, task, project, head)
   const from = start ?? head
-  const stat = (yield* g.run(repo, [...DIFF, "--stat=200", from, head])).stdout
-  const patch = (yield* g.run(repo, [...PATCH, from, head])).stdout
+  const { scope } = yield* placeOf(g, repo)
+  const stat = (yield* g.run(repo, [...DIFF, "--stat=200", from, head, ...scope])).stdout
+  const patch = (yield* g.run(repo, [...PATCH, from, head, ...scope])).stdout
   const commits = start !== null ? (yield* g.run(repo, ["log", "--oneline", `${start}..${head}`])).stdout : ""
   const out: DiffResult = { available: true, dir: repo, base, merge_base: start, commits, stat, patch: truncate(patch, PATCH_LIMIT), untracked: [], branch }
   return out

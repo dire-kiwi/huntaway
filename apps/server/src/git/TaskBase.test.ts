@@ -227,6 +227,31 @@ describe("a task's diff", () => {
     ),
   )
 
+  // HE-96: a project on a folder of its repository had the whole repository's changes, and its new files' paths from the
+  // folder while the others' were from the top, so the Changes tab couldn't open them in the Code tab.
+  it.live("of a project on a folder of its repository, is that folder's, with paths from the top", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* tempDir
+        yield* git(repo, ["init", "-q", "-b", "master"])
+        yield* write(`${repo}/root.txt`, "root\n")
+        yield* write(`${repo}/web/src/a.txt`, "a\n")
+        yield* git(repo, ["add", "."])
+        yield* git(repo, ["commit", "-qm", "init"])
+        const project = yield* projectOn(`${repo}/web`)
+        const task = yield* make(project, "Do it", { use_worktree: false })
+        yield* write(`${repo}/root.txt`, "root, changed\n")
+        yield* write(`${repo}/web/src/a.txt`, "a, changed\n")
+        yield* write(`${repo}/web/src/new.txt`, "new\n")
+        yield* write(`${repo}/outside.txt`, "outside\n")
+        const d = yield* diff(task.id)
+        assert.deepStrictEqual(d.untracked, ["web/src/new.txt"])
+        assert.deepStrictEqual((yield* changedFiles(task.id)).toSorted(), ["web/src/a.txt", "web/src/new.txt"])
+        assert.notInclude(d.stat, "root.txt")
+      }),
+    ),
+  )
+
   // HA-51: a task whose worktree was removed showed the project folder's changes as its own.
   it.live("without its worktree, is its branch's", () =>
     run(
