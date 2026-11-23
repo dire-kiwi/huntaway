@@ -3,17 +3,20 @@ import { Cable, Copy, ExternalLink, Globe, Loader2, MonitorPlay, Square } from "
 import { useState, type ReactNode } from "react"
 import { backgroundLabel, serverUrl, type HostTask as Task } from "@huntaway/client"
 import type { BackgroundItem, PortForward, TaskServer } from "@huntaway/contracts"
+import { useBoard } from "../../../state/board"
+import { paneDebugger } from "../BrowserWebview"
 import { useNow } from "../../../state/clock"
 import { exitError, useMutation } from "../../../state/mutation"
 import { copyText, millisOf } from "../../ui"
 import { duration } from "../../ui/time"
-import { desktopForward, desktopForwards, forwardCommand } from "./forwardPort"
+import { desktopForward, desktopForwards, forwardCommand, onTaskHost } from "./forwardPort"
 
 /**
  * What the task's agent left going (HA-405), above its composer: the shells it has running in the background (a dev
  * server, a watcher), each with a Stop that ends it and leaves the agent be, and the servers its processes listen on,
- * with Open, Forward port (HE-81: shared with tailcat, for a client on another machine) and Stop. Once the agent's turn
- * has ended with only those left it's idle, not working, and a message reaches it at once.
+ * with Open, Forward port (HE-81: shared with tailcat, for a client on another machine; HE-92: not in the desktop app on
+ * the task's host itself) and Stop. Once the agent's turn has ended with only those left it's idle, not working, and a message reaches
+ * it at once.
  */
 export function BackgroundBanner({ task }: { task: Task }) {
   const shells = task.running ? (task.background_work?.tasks ?? []).filter((b) => b.kind !== "subagent") : []
@@ -82,6 +85,7 @@ function ServerRow({ task, server, onError }: { task: Task; server: TaskServer; 
   // replaced it. A host older than HE-83 says neither, and it's shown until the row goes.
   const shared = given !== null && given.share.since === server.forwarded ? given : null
   const [opening, setOpening] = useState(false)
+  const here = useBoard((s) => onTaskHost(task.host_id, s.localHostId, paneDebugger() !== null))
   const forward = () => {
     onError(null)
     void forwardServer(task.host_id, { id: task.id, port: server.port }).then((exit) => {
@@ -130,17 +134,19 @@ function ServerRow({ task, server, onError }: { task: Task; server: TaskServer; 
         >
           <ExternalLink size={10} /> Open
         </a>
-        <RowButton
-          busy={forwarding.busy || opening}
-          title={
-            server.forwarded !== undefined && shared === null
-              ? `Shared with tailcat: show how to make it localhost:${server.port} on this computer too`
-              : `Share this server with tailcat, so that it's localhost:${server.port} on this computer too, wherever the board's host is`
-          }
-          onClick={forward}
-        >
-          {!(forwarding.busy || opening) && <Cable size={10} />} Forward port
-        </RowButton>
+        {!here && (
+          <RowButton
+            busy={forwarding.busy || opening}
+            title={
+              server.forwarded !== undefined && shared === null
+                ? `Shared with tailcat: show how to make it localhost:${server.port} on this computer too`
+                : `Share this server with tailcat, so that it's localhost:${server.port} on this computer too, wherever the board's host is`
+            }
+            onClick={forward}
+          >
+            {!(forwarding.busy || opening) && <Cable size={10} />} Forward port
+          </RowButton>
+        )}
         <RowButton busy={state.busy} title="Stop this server (its process group), not the agent" onClick={stop}>
           <Square size={9} fill="currentColor" /> Stop
         </RowButton>

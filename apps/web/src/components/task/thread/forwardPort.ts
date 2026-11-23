@@ -36,3 +36,12 @@ export function desktopForward(address: string, port: number, host: string): Pro
     .then((): unknown => Reflect.apply(forward, bridge, [address, port, host]))
     .then(answerOf, (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }))
 }
+
+/**
+ * HE-92: whether the page runs on the task's host, so its servers are already localhost here and Forward port has
+ * nothing to do: the page is the desktop app's with its board's server on this machine (`appServerHere`: no
+ * `serverUrl` in desktop.json, so the app hands out its browser pane, `paneDebugger`), and the task is that server's
+ * (`localHostId`), not a linked host's. A browser can't tell: `localhost` may be the host itself or a tunnel to it
+ * from another computer (`ssh -L`), where the button is the way to reach the server, so it keeps it.
+ */
+export const onTaskHost = (taskHost: string, localHostId: string | null, appServerHere: boolean): boolean => appServerHere && taskHost === localHostId
