@@ -87,7 +87,7 @@ function ServerRow({ task, server, onError }: { task: Task; server: TaskServer; 
       const share = exit.value
       if (!desktopForwards()) return setShared({ share, local: null, error: null })
       setOpening(true)
-      return desktopForward(share.address, share.port).then((local) => {
+      return desktopForward(share.address, share.port, task.host_id).then((local) => {
         setOpening(false)
         if (local !== null && "url" in local) {
           setShared({ share, local: local.url, error: null })
