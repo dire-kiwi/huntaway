@@ -72,13 +72,16 @@ export const watchBoard = (host: HostId, initial: HostBoard | undefined): Stream
         yield* Effect.yieldNow
         let backoff = FIRST_BACKOFF
         while (true) {
-          // Whether anything came after `hello` (the snapshot, a replayed or a live event): the subscription got going.
+          // Whether the subscription got going: anything came after `hello` (the snapshot, a replayed or a live event),
+          // or `hello` answered a resume with nothing owed (same boot and seq: no snapshot or replay follows, so none
+          // can fail), as a quiet board's reconnect does.
           let going = false
-          const since = loaded && !fresh ? { since: { boot: board.boot, seq: board.seq } } : {}
+          const resume = loaded && !fresh ? { boot: board.boot, seq: board.seq } : undefined
+          const since = resume === undefined ? {} : { since: resume }
           fresh = false
           const exit = yield* client("board.watch", since).pipe(
             Stream.runForEach((message) => {
-              if (message.type !== "hello") going = true
+              if (message.type !== "hello" || (resume !== undefined && message.boot === resume.boot && message.seq === resume.seq)) going = true
               return apply(message)
             }),
             Effect.exit,

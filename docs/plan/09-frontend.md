@@ -94,7 +94,8 @@ export interface HostBoard {
 `applyBoardEvent`, a pure reducer that keeps every unchanged object identical. On a reconnect it resubscribes with
 the last `{ boot, seq }` and continues, or receives a fresh snapshot. A host that goes offline keeps showing what it
 had, marked stale, which is the old "a failed request must not empty a host's board". A subscription that ends before
-anything after `hello` waits 1 s before the next, twice as long each time up to 30 s (HE-104): a client that couldn't
+anything after `hello` (and wasn't a resume with nothing owed: `hello` at the board's own boot and seq) waits 1 s
+before the next, twice as long each time up to 30 s (HE-104): a client that couldn't
 read a snapshot (it was over RPC's then 16 MiB limit) asked again at once, for ever, and the host built and sent the
 whole board each time until it ran out of memory.
 

@@ -34,4 +34,23 @@ describe("watchBoard", () => {
       yield* subscribed(10)
     }).pipe(Effect.scoped),
   )
+
+  it.effect("a quiet board's resume, with nothing to replay, subscribes again at once each time it drops", () =>
+    Effect.gen(function* () {
+      const a = yield* fakeHost("host-a")
+      const subscribed = (n: number) =>
+        Effect.gen(function* () {
+          while (a.subscriptions.length < n) yield* Effect.yieldNow
+        })
+      yield* watchBoard(a.id, undefined).pipe(Stream.runDrain, Effect.provide(a.layer), Effect.forkScoped)
+      yield* subscribed(1)
+      // Each resume gets only `hello` (nothing new): dropped and back, it subscribes again without the clock moving.
+      for (let n = 2; n <= 8; n++) {
+        yield* a.drop
+        yield* a.reconnect
+        yield* subscribed(n)
+        expect(a.subscriptions.at(-1)).toEqual({ boot: "boot-1", seq: a.snapshot.seq })
+      }
+    }).pipe(Effect.scoped),
+  )
 })
