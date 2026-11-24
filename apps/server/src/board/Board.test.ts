@@ -53,6 +53,12 @@ layer(TestBoard())("Board", (it) => {
       // A resume from another boot gets a snapshot.
       const other = yield* board.watch({ boot: "earlier", seq: snapshot.seq }).pipe(Stream.take(2), Stream.runCollect)
       assert.deepStrictEqual(kinds(other), ["hello", "snapshot"])
+
+      // Events only (settings sync's watch of a peer): hello, then the next change, with no snapshot and no replay.
+      const live = yield* board.watch("events").pipe(Stream.take(2), Stream.runCollect, Effect.forkChild)
+      yield* Effect.yieldNow
+      yield* tasks.create({ project_id: project.id, title: "Third" }, Actor.user)
+      assert.deepStrictEqual(kinds(yield* Fiber.join(live)), ["hello", "task:Third"])
       yield* (yield* Reactor).idle
     }),
   )

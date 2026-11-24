@@ -58,7 +58,6 @@ import {
   // HE-62
   BrowserRpcs,
   ThreadRpcs,
-  RpcNdjson,
   WorkflowRpcs,
 } from "@huntaway/contracts"
 // 6.4: skills and MCP servers.
@@ -74,7 +73,7 @@ import { RoutineHost } from "./automations/RoutineHost.ts"
 import { Routines } from "./automations/Routines.ts"
 import { Scheduler } from "./automations/Scheduler.ts"
 import { Webhooks } from "./automations/Webhooks.ts"
-import { websocketOptions } from "./http/websocket.ts"
+import { RpcNdjsonServer, websocketOptions } from "./http/websocket.ts"
 import { WebhookRoute } from "./http/webhooks.ts"
 import { AutomationHandlers } from "./rpc/automations.ts"
 // 6.7: the assistant.
@@ -859,7 +858,7 @@ export const HandlersLive = Layer.mergeAll(
 export const RpcLive = Layer.mergeAll(
   RpcServer.layerHttp({ group: Served, path: "/api/rpc", protocol: "websocket" }),
   RpcServer.layerHttp({ group: Served, path: "/api/rpc", protocol: "http" }),
-).pipe(Layer.provide(HandlersLive), Layer.provide(RpcNdjson))
+).pipe(Layer.provide(HandlersLive), Layer.provide(RpcNdjsonServer))
 
 /** The routes the server answers, `/api` first, then the UI. */
 export const RoutesLive = Layer.mergeAll(

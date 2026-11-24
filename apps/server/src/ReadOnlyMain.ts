@@ -42,7 +42,6 @@ import {
   TerminalRpcs,
   ThreadRpcs,
   ToolRpcs,
-  RpcNdjson,
   WorkflowRpcs,
 } from "@huntaway/contracts"
 import { AgentTools } from "./agents/AgentTools.ts"
@@ -102,7 +101,7 @@ import { PrWatch } from "./github/PrWatch.ts"
 import { PrWatchRepo } from "./github/PrWatchRepo.ts"
 import { PullRequests } from "./github/PullRequests.ts"
 import { LinkRepo } from "./hosts/LinkRepo.ts"
-import { websocketOptions } from "./http/websocket.ts"
+import { RpcNdjsonServer, websocketOptions } from "./http/websocket.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { MergeGate } from "./merge/MergeGate.ts"
 import { Merges } from "./merge/Merges.ts"
@@ -415,7 +414,7 @@ export const ReadOnlyHandlers = ReadOnlyRpcHandlers.pipe(Layer.provideMerge(Auth
 export const ReadOnlyRpc = Layer.mergeAll(
   RpcServer.layerHttp({ group: ReadOnlyServed, path: "/api/rpc", protocol: "websocket" }),
   RpcServer.layerHttp({ group: ReadOnlyServed, path: "/api/rpc", protocol: "http" }),
-).pipe(Layer.provide(ReadOnlyHandlers), Layer.provide(RpcNdjson))
+).pipe(Layer.provide(ReadOnlyHandlers), Layer.provide(RpcNdjsonServer))
 
 /** The routes: the RPC, the health and the UI. No webhook, MCP, hook, OTLP, relay, link-stream or terminal path. */
 export const ReadOnlyRoutes = Layer.mergeAll(ReadOnlyRpc, HealthRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)

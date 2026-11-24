@@ -18,9 +18,10 @@ export interface BoardShape {
   readonly snapshot: (seq: number) => Effect.Effect<BoardSnapshot>
   /**
    * `board.watch` (docs/plan/05-protocol.md, The board): `hello`, then the events after `since` when this boot can
-   * replay them, else a snapshot; then every event. Ends with `resync` if the subscriber falls too far behind.
+   * replay them, else a snapshot; then every event. Ends with `resync` if the subscriber falls too far behind. `"events"`
+   * (`events_only`): `hello` and then only the events after it.
    */
-  readonly watch: (since: Since | undefined) => Stream.Stream<BoardMessage>
+  readonly watch: (since: Since | "events" | undefined) => Stream.Stream<BoardMessage>
 }
 
 /** The board's subscription. It reads every area, so its area (`board/`) sits below them all, above `lifecycle/` (a read-only server serves it without the reactor). */
@@ -68,12 +69,12 @@ export class Board extends Context.Service<Board, BoardShape>()("huntaway-server
         )
       })
 
-      const watch = (since: Since | undefined): Stream.Stream<BoardMessage> =>
+      const watch = (since: Since | "events" | undefined): Stream.Stream<BoardMessage> =>
         Stream.unwrap(
           Effect.gen(function* () {
-            const watching = yield* events.watch(since)
+            const watching = yield* events.watch(since === "events" ? undefined : since)
             const hello: BoardMessage = { type: "hello", host_id: identity.hostId, boot: events.boot, seq: watching.seq }
-            const first: ReadonlyArray<BoardMessage> = watching.replay ?? [yield* snapshot(watching.seq)]
+            const first: ReadonlyArray<BoardMessage> = since === "events" ? [] : (watching.replay ?? [yield* snapshot(watching.seq)])
             return Stream.concat(Stream.fromIterable([hello, ...first]), watching.live)
           }),
         )

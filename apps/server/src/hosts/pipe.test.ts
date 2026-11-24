@@ -3,9 +3,10 @@ import * as NodeWS from "@effect/platform-node/NodeWS"
 import { assert, describe, it } from "@effect/vitest"
 import { Deferred, Effect, Layer, Ref } from "effect"
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http"
+import { RpcSerialization } from "effect/rpc"
 import { createServer } from "node:http"
 import { websocketOptions } from "../http/websocket.ts"
-import { accept, dial, pipe } from "./pipe.ts"
+import { accept, dial, pipe, speaksRpc, SPLIT_AT, splitFrame } from "./pipe.ts"
 import type { Pipeable, Transport } from "./pipe.ts"
 
 // 7.0, the second check (docs/plan/08-hosts.md, To check early): two piped websockets keep back-pressure in both
@@ -269,4 +270,59 @@ describe("two piped websockets (7.0)", () => {
       }).pipe(Effect.scoped),
     60_000,
   )
+})
+
+// HE-104: a listener takes a message of at most 16 MiB, and an RPC answer (a big board's snapshot) can be longer. A pipe
+// told to split cuts an RPC socket's frames into parts its NDJSON joins again.
+describe("a pipe that splits an RPC socket's frames (HE-104)", () => {
+  it("cuts strings between surrogate pairs and bytes anywhere; NDJSON joins the parts", () => {
+    const line = `${JSON.stringify({ text: "a😀".repeat(5) })}\n`
+    const parts = splitFrame(line, 3)
+    assert.isAbove(parts.length, 1)
+    assert.strictEqual(parts.join(""), line)
+    for (const part of parts) {
+      assert.isString(part)
+      if (typeof part === "string") assert.isFalse(/[\uD800-\uDBFF]$/.test(part), "a part never ends half way through a pair")
+    }
+    const parser = RpcSerialization.makeNdjson().makeUnsafe()
+    assert.deepStrictEqual(parts.flatMap((part) => parser.decode(part)), [{ text: "a😀".repeat(5) }])
+    const bytes = new TextEncoder().encode(line)
+    const cut = splitFrame(bytes, 5)
+    const byteParser = RpcSerialization.makeNdjson().makeUnsafe()
+    assert.deepStrictEqual(cut.flatMap((part) => byteParser.decode(part)), [{ text: "a😀".repeat(5) }])
+    assert.deepStrictEqual(splitFrame("short", 10), ["short"])
+  })
+
+  it.live(
+    "a 20 MiB message reaches a listener that takes 16 MiB, in parts that join to it",
+    () =>
+      Effect.gen(function* () {
+        // As an answer to a peer's request for a socket: this host's own RPC (`sender`), dialled, piped to the peer's
+        // listener (`receiver`), dialled too.
+        const sender = yield* hostServer(false)
+        const receiver = yield* hostServer(false)
+        const line = `${JSON.stringify({ snapshot: "x".repeat(20 * 1024 * 1024) })}\n`
+        yield* pipe(yield* dial(sender.url), yield* dial(receiver.url), { split: SPLIT_AT }).pipe(Effect.forkScoped)
+        const from = yield* sender.connected
+        const to = yield* receiver.connected
+        const joined = Effect.callback<string, string>((resume) => {
+          let got = ""
+          to.on("message", (data: Uint8Array) => {
+            got += data.toString()
+            if (got.length >= line.length) resume(Effect.succeed(got))
+          })
+          to.once("close", (code: number) => resume(Effect.fail(`closed with ${code}`)))
+        })
+        from.send(line)
+        assert.strictEqual(yield* joined, line)
+      }).pipe(Effect.scoped),
+    60_000,
+  )
+
+  it("speaksRpc: the RPC and a relay's socket, not a terminal's or a browser's", () => {
+    assert.deepStrictEqual(
+      ["/api/rpc", `/api/relay/${"a".repeat(64)}`, "/api/terminal/t1", "/api/browser/b1"].map(speaksRpc),
+      [true, true, false, false],
+    )
+  })
 })

@@ -1,3 +1,5 @@
+import { RpcSerialization } from "effect/rpc"
+
 /** The most one message to a socket the server accepts may hold, inflated: RPC's own limit (`RpcSerialization`). */
 export const MAX_MESSAGE = 16 * 1024 * 1024
 
@@ -14,3 +16,11 @@ export const MAX_MESSAGE = 16 * 1024 * 1024
  * (`paneParts` in `@huntaway/shared`, joined by `browser/viewer.ts`'s `paneText`).
  */
 export const websocketOptions = { perMessageDeflate: { threshold: 1024 }, maxPayload: MAX_MESSAGE } as const
+
+/**
+ * The RPC serialization the server's own RPC reads requests with (`Main.ts`, `ReadOnlyMain.ts`): NDJSON that takes a
+ * line of at most `MAX_MESSAGE`, as Effect's default did. Clients take far longer answers (`RpcNdjson` in contracts, a
+ * board's snapshot), but a request is never that long, and the parser holds what comes before a newline: at RPC's
+ * client limit, a socket that hadn't sent a token yet could have the server hold 512 MiB.
+ */
+export const RpcNdjsonServer = RpcSerialization.layerNdjsonWith({ maxBufferSize: MAX_MESSAGE })

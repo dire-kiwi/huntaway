@@ -8,7 +8,7 @@ export const BoardHandlers = BoardRpcs.toLayer(
     const board = yield* Board
     const pullRequests = yield* PullRequests
     return BoardRpcs.of({
-      "board.watch": ({ since }) => board.watch(since),
+      "board.watch": ({ since, events_only }) => board.watch(events_only === true ? "events" : since),
       "board.previewStatus": ({ url }) =>
         url.startsWith("http://") || url.startsWith("https://")
           ? pullRequests.previewStatus(url)
