@@ -33,8 +33,12 @@ export const layerRpcWebSocketConstructor: Layer.Layer<Socket.WebSocketConstruct
     : new NodeWS.WebSocket(url, options.protocols, { headers: options.headers, maxPayload: RPC_MAX_MESSAGE }),
 )
 
-/** Whether the socket at `path` speaks RPC (its own, or a relay's), so its frames may be cut anywhere: see `splitFrame`. */
-export const speaksRpc = (path: string): boolean => path === "/api/rpc" || path.startsWith("/api/relay/")
+/**
+ * Whether the socket at `path` speaks RPC, so its frames may be cut anywhere: see `splitFrame`. Not a relay's
+ * (`/api/relay/<ticket>`, a mesh hop): its ticket may be for a terminal's or a browser's socket, whose frames are
+ * messages.
+ */
+export const speaksRpc = (path: string): boolean => path === "/api/rpc"
 
 /**
  * The longest frame a splitting pipe passes on whole: 4 Mi string code units, at most 12 MiB as UTF-8, or 4 MiB of

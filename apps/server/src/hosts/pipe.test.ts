@@ -325,7 +325,7 @@ describe("a pipe that splits an RPC socket's frames (HE-104)", () => {
     60_000,
   )
 
-  it("speaksRpc: the RPC and a relay's socket, not a terminal's or a browser's", () => {
-    assert.deepStrictEqual(["/api/rpc", `/api/relay/${"a".repeat(64)}`, "/api/terminal/t1", "/api/browser/b1"].map(speaksRpc), [true, true, false, false])
+  it("speaksRpc: the RPC, not a relay's socket (a hop's ticket may be a browser's), a terminal's or a browser's", () => {
+    assert.deepStrictEqual(["/api/rpc", `/api/relay/${"a".repeat(64)}`, "/api/terminal/t1", "/api/browser/b1"].map(speaksRpc), [true, false, false, false])
   })
 })

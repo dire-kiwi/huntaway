@@ -434,9 +434,12 @@ Two things in this design were read in Effect's source but not run, and M7 start
    A listener takes a message of at most 16 MiB (`http/websocket.ts`), and the socket a host opens for its peer's
    request (`/api/link/stream/<id>`) is accepted by the peer's listener, so an RPC answer longer than that (a big
    board's snapshot, on its way to the hub or through the relay) was closed with 1009 (HE-104). The pipe that answers
-   (`Hubs.answer`, `LinkConnections.answer`) cuts an RPC or relay socket's frames into parts of 4 Mi code units
+   (`Hubs.answer`, `LinkConnections.answer`) cuts an RPC socket's frames (`/api/rpc`) into parts of 4 Mi code units
    (`splitFrame`, never inside a surrogate pair); RPC's NDJSON joins the parts of a line however they are cut. A
-   terminal's or browser's socket keeps its frames whole. The `ws` clients of links (`dial`, the peer RPC client) take
+   terminal's or browser's socket keeps its frames whole, and so does a mesh hop's (`/api/relay/<ticket>`): the hop
+   can't tell from the path whether its ticket is for an RPC session or a browser's or terminal's socket, so an RPC
+   answer over 16 MiB through a hop into a host that dialled in is still closed (not fixed: it needs the ticket's path
+   at the answering pipe). The `ws` clients of links (`dial`, the peer RPC client) take
    a message as long as RPC does (`RPC_MAX_MESSAGE`), not `ws`'s 100 MiB.
 
 As built (7.0): the seal is MAC'd with the board token of the host that serves the socket, always. A hub that dials a
