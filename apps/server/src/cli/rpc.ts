@@ -13,10 +13,7 @@ export const CliRpcs = PublicRpcs.merge(HostRpcs, HubRpcs)
 /** What the typed client needs to reach a server at `url` (`http://host:port`) over HTTP, with its board token. */
 export const httpRpcClientLayer = (url: string, token: string) =>
   Layer.mergeAll(
-    RpcClient.layerProtocolHttp({ url: `${url.replace(/\/+$/, "")}/api/rpc` }).pipe(
-      Layer.provide(FetchHttpClient.layer),
-      Layer.provide(RpcNdjson),
-    ),
+    RpcClient.layerProtocolHttp({ url: `${url.replace(/\/+$/, "")}/api/rpc` }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(RpcNdjson)),
     RpcMiddleware.layerClient(Auth, ({ next, request }) => next({ ...request, headers: Headers.set(request.headers, "authorization", `Bearer ${token}`) })),
   )
 

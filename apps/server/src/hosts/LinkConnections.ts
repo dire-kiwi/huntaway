@@ -24,7 +24,19 @@ import { Headers } from "effect/http"
 import { RpcClient, RpcMiddleware } from "effect/rpc"
 import type { Rpc, RpcClientError, RpcGroup } from "effect/rpc"
 import { Socket } from "effect/socket"
-import { Auth, boardScopes, Capability, HostOffline, LinkId, LinkRefused, LINK_HEADER, PROTOCOL, PeerRpcs, RpcNdjson, SESSION_HEADER } from "@huntaway/contracts"
+import {
+  Auth,
+  boardScopes,
+  Capability,
+  HostOffline,
+  LinkId,
+  LinkRefused,
+  LINK_HEADER,
+  PROTOCOL,
+  PeerRpcs,
+  RpcNdjson,
+  SESSION_HEADER,
+} from "@huntaway/contracts"
 import type { AssertedSession, HostInfo, LinkHello, LinkStatus, OpenStream, SessionShape, Timestamp } from "@huntaway/contracts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { Events } from "../platform/Events.ts"
