@@ -1,12 +1,18 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Layer, Stream } from "effect"
 import { SecureRandom } from "effect/crypto"
-import { ProjectId } from "@huntaway/contracts"
+import { AgentConfigId, ProjectId, TaskId } from "@huntaway/contracts"
 import { Db } from "./Db.ts"
-import { BACKLOG, Events } from "./Events.ts"
+import { BACKLOG, Events, keep, TAIL } from "./Events.ts"
+import type { Tail } from "./Events.ts"
 
 const TestLive = Events.layer.pipe(Layer.provideMerge(Db.layerMemory), Layer.provideMerge(SecureRandom.layerWebCrypto))
 const gone = (id: string) => ({ type: "project_deleted" as const, id: ProjectId.make(id) })
+const taskGone = (id: string) => ({ type: "task_deleted" as const, id: TaskId.make(id), project_id: null })
+const usage = (config: string, plan: string) => ({
+  type: "usage" as const,
+  usage: { config_id: AgentConfigId.make(config), limits: [], plan, updated_at: null, error: null, out_until: null, accounts: null },
+})
 
 describe("Events", () => {
   it.effect("numbers events and delivers them to a subscriber", () =>
@@ -79,4 +85,59 @@ describe("Events", () => {
       assert.strictEqual(seen.at(-1)?.type, "resync")
     }).pipe(Effect.scoped, Effect.provide(TestLive)),
   )
+
+  it.effect("a replay leaves out an event a later one with the same task or config replaces (HE-104)", () =>
+    Effect.gen(function* () {
+      const events = yield* Events
+      yield* events.emit(usage("c1", "pro")) // 1
+      yield* events.emit(gone("p")) // 2
+      yield* events.emit(taskGone("t1")) // 3
+      yield* events.emit(usage("c1", "max")) // 4, replaces 1
+      yield* events.emit(usage("c2", "pro")) // 5
+      yield* events.emit(taskGone("t1")) // 6, replaces 3
+      const all = yield* events.watch({ boot: events.boot, seq: 0 })
+      assert.deepStrictEqual(
+        all.replay?.map((e) => e.seq),
+        [2, 4, 5, 6],
+      )
+      const later = yield* events.watch({ boot: events.boot, seq: 3 })
+      assert.deepStrictEqual(
+        later.replay?.map((e) => e.seq),
+        [4, 5, 6],
+      )
+    }).pipe(Effect.scoped, Effect.provide(TestLive)),
+  )
+
+  it.effect("keeps TAIL events besides those replaced; a since before the oldest dropped can't be replayed", () =>
+    Effect.gen(function* () {
+      const events = yield* Events
+      // Replaced ones don't count: a task changing again and again leaves room for every other event.
+      for (let i = 0; i < 3 * TAIL; i++) yield* events.emit(taskGone("busy"))
+      for (let i = 0; i < TAIL - 1; i++) yield* events.emit(gone(String(i)))
+      const whole = yield* events.watch({ boot: events.boot, seq: 0 })
+      assert.strictEqual(whole.replay?.length, TAIL)
+      assert.strictEqual(whole.replay?.[0]?.seq, 3 * TAIL)
+      // One more drops the oldest kept (the busy task's last), which a `since` before it needed.
+      yield* events.emit(gone("last"))
+      assert.strictEqual((yield* events.watch({ boot: events.boot, seq: 3 * TAIL - 1 })).replay, null)
+      const after = yield* events.watch({ boot: events.boot, seq: 3 * TAIL })
+      assert.strictEqual(after.replay?.length, TAIL)
+      assert.strictEqual(after.replay?.at(-1)?.seq, 4 * TAIL)
+    }).pipe(Effect.scoped, Effect.provide(TestLive)),
+  )
+
+  it("holds no more than TAIL events under mixed traffic: a replaced one goes at once", () => {
+    const tail: Tail = { events: new Map(), latest: new Map(), floor: 0 }
+    let most = 0
+    // Half of the events are three busy tasks' changes, half are other events.
+    for (let seq = 1; seq <= 4 * TAIL; seq++) {
+      keep(tail, seq % 2 === 0 ? { ...taskGone(`busy-${seq % 3}`), seq } : { ...gone(String(seq)), seq })
+      most = Math.max(most, tail.events.size)
+    }
+    assert.strictEqual(most, TAIL)
+    const busy = [...tail.events.values()].filter((e) => e.type === "task_deleted")
+    assert.strictEqual(busy.length, 3, "one of each busy task")
+    assert.strictEqual(tail.latest.size, 3)
+    assert.isBelow(tail.floor, Math.min(...tail.events.keys()))
+  })
 })

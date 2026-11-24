@@ -164,7 +164,7 @@ transaction, instead of in every client.
 
 ```ts
 Rpc.make("board.watch", {
-  payload: { since: Schema.optional(Schema.Struct({ boot: Schema.String, seq: Schema.Int })) },
+  payload: { since: Schema.optional(Schema.Struct({ boot: Schema.String, seq: Schema.Int })), events_only: Schema.optional(Schema.Boolean) },
   success: Schema.Union([BoardSnapshot, BoardEvent]),
   stream: true
 })
@@ -175,7 +175,13 @@ Rpc.make("board.watch", {
   projects, archived_projects, tasks, pens, settings, usage, approvals }`: everything the board store holds for this
   host, read in one transaction, so it is exactly the state at `seq`. Then every event after `seq`.
 - **With a `since` from this boot that the server's buffer still covers**, the events after it and nothing else.
-  The `Events` service keeps the last few thousand events in memory for this.
+  The `Events` service keeps the last few thousand events in memory for this (`TAIL`, 5,000). A `task`, `task_deleted`
+  or `usage` event replaces an earlier one about the same task or agent config there (`replacedBy`, HE-104): each says
+  all of what it is about, and a running agent's task changes many times a minute, so the tail was mostly old copies of
+  a few tasks. A replay can skip numbers; a client takes each event above its `seq` as it comes.
+- **With `events_only: true`**, `hello` and then only the events after it: no snapshot, no replay. For a server
+  watching a peer's events (settings sync, [08-hosts.md](08-hosts.md#events-for-things-that-watch-every-host)); an
+  older host ignores it and sends the snapshot.
 - A subscriber that falls too far behind gets `resync` and the stream ends; the client subscribes
   again without `since`.
 

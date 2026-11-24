@@ -1,4 +1,3 @@
-import * as NodeWS from "@effect/platform-node/NodeWS"
 import {
   Clock,
   Context,
@@ -44,7 +43,7 @@ import { Identity } from "../platform/Identity.ts"
 import { About } from "../settings/About.ts"
 import { LinkRepo } from "./LinkRepo.ts"
 import type { LinkRow } from "./LinkRepo.ts"
-import { dial, pipe } from "./pipe.ts"
+import { dial, layerRpcWebSocketConstructor, pipe, speaksRpc, SPLIT_AT } from "./pipe.ts"
 import type { Pipeable } from "./pipe.ts"
 import { SessionSeal } from "./SessionSeal.ts"
 import { Ssh } from "./Ssh.ts"
@@ -209,7 +208,7 @@ const clientOver = <E>(socket: Layer.Layer<Socket.Socket, E>, token: string, dis
  * request, in the current scope; `disconnected` is done when its connection ends (or never came up).
  */
 export const peerClient = (url: string, headers: Readonly<Record<string, string>>, token: string, disconnected: Deferred.Deferred<void>) =>
-  clientOver(Socket.layerWebSocket(url, { headers, openTimeout: "30 seconds" }).pipe(Layer.provide(NodeWS.layerWebSocketConstructor)), token, disconnected)
+  clientOver(Socket.layerWebSocket(url, { headers, openTimeout: "30 seconds" }).pipe(Layer.provide(layerRpcWebSocketConstructor)), token, disconnected)
 
 const socketError = (cause: unknown) => new Socket.SocketError({ reason: new Socket.SocketOpenError({ kind: "Unknown", cause }) })
 
@@ -324,7 +323,7 @@ export class LinkConnections extends Context.Service<
         Effect.gen(function* () {
           const here = yield* self(request.path, request.session, peer)
           const end = yield* there(`/api/link/stream/${request.id}`)
-          yield* pipe(end, here)
+          yield* pipe(end, here, speaksRpc(request.path) ? { split: SPLIT_AT } : {})
         }).pipe(Effect.scoped, Effect.ignore)
 
       /** Connected (or `needs_update`): its state, and its heard time kept current while it lasts (scoped). */

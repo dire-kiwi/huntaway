@@ -3,8 +3,9 @@ import * as NodeWS from "@effect/platform-node/NodeWS"
 import { assert, describe, it } from "@effect/vitest"
 import { Deferred, Effect, Layer } from "effect"
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
+import { RpcSerialization } from "effect/rpc"
 import { createServer } from "node:http"
-import { MAX_MESSAGE, websocketOptions } from "./websocket.ts"
+import { MAX_MESSAGE, RpcNdjsonServer, websocketOptions } from "./websocket.ts"
 
 // The listeners' websocket options (HE-71): a deflated message that would inflate past `MAX_MESSAGE` is refused with
 // 1009 before it is inflated, from a socket nothing has authenticated; one under it arrives, deflated.
@@ -75,5 +76,19 @@ describe("the listeners' websocket options", () => {
         assert.strictEqual(yield* Deferred.await(received), MAX_MESSAGE)
       }).pipe(Effect.provide(served(received)))
     }).pipe(Effect.scoped),
+  )
+})
+
+// HE-104: the server reads requests with Effect's old 16 MiB line limit, not a client's 512 MiB: messages with no newline
+// from a socket that hasn't sent a token are not held past it.
+describe("RpcNdjsonServer", () => {
+  it.effect("refuses a request line longer than MAX_MESSAGE, sent in parts", () =>
+    Effect.gen(function* () {
+      const parser = (yield* RpcSerialization.RpcSerialization).makeUnsafe()
+      const part = "x".repeat(MAX_MESSAGE / 2)
+      parser.decode(`{"a":"${part}`)
+      assert.throws(() => parser.decode(`${part}"}\n`))
+      assert.deepStrictEqual(parser.decode('{"a":1}\n'), [{ a: 1 }])
+    }).pipe(Effect.provide(RpcNdjsonServer)),
   )
 })

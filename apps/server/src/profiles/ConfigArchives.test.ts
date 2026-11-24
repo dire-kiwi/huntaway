@@ -5,7 +5,7 @@ import { Digest } from "effect/crypto"
 import { tempDir, TestBoard } from "@huntaway/testing"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { AgentConfigs } from "./AgentConfigs.ts"
-import { ConfigArchives, decodeArchive } from "./ConfigArchives.ts"
+import { ConfigArchives, decodeArchive, MAX_ARCHIVE } from "./ConfigArchives.ts"
 
 // A config's login and settings exported from one folder and imported into another (the old `api/claude_configs.ts`
 // archives, which the old suite only reached through its HTTP routes' auth checks).
@@ -97,6 +97,16 @@ describe("ConfigArchives", () => {
       yield* archives.importArchive(acpTo.id, acpOut.archive, false)
       assert.isTrue(yield* fsDo((fs) => fs.exists(`${dir}/gemini2/antigravity-acp/acp_token.json`)))
       assert.strictEqual((yield* Effect.flip(archives.importArchive(acpTo.id, acpOut.archive, false)))._tag, "Conflict")
+      // HE-104: one that packs to more than another host takes in one call is refused, not read whole into memory.
+      yield* fsDo((fs) => fs.makeDirectory(`${dir}/big/skills`, { recursive: true }))
+      const noise = new Uint8Array(MAX_ARCHIVE + 1024 * 1024)
+      for (let i = 0; i < noise.length; i += 65536) crypto.getRandomValues(noise.subarray(i, i + 65536))
+      yield* fsDo((fs) => fs.writeFile(`${dir}/big/skills/noise`, noise))
+      yield* fsDo((fs) => fs.writeFileString(`${dir}/big/.credentials.json`, "{}"))
+      const big = yield* configs.create({ name: "big", config_dir: `${dir}/big` })
+      const tooBig = yield* Effect.flip(archives.exportArchive(big.id))
+      assert.strictEqual(tooBig._tag, "Invalid")
+      assert.include(tooBig._tag === "Invalid" ? tooBig.reason : "", "more than")
     }).pipe(Effect.provide(TestBoard()), Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 

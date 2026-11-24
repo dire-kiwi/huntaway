@@ -8,7 +8,7 @@ import { elapsedMs, Telemetry } from "../platform/Telemetry.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { savedFor, TokenRepo } from "./TokenRepo.ts"
 import type { PendingRun, Saved } from "./TokenRepo.ts"
-import { claudeLineCounts, codexLineCounts, countAcp, countClaude, countCodex, counted, rolloutModel, startedThread } from "./tokens/count.ts"
+import { claudeCounter, claudeLineCounts, codexLineCounts, countAcp, countClaude, countCodex, counted, rolloutModel, startedThread } from "./tokens/count.ts"
 import type { Before, Counted, Earlier } from "./tokens/count.ts"
 import { counts, countsFromJson, scale } from "./tokens/counts.ts"
 import type { ByModel } from "./tokens/counts.ts"
@@ -86,6 +86,20 @@ export class Tokens extends Context.Service<Tokens, TokensShape>()("huntaway-ser
           Stream.runCollect,
           Effect.orElseSucceed((): ReadonlyArray<string> => []),
         )
+
+      /** A Claude run's count from its output, read a line at a time (`claudeCounter`); from no lines if it can't be read. */
+      const claudeCount = (path: string, earlier: Earlier) =>
+        Effect.suspend(() => {
+          const counter = claudeCounter(earlier)
+          return fs.stream(path).pipe(
+            Stream.decodeText(),
+            Stream.splitLines,
+            Stream.filter(claudeLineCounts),
+            Stream.runForEach((line) => Effect.sync(() => counter.line(line))),
+            Effect.map(() => counter.done()),
+            Effect.orElseSucceed(() => countClaude([], earlier)),
+          )
+        })
 
       const readJson = <A>(path: string, schema: Schema.Codec<A, string>) =>
         fs.readFileString(path).pipe(
@@ -177,7 +191,7 @@ export class Tokens extends Context.Service<Tokens, TokensShape>()("huntaway-ser
         } else if (yield* exists(`${dir}/acp.json`)) {
           result = countAcp(yield* linesOf(outFile, codexLineCounts), yield* acpModel(run, dir))
         } else {
-          result = countClaude(yield* linesOf(outFile, claudeLineCounts), earlier)
+          result = yield* claudeCount(outFile, earlier)
           // More than the board charged the run: it was counted from nothing, its session's earlier runs' totals being gone.
           const cost = Object.values(result.models).reduce((s, c) => s + c.cost, 0)
           if (run.cost_usd > 0 && cost > run.cost_usd * 1.05 + 0.01) {

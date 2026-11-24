@@ -11,11 +11,16 @@ export type PreviewStatus = typeof PreviewStatus.Type
 /**
  * The board's subscription (docs/plan/05-protocol.md, The board): `hello`, then a `snapshot` (or, with a `since` this
  * boot can still replay, only the events after it), then every event. A subscriber that falls too far behind gets
- * `resync` and the stream ends.
+ * `resync` and the stream ends. With `events_only`, `hello` and then only the events after it: no snapshot and no replay,
+ * for a server that watches a peer's events (settings sync) and keeps none of its board. Older hosts ignore it and send
+ * the snapshot.
  */
 export class BoardRpcs extends RpcGroup.make(
   Rpc.make("board.watch", {
-    payload: { since: Schema.optional(Schema.Struct({ boot: Schema.String, seq: Schema.Int })) },
+    payload: {
+      since: Schema.optional(Schema.Struct({ boot: Schema.String, seq: Schema.Int })),
+      events_only: Schema.optional(Schema.Boolean),
+    },
     success: BoardMessage,
     stream: true,
   }).annotate(RequiredScope, "read"),

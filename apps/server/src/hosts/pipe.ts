@@ -1,7 +1,8 @@
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest"
 import * as NodeWS from "@effect/platform-node/NodeWS"
-import { Effect } from "effect"
+import { Array as Arr, Effect, Layer } from "effect"
 import type { Duration } from "effect"
+import { RPC_MAX_MESSAGE } from "@huntaway/contracts"
 import { HttpServerRequest } from "effect/http"
 import type { HttpServerError } from "effect/http"
 import { Socket } from "effect/socket"
@@ -16,7 +17,55 @@ import { Socket } from "effect/socket"
 // connection's buffer stays empty until it is deflated, so the wait for a drain doesn't see it: a sender faster than
 // zlib is read as fast as it sends, into that queue. The listeners offer deflate (`http/websocket.ts`), so `accept`
 // takes the extension out of the request before it upgrades, and `dial` doesn't offer it.
+//
+// A listener takes a message of at most 16 MiB (`http/websocket.ts`), but an RPC answer can be far longer (a big
+// board's snapshot). A pipe into a peer's listener (an answer to its request for a socket) is told to `split` an RPC
+// socket's frames: RPC's NDJSON joins the parts of a line however it is cut (`splitFrame`). `dial` takes a message as
+// long as RPC does, for the same answers coming the other way.
 
+/**
+ * `NodeWS.layerWebSocketConstructor` taking a message as long as RPC does: `ws`'s own limit is 100 MiB, less than RPC's
+ * (`RPC_MAX_MESSAGE`). For the RPC clients of links (`LinkConnections`, `Hubs`).
+ */
+export const layerRpcWebSocketConstructor: Layer.Layer<Socket.WebSocketConstructor> = Layer.succeed(Socket.WebSocketConstructor)((url, options) =>
+  options === undefined || typeof options === "string" || Array.isArray(options)
+    ? new NodeWS.WebSocket(url, options, { maxPayload: RPC_MAX_MESSAGE })
+    : new NodeWS.WebSocket(url, options.protocols, { headers: options.headers, maxPayload: RPC_MAX_MESSAGE }),
+)
+
+/**
+ * Whether the socket at `path` speaks RPC, so its frames may be cut anywhere: see `splitFrame`. Not a relay's
+ * (`/api/relay/<ticket>`, a mesh hop): its ticket may be for a terminal's or a browser's socket, whose frames are
+ * messages.
+ */
+export const speaksRpc = (path: string): boolean => path === "/api/rpc"
+
+/**
+ * The longest frame a splitting pipe passes on whole: 4 Mi string code units, at most 12 MiB as UTF-8, or 4 MiB of
+ * bytes. Within a listener's 16 MiB.
+ */
+export const SPLIT_AT = 4 * 1024 * 1024
+
+/**
+ * `frame` cut in parts of at most `max` code units (a string, never between the two halves of a surrogate pair) or bytes,
+ * for an RPC socket: its NDJSON joins the parts of a line, and decodes bytes as one stream.
+ */
+export const splitFrame = (frame: string | Uint8Array, max: number = SPLIT_AT): Arr.NonEmptyReadonlyArray<string | Uint8Array> => {
+  const length = typeof frame === "string" ? frame.length : frame.byteLength
+  if (length <= max) return [frame]
+  const parts: Array<string | Uint8Array> = []
+  let start = 0
+  while (start < length) {
+    let end = Math.min(start + max, length)
+    if (typeof frame === "string") {
+      const last = frame.charCodeAt(end - 1)
+      if (end < length && last >= 0xd800 && last <= 0xdbff) end -= 1
+      parts.push(frame.slice(start, end))
+    } else parts.push(frame.subarray(start, end))
+    start = end
+  }
+  return Arr.isArrayNonEmpty(parts) ? parts : [frame]
+}
 /** The connection under a websocket: what a write waits on to drain. A Node `net.Socket` is one. */
 export interface Transport {
   readonly writableNeedDrain: boolean
@@ -80,7 +129,11 @@ export const dial = (
     const socket = yield* Socket.fromWebSocket(
       Effect.acquireRelease(
         Effect.sync(() => {
-          const ws = new NodeWS.WebSocket(url, [...(options.protocols ?? [])], { headers: { ...options.headers }, perMessageDeflate: false })
+          const ws = new NodeWS.WebSocket(url, [...(options.protocols ?? [])], {
+            headers: { ...options.headers },
+            perMessageDeflate: false,
+            maxPayload: RPC_MAX_MESSAGE,
+          })
           ws.once("upgrade", (response) => {
             under.current = response.socket
             options.onOpen?.(response.socket)
@@ -111,14 +164,18 @@ const endedBy = (error: Socket.SocketError): Ended =>
     ? { code: error.reason.code, reason: error.reason.closeReason ?? "" }
     : { code: 1011, reason: error.reason._tag === "SocketOpenError" ? "could not connect" : "connection lost" }
 
-/** Copies `from`'s frames to `to` until `from` ends, then closes `to` as `from` was closed. */
-const forward = (from: Pipeable, to: Pipeable, onWrite: (bytes: number) => Effect.Effect<void>): Effect.Effect<Ended> =>
+/**
+ * Copies `from`'s frames to `to` until `from` ends, then closes `to` as `from` was closed. With `split`, frames longer
+ * than it are cut (`splitFrame`).
+ */
+const forward = (from: Pipeable, to: Pipeable, onWrite: (bytes: number) => Effect.Effect<void>, split: number | undefined): Effect.Effect<Ended> =>
   Effect.gen(function* () {
     const reader = yield* from.socket.reader
     const writer = yield* to.socket.writer
     const ended = yield* Effect.gen(function* () {
       for (;;) {
-        const frames = yield* reader.pull
+        const pulled = yield* reader.pull
+        const frames = split === undefined ? pulled : Arr.flatMap(pulled, (frame) => splitFrame(frame, split))
         yield* writer.writeAll(frames)
         yield* onWrite(frames.reduce((n, frame) => n + (typeof frame === "string" ? frame.length : frame.byteLength), 0))
         yield* drained(to.transport())
@@ -133,9 +190,13 @@ const forward = (from: Pipeable, to: Pipeable, onWrite: (bytes: number) => Effec
 
 /**
  * Pipes `a` and `b` both ways until either closes, then closes the other with the same code and reason. `onWrite` is
- * told the size of each batch written (tests watch it).
+ * told the size of each batch written (tests watch it). `split` cuts longer frames (`splitFrame`): only for RPC.
  */
-export const pipe = (a: Pipeable, b: Pipeable, options: { readonly onWrite?: (bytes: number) => Effect.Effect<void> } = {}): Effect.Effect<Ended> => {
+export const pipe = (
+  a: Pipeable,
+  b: Pipeable,
+  options: { readonly onWrite?: (bytes: number) => Effect.Effect<void>; readonly split?: number } = {},
+): Effect.Effect<Ended> => {
   const onWrite = options.onWrite ?? (() => Effect.void)
-  return Effect.raceFirst(forward(a, b, onWrite), forward(b, a, onWrite))
+  return Effect.raceFirst(forward(a, b, onWrite, options.split), forward(b, a, onWrite, options.split))
 }

@@ -8,5 +8,8 @@ import { RpcSerialization } from "effect/rpc"
  */
 export const RPC_MAX_MESSAGE = 512 * 1024 * 1024
 
-/** The RPC serialization every client and server of the board's RPC uses: NDJSON that takes a message up to `RPC_MAX_MESSAGE`. */
+/**
+ * The RPC serialization every client of the board's RPC uses: NDJSON that takes a message up to `RPC_MAX_MESSAGE`. A
+ * server reads requests with a smaller limit (`RpcNdjsonServer` in the server's `http/websocket.ts`).
+ */
 export const RpcNdjson = RpcSerialization.layerNdjsonWith({ maxBufferSize: RPC_MAX_MESSAGE })

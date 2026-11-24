@@ -8,7 +8,7 @@ import { ServerConfig } from "../platform/ServerConfig.ts"
 import { About } from "../settings/About.ts"
 import { helloOf, LinkConnections, peerClient, STREAM_PATH, wsUrl } from "./LinkConnections.ts"
 import type { PeerClient } from "./LinkConnections.ts"
-import { dial, pipe } from "./pipe.ts"
+import { dial, pipe, speaksRpc, SPLIT_AT } from "./pipe.ts"
 import { SessionSeal } from "./SessionSeal.ts"
 
 // This host as a host of other hubs (`--hub URL[,URL] --hub-token T`; docs/plan/08-hosts.md, dial-in): for each hub,
@@ -70,7 +70,7 @@ export class Hubs extends Context.Service<
           const sealed = yield* seal.seal(identity.token, request.session)
           const here = yield* dial(wsUrl(local, request.path), { headers: { [LINK_HEADER]: hub.host_id, [SESSION_HEADER]: sealed } })
           const there = yield* dial(wsUrl(url, `/api/link/stream/${request.id}`), { headers: { authorization: `Bearer ${hubToken}` } })
-          yield* pipe(there, here)
+          yield* pipe(there, here, speaksRpc(request.path) ? { split: SPLIT_AT } : {})
         })
 
       /** One connection to the hub at `url`, until it ends. */

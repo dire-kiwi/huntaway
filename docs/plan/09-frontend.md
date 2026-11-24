@@ -93,7 +93,11 @@ export interface HostBoard {
 `hostBoardAtom(host)` is `hostRuntime(host).atom(stream)` where the stream is `board.watch` folded with
 `applyBoardEvent`, a pure reducer that keeps every unchanged object identical. On a reconnect it resubscribes with
 the last `{ boot, seq }` and continues, or receives a fresh snapshot. A host that goes offline keeps showing what it
-had, marked stale, which is the old "a failed request must not empty a host's board".
+had, marked stale, which is the old "a failed request must not empty a host's board". A subscription that ends before
+anything after `hello` (and wasn't a resume with nothing owed: `hello` at the board's own boot and seq) waits 1 s
+before the next, twice as long each time up to 30 s (HE-104): a client that couldn't
+read a snapshot (it was over RPC's then 16 MiB limit) asked again at once, for ever, and the host built and sent the
+whole board each time until it ran out of memory.
 
 `boardAtom` merges the hosts into the shape the components read today:
 
@@ -1089,7 +1093,8 @@ and 100 ms (on localhost, under 0.1 s either way). Three changes:
   browser), except the relay's piped ones (`hosts/pipe.ts`): `ws` queues a frame for zlib before it reaches the
   connection, out of sight of the pipe's wait for a drain, so a fast sender would be read into memory. `accept` takes
   the extension out of the upgrade request and `dial` doesn't offer it; `pipe.test.ts` runs its hub with these options.
-  A message is at most 16 MiB inflated (`maxPayload`, RPC's own limit; 1009 past it): `/api/rpc` upgrades before any
+  A message is at most 16 MiB inflated (`maxPayload`, the limit the server's RPC reads a request with,
+  `RpcNdjsonServer`; 1009 past it; clients take answers up to 512 MiB, `RpcNdjson`): `/api/rpc` upgrades before any
   token, and `ws`'s default of 100 MiB let a few kilobytes deflated make the server allocate that much
   (`http/websocket.test.ts`). The desktop pane's DevTools answers can be bigger (a long diff's accessibility tree is
   tens of MiB), so the pane sends a message over 1 MiB as `{"parts":n}` and `n` binary parts of 1 MiB, up to 100
