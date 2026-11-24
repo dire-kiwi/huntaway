@@ -1,8 +1,8 @@
 import { Effect, Layer } from "effect"
 import { Headers } from "effect/http"
-import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
+import { RpcClient, RpcMiddleware } from "effect/rpc"
 import { Socket } from "effect/socket"
-import { Auth, type HostId, type Unavailable } from "@huntaway/contracts"
+import { Auth, type HostId, RpcNdjson, type Unavailable } from "@huntaway/contracts"
 import { ClientRpcs, HostClient } from "./HostClient.ts"
 import { HostSession } from "./HostSession.ts"
 
@@ -25,11 +25,7 @@ export const socketSession = <E, R>(socket: Layer.Layer<Socket.Socket, E, R>, to
       return { onConnect: Effect.asVoid(connected.open), onDisconnect: Effect.asVoid(connected.close) }
     }),
   )
-  const protocol = RpcClient.layerProtocolSocket({ retryTransientErrors: true }).pipe(
-    Layer.provide(socket),
-    Layer.provide(RpcSerialization.layerNdjson),
-    Layer.provide(hooks),
-  )
+  const protocol = RpcClient.layerProtocolSocket({ retryTransientErrors: true }).pipe(Layer.provide(socket), Layer.provide(RpcNdjson), Layer.provide(hooks))
   // No token, no header: a relayed session's requests carry nothing of the hub's (they cross to another host as they are).
   const auth = RpcMiddleware.layerClient(Auth, ({ next, request }) =>
     next(token === null ? request : { ...request, headers: Headers.set(request.headers, "authorization", `Bearer ${token}`) }),

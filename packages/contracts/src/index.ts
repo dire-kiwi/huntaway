@@ -8,6 +8,8 @@ export * from "./attachment.ts"
 // 6.5
 export * from "./automation.ts"
 export * from "./capabilities.ts"
+// The RPC serialization, with room for a big board's snapshot.
+export * from "./rpc/serialization.ts"
 // 6.10: computer use.
 export * from "./desktop.ts"
 // HE-91: paired devices.

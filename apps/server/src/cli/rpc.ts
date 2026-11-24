@@ -1,7 +1,7 @@
 import { Config, Console, Effect, FileSystem, Layer, Option, Path, Runtime, Schema, SchemaAST, Stream } from "effect"
 import { FetchHttpClient, Headers } from "effect/http"
-import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
-import { Auth, Forbidden, HostRpcs, HubRpcs, PublicRpcs, Unauthorized } from "@huntaway/contracts"
+import { RpcClient, RpcMiddleware } from "effect/rpc"
+import { Auth, Forbidden, HostRpcs, HubRpcs, PublicRpcs, RpcNdjson, Unauthorized } from "@huntaway/contracts"
 
 // `huntaway rpc <method> [json]` (docs/plan/05-protocol.md, The CLI as a client): one call to a test server over
 // `POST /api/rpc` with the typed client, for scripts and agents trying a change. It takes the place of the old
@@ -13,10 +13,7 @@ export const CliRpcs = PublicRpcs.merge(HostRpcs, HubRpcs)
 /** What the typed client needs to reach a server at `url` (`http://host:port`) over HTTP, with its board token. */
 export const httpRpcClientLayer = (url: string, token: string) =>
   Layer.mergeAll(
-    RpcClient.layerProtocolHttp({ url: `${url.replace(/\/+$/, "")}/api/rpc` }).pipe(
-      Layer.provide(FetchHttpClient.layer),
-      Layer.provide(RpcSerialization.layerNdjson),
-    ),
+    RpcClient.layerProtocolHttp({ url: `${url.replace(/\/+$/, "")}/api/rpc` }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(RpcNdjson)),
     RpcMiddleware.layerClient(Auth, ({ next, request }) => next({ ...request, headers: Headers.set(request.headers, "authorization", `Bearer ${token}`) })),
   )
 

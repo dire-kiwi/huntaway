@@ -1,9 +1,9 @@
 import { Deferred, Effect, FileSystem, Layer, Path, Ref, Schedule, Schema, Stream } from "effect"
 import { Headers } from "effect/http"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
-import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
+import { RpcClient, RpcMiddleware } from "effect/rpc"
 import { Socket } from "effect/socket"
-import { Auth } from "@huntaway/contracts"
+import { Auth, RpcNdjson } from "@huntaway/contracts"
 
 const launcher = new URL("../../bin/huntaway", import.meta.url)
 
@@ -123,7 +123,7 @@ export const socketRpcClientLayer = (port: number, token: string) =>
     RpcClient.layerProtocolSocket({ retryTransientErrors: true }).pipe(
       Layer.provide(Socket.layerWebSocket(`ws://127.0.0.1:${port}/api/rpc`)),
       Layer.provide(Socket.layerWebSocketConstructorGlobal),
-      Layer.provide(RpcSerialization.layerNdjson),
+      Layer.provide(RpcNdjson),
     ),
     RpcMiddleware.layerClient(Auth, ({ next, request }) => next({ ...request, headers: Headers.set(request.headers, "authorization", `Bearer ${token}`) })),
   )

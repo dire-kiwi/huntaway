@@ -3,7 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Layer } from "effect"
 import { Aead, Digest, Kdf, KeyAgreement, Mac, SecureRandom, Signature } from "effect/crypto"
 import { HttpRouter } from "effect/http"
-import { RpcSerialization, RpcServer } from "effect/rpc"
+import { RpcServer } from "effect/rpc"
 import { createServer } from "node:http"
 import {
   AdminRpcs,
@@ -42,6 +42,7 @@ import {
   TerminalRpcs,
   ThreadRpcs,
   ToolRpcs,
+  RpcNdjson,
   WorkflowRpcs,
 } from "@huntaway/contracts"
 import { AgentTools } from "./agents/AgentTools.ts"
@@ -414,7 +415,7 @@ export const ReadOnlyHandlers = ReadOnlyRpcHandlers.pipe(Layer.provideMerge(Auth
 export const ReadOnlyRpc = Layer.mergeAll(
   RpcServer.layerHttp({ group: ReadOnlyServed, path: "/api/rpc", protocol: "websocket" }),
   RpcServer.layerHttp({ group: ReadOnlyServed, path: "/api/rpc", protocol: "http" }),
-).pipe(Layer.provide(ReadOnlyHandlers), Layer.provide(RpcSerialization.layerNdjson))
+).pipe(Layer.provide(ReadOnlyHandlers), Layer.provide(RpcNdjson))
 
 /** The routes: the RPC, the health and the UI. No webhook, MCP, hook, OTLP, relay, link-stream or terminal path. */
 export const ReadOnlyRoutes = Layer.mergeAll(ReadOnlyRpc, HealthRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
