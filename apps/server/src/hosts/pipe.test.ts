@@ -276,7 +276,7 @@ describe("two piped websockets (7.0)", () => {
 // told to split cuts an RPC socket's frames into parts its NDJSON joins again.
 describe("a pipe that splits an RPC socket's frames (HE-104)", () => {
   it("cuts strings between surrogate pairs and bytes anywhere; NDJSON joins the parts", () => {
-    const line = `${JSON.stringify({ text: "a😀".repeat(5) })}\n`
+    const line = `{"text":"${"a😀".repeat(5)}"}\n`
     const parts = splitFrame(line, 3)
     assert.isAbove(parts.length, 1)
     assert.strictEqual(parts.join(""), line)
@@ -285,11 +285,17 @@ describe("a pipe that splits an RPC socket's frames (HE-104)", () => {
       if (typeof part === "string") assert.isFalse(/[\uD800-\uDBFF]$/.test(part), "a part never ends half way through a pair")
     }
     const parser = RpcSerialization.makeNdjson().makeUnsafe()
-    assert.deepStrictEqual(parts.flatMap((part) => parser.decode(part)), [{ text: "a😀".repeat(5) }])
+    assert.deepStrictEqual(
+      parts.flatMap((part) => parser.decode(part)),
+      [{ text: "a😀".repeat(5) }],
+    )
     const bytes = new TextEncoder().encode(line)
     const cut = splitFrame(bytes, 5)
     const byteParser = RpcSerialization.makeNdjson().makeUnsafe()
-    assert.deepStrictEqual(cut.flatMap((part) => byteParser.decode(part)), [{ text: "a😀".repeat(5) }])
+    assert.deepStrictEqual(
+      cut.flatMap((part) => byteParser.decode(part)),
+      [{ text: "a😀".repeat(5) }],
+    )
     assert.deepStrictEqual(splitFrame("short", 10), ["short"])
   })
 
@@ -301,7 +307,7 @@ describe("a pipe that splits an RPC socket's frames (HE-104)", () => {
         // listener (`receiver`), dialled too.
         const sender = yield* hostServer(false)
         const receiver = yield* hostServer(false)
-        const line = `${JSON.stringify({ snapshot: "x".repeat(20 * 1024 * 1024) })}\n`
+        const line = `{"snapshot":"${"x".repeat(20 * 1024 * 1024)}"}\n`
         yield* pipe(yield* dial(sender.url), yield* dial(receiver.url), { split: SPLIT_AT }).pipe(Effect.forkScoped)
         const from = yield* sender.connected
         const to = yield* receiver.connected
@@ -320,9 +326,6 @@ describe("a pipe that splits an RPC socket's frames (HE-104)", () => {
   )
 
   it("speaksRpc: the RPC and a relay's socket, not a terminal's or a browser's", () => {
-    assert.deepStrictEqual(
-      ["/api/rpc", `/api/relay/${"a".repeat(64)}`, "/api/terminal/t1", "/api/browser/b1"].map(speaksRpc),
-      [true, true, false, false],
-    )
+    assert.deepStrictEqual(["/api/rpc", `/api/relay/${"a".repeat(64)}`, "/api/terminal/t1", "/api/browser/b1"].map(speaksRpc), [true, true, false, false])
   })
 })

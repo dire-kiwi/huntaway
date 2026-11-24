@@ -184,8 +184,9 @@ UI does not use it.
 As built (7.5): `LinkConnections` does not offer that stream yet, so `SettingsSyncExchange` opens its own
 `board.watch` on each connected link's client that takes part (a `FiberMap` keyed by link, opened again a second after
 it ends, replaced when the link's connection is), and keeps only `settings_changed`, `profiles_changed` and
-`approval_rules`. Each such subscription starts with the host's whole snapshot; when push needs the events too, the
-one shared stream should replace it.
+`approval_rules`. It subscribes with `events_only` (HE-104): before, each subscription started with the host's whole
+snapshot (tens of MB on a big board), read, sent and decoded only to be thrown away, on every connect. When push needs
+the events too, the one shared stream should replace it.
 
 ### Discovery, SSH, settings sync
 
@@ -430,6 +431,13 @@ Two things in this design were read in Effect's source but not run, and M7 start
    leaves more than 1 MiB in the hub's buffer, and everything arrives in order once the reader reads, both ways.
    The piped sockets stay uncompressed (HE-71): with permessage-deflate a frame waits in `ws`'s queue for zlib, not in
    the connection's buffer, and a sender faster than zlib was read in whole (96 MiB, the sender never paused).
+   A listener takes a message of at most 16 MiB (`http/websocket.ts`), and the socket a host opens for its peer's
+   request (`/api/link/stream/<id>`) is accepted by the peer's listener, so an RPC answer longer than that (a big
+   board's snapshot, on its way to the hub or through the relay) was closed with 1009 (HE-104). The pipe that answers
+   (`Hubs.answer`, `LinkConnections.answer`) cuts an RPC or relay socket's frames into parts of 4 Mi code units
+   (`splitFrame`, never inside a surrogate pair); RPC's NDJSON joins the parts of a line however they are cut. A
+   terminal's or browser's socket keeps its frames whole. The `ws` clients of links (`dial`, the peer RPC client) take
+   a message as long as RPC does (`RPC_MAX_MESSAGE`), not `ws`'s 100 MiB.
 
 As built (7.0): the seal is MAC'd with the board token of the host that serves the socket, always. A hub that dials a
 host holds that token (the link's); a host that dialled in is told the client's session on its control stream and

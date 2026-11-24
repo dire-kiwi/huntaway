@@ -45,18 +45,14 @@ export interface EventsShape {
  * deletion), an agent config's whole usage. Each `task` event holds a whole task, and a running agent's task changes
  * many times a minute, so without this the tail was mostly old copies of the same few tasks (HE-104).
  */
-export const replacedBy = (event: BoardEvent): string | null => {
-  switch (event.type) {
-    case "task":
-      return `task ${event.task.id}`
-    case "task_deleted":
-      return `task ${event.id}`
-    case "usage":
-      return `usage ${event.usage.config_id}`
-    default:
-      return null
-  }
-}
+export const replacedBy = (event: BoardEvent): string | null =>
+  event.type === "task"
+    ? `task ${event.task.id}`
+    : event.type === "task_deleted"
+      ? `task ${event.id}`
+      : event.type === "usage"
+        ? `usage ${event.usage.config_id}`
+        : null
 
 /**
  * The events kept for a subscriber that resumes, oldest first, from `head`. An event a later one replaces stays in

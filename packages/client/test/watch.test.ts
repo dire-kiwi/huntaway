@@ -12,9 +12,10 @@ describe("watchBoard", () => {
     Effect.gen(function* () {
       const a = yield* fakeHost("host-a")
       a.unreadable = true
-      const subscribed = (n: number) => Effect.gen(function* () {
-        while (a.subscriptions.length < n) yield* Effect.yieldNow
-      })
+      const subscribed = (n: number) =>
+        Effect.gen(function* () {
+          while (a.subscriptions.length < n) yield* Effect.yieldNow
+        })
       yield* watchBoard(a.id, undefined).pipe(Stream.runDrain, Effect.provide(a.layer), Effect.forkScoped)
       yield* subscribed(1)
       for (const wait of [1, 2, 4, 8, 16, 30, 30]) {

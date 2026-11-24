@@ -141,11 +141,13 @@ export class ConfigArchives extends Context.Service<ConfigArchives, ConfigArchiv
       /** tar with `args`, fed `input`: its exit code, stdout and stderr. */
       const tar = (args: ReadonlyArray<string>, input: Uint8Array) => {
         // `stdout` is null when it was longer than `MAX_ARCHIVE`.
-        const once: Effect.Effect<{ code: number; stdout: Uint8Array | null; stderr: string }, PlatformError.PlatformError, Scope.Scope> = Effect.gen(function* () {
-          const handle = yield* spawner.spawn(ChildProcess.make("tar", args, { stdin: Stream.make(input) }))
-          const [stdout, stderr, code] = yield* Effect.all([collect(handle.stdout), collect(handle.stderr, 64 * 1024), handle.exitCode], { concurrency: 3 })
-          return { code: Number(code), stdout, stderr: stderr === null ? "(a long error)" : new TextDecoder().decode(stderr) }
-        })
+        const once: Effect.Effect<{ code: number; stdout: Uint8Array | null; stderr: string }, PlatformError.PlatformError, Scope.Scope> = Effect.gen(
+          function* () {
+            const handle = yield* spawner.spawn(ChildProcess.make("tar", args, { stdin: Stream.make(input) }))
+            const [stdout, stderr, code] = yield* Effect.all([collect(handle.stdout), collect(handle.stderr, 64 * 1024), handle.exitCode], { concurrency: 3 })
+            return { code: Number(code), stdout, stderr: stderr === null ? "(a long error)" : new TextDecoder().decode(stderr) }
+          },
+        )
         return once.pipe(
           Effect.scoped,
           Effect.mapError((e) => new ArchiveUnavailable({ reason: `tar: ${e.message}` })),
@@ -188,7 +190,10 @@ export class ConfigArchives extends Context.Service<ConfigArchives, ConfigArchiv
         )
         if (out.code !== 0) return yield* new Invalid({ field: "config_dir", reason: `tar failed: ${out.stderr}` })
         if (out.stdout === null)
-          return yield* new Invalid({ field: "config_dir", reason: `${files.dir} packs to more than ${Math.floor(MAX_ARCHIVE / 1024 / 1024)} MiB, more than a host takes in one call` })
+          return yield* new Invalid({
+            field: "config_dir",
+            reason: `${files.dir} packs to more than ${Math.floor(MAX_ARCHIVE / 1024 / 1024)} MiB, more than a host takes in one call`,
+          })
         const names = new Set([...staged.map(([name]) => name), ...fromDir])
         return { archive: Base64.encode(out.stdout), files: files.entries.filter((e) => names.has(e)), bytes: out.stdout.length }
       })
