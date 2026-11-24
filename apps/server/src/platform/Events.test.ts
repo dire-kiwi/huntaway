@@ -3,7 +3,8 @@ import { Effect, Layer, Stream } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { AgentConfigId, ProjectId, TaskId } from "@huntaway/contracts"
 import { Db } from "./Db.ts"
-import { BACKLOG, Events, TAIL } from "./Events.ts"
+import { BACKLOG, Events, keep, TAIL } from "./Events.ts"
+import type { Tail } from "./Events.ts"
 
 const TestLive = Events.layer.pipe(Layer.provideMerge(Db.layerMemory), Layer.provideMerge(SecureRandom.layerWebCrypto))
 const gone = (id: string) => ({ type: "project_deleted" as const, id: ProjectId.make(id) })
@@ -124,4 +125,19 @@ describe("Events", () => {
       assert.strictEqual(after.replay?.at(-1)?.seq, 4 * TAIL)
     }).pipe(Effect.scoped, Effect.provide(TestLive)),
   )
+
+  it("holds no more than TAIL events under mixed traffic: a replaced one goes at once", () => {
+    const tail: Tail = { events: new Map(), latest: new Map(), floor: 0 }
+    let most = 0
+    // Half of the events are three busy tasks' changes, half are other events.
+    for (let seq = 1; seq <= 4 * TAIL; seq++) {
+      keep(tail, seq % 2 === 0 ? { ...taskGone(`busy-${seq % 3}`), seq } : { ...gone(String(seq)), seq })
+      most = Math.max(most, tail.events.size)
+    }
+    assert.strictEqual(most, TAIL)
+    const busy = [...tail.events.values()].filter((e) => e.type === "task_deleted")
+    assert.strictEqual(busy.length, 3, "one of each busy task")
+    assert.strictEqual(tail.latest.size, 3)
+    assert.isBelow(tail.floor, Math.min(...tail.events.keys()))
+  })
 })

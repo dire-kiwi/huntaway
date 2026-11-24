@@ -55,41 +55,34 @@ export const replacedBy = (event: BoardEvent): string | null =>
         : null
 
 /**
- * The events kept for a subscriber that resumes, oldest first, from `head`. An event a later one replaces stays in
- * `events` but is `replaced` (and skipped) until the array is next compacted. Only touched holding the bus's lock.
+ * The events kept for a subscriber that resumes, by number, oldest first (a `Map` keeps insertion order). One a later
+ * event replaces is deleted at once, so it holds at most `TAIL` events. Only touched holding the bus's lock.
  */
-interface Tail {
-  events: Array<BoardEvent>
-  head: number
-  readonly replaced: Set<BoardEvent>
-  /** The latest event of each `replacedBy` key. */
-  readonly latest: Map<string, BoardEvent>
+export interface Tail {
+  readonly events: Map<number, BoardEvent>
+  /** The number of the latest event of each `replacedBy` key. */
+  readonly latest: Map<string, number>
   /** The number of the newest event dropped for room (not replaced): a `since` below it can't be replayed. */
   floor: number
 }
 
-/** Adds `event` to `tail`, replacing an earlier one with its key, and drops the oldest past `TAIL`. */
-const keep = (tail: Tail, event: BoardEvent) => {
+/** Adds `event` to `tail`, deleting an earlier one with its key, and drops the oldest past `TAIL`. */
+export const keep = (tail: Tail, event: BoardEvent) => {
   const key = replacedBy(event)
   if (key !== null) {
     const before = tail.latest.get(key)
-    if (before !== undefined) tail.replaced.add(before)
-    tail.latest.set(key, event)
+    if (before !== undefined) tail.events.delete(before)
+    tail.latest.set(key, event.seq)
   }
-  tail.events.push(event)
-  while (tail.events.length - tail.head - tail.replaced.size > TAIL) {
-    const oldest = tail.events[tail.head++]
-    if (oldest === undefined) break
-    if (tail.replaced.delete(oldest)) continue
-    tail.floor = oldest.seq
+  tail.events.set(event.seq, event)
+  while (tail.events.size > TAIL) {
+    const first = tail.events.entries().next()
+    if (first.done === true) break
+    const [seq, oldest] = first.value
+    tail.events.delete(seq)
+    tail.floor = seq
     const oldestKey = replacedBy(oldest)
-    if (oldestKey !== null && tail.latest.get(oldestKey) === oldest) tail.latest.delete(oldestKey)
-  }
-  // Compacted once the dropped and replaced events are as many as those kept, so each event is copied about once.
-  if (tail.head + tail.replaced.size > tail.events.length / 2 && tail.events.length > 64) {
-    tail.events = tail.events.slice(tail.head).filter((e) => !tail.replaced.has(e))
-    tail.head = 0
-    tail.replaced.clear()
+    if (oldestKey !== null && tail.latest.get(oldestKey) === seq) tail.latest.delete(oldestKey)
   }
 }
 
@@ -107,7 +100,7 @@ export class Events extends Context.Service<Events, EventsShape>()("huntaway-ser
       const boot = yield* random.uuidV4()
       const lock = yield* Semaphore.make(1)
       const state = yield* Ref.make<{ readonly seq: number; readonly subscribers: ReadonlySet<Subscriber> }>({ seq: 0, subscribers: new Set() })
-      const tail: Tail = { events: [], head: 0, replaced: new Set(), latest: new Map(), floor: 0 }
+      const tail: Tail = { events: new Map(), latest: new Map(), floor: 0 }
 
       const publish = (input: BoardEventInput) =>
         Semaphore.withPermits(
@@ -139,7 +132,7 @@ export class Events extends Context.Service<Events, EventsShape>()("huntaway-ser
         )(
           Ref.modify(state, (s) => {
             const covered = since !== undefined && since.boot === boot && since.seq <= s.seq && since.seq >= tail.floor
-            const replay = covered ? tail.events.slice(tail.head).filter((e) => e.seq > since.seq && !tail.replaced.has(e)) : null
+            const replay = covered ? [...tail.events.values()].filter((e) => e.seq > since.seq) : null
             return [
               { seq: s.seq, replay },
               { ...s, subscribers: new Set([...s.subscribers, subscriber]) },
