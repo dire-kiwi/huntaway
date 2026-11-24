@@ -35,10 +35,22 @@ export const eventStatus = (e: PushEvent): Status | null =>
 export const STOPPED = "Stopped by user"
 
 /** In review, with its agent stopped and its review passed or none (`readyToCheck`). */
-export const readyToCheck = (t: Pick<Task, "status" | "running" | "review">): boolean =>
+export const readyToCheck = (t: Pick<Seen, "status" | "running" | "review">): boolean =>
   t.status === "in_review" && !t.running && (t.review === null || t.review.state === "passed")
 
-type Seen = Pick<Task, "kind" | "status" | "running" | "review" | "attention_reason">
+/** What of a task its notifications depend on: what Push keeps of every task (`seenOf`). */
+export interface Seen extends Pick<Task, "kind" | "status" | "running" | "attention_reason"> {
+  readonly review: { readonly state: NonNullable<Task["review"]>["state"] } | null
+}
+
+/** `t`'s `Seen`, without the rest of it (a whole task is a few KB, and Push keeps one for every task). */
+export const seenOf = (t: Seen): Seen => ({
+  kind: t.kind,
+  status: t.status,
+  running: t.running,
+  attention_reason: t.attention_reason,
+  review: t.review === null ? null : { state: t.review.state },
+})
 
 /** What a change of task `prev` to `next` notifies of, if anything (`taskEvent`). Only tasks: not review threads. */
 export const taskEvent = (prev: Seen, next: Seen): Exclude<PushEvent, "prompt" | "reply" | "report"> | null => {

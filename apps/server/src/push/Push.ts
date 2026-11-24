@@ -9,7 +9,6 @@ import { nowTimestamp } from "../platform/columns.ts"
 import { PermissionRepo } from "../permissions/PermissionRepo.ts"
 import type { PromptRow } from "../permissions/PermissionRepo.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
-import type { TaskState } from "../tasks/TaskRepo.ts"
 import { PushRepo, shown } from "./PushRepo.ts"
 import type { Subscription } from "./PushRepo.ts"
 import {
@@ -20,11 +19,13 @@ import {
   endpointProblem,
   promptText,
   readyToCheck,
+  seenOf,
   reportText,
   taskEvent,
   wants,
   wantsPrompt,
 } from "./rules.ts"
+import type { Seen } from "./rules.ts"
 import type { PushEvent } from "./rules.ts"
 import { WebPush } from "./WebPush.ts"
 import type { Message, Undelivered } from "./WebPush.ts"
@@ -93,18 +94,23 @@ export class Push extends Context.Service<Push, PushShape>()("huntaway-server/pu
       const host = identity.hostId
 
       /**
-       * Every task as last seen, to tell what changed: a task first seen notifies of nothing. The baseline keeps only what
-       * that depends on (`TaskState`); a task seen since, the whole of it.
+       * Every task as last seen, to tell what changed: a task first seen notifies of nothing. Only what that depends on
+       * (`seenOf`), not whole tasks: one for every task of the board (HE-104). Changed in place, by the one fiber that
+       * handles events.
        */
-      const known = yield* Ref.make<ReadonlyMap<TaskId, Task | TaskState>>(new Map())
-      /** Task `id` as last seen, whole: read when only its state is known (or nothing). */
-      const whole = (id: TaskId) =>
-        Effect.flatMap(Ref.get(known), (all): Effect.Effect<Task | null> => {
-          const t = all.get(id)
-          return t !== undefined && "key" in t ? Effect.succeed(t) : taskRepo.get(id)
-        })
-      /** Prompts pushed (or pending when watching began), never pushed again. */
-      const seen = yield* Ref.make<ReadonlySet<RequestId>>(new Set())
+      const known = new Map<TaskId, Seen>()
+      /** The tasks whose "ready to review" waits out its grace, as last seen, whole: what it notifies with. */
+      const reviewing = new Map<TaskId, Task>()
+      /** Task `id` now, whole, for a notification. */
+      const whole = (id: TaskId): Effect.Effect<Task | null> => {
+        const t = reviewing.get(id)
+        return t !== undefined ? Effect.succeed(t) : taskRepo.get(id)
+      }
+      /**
+       * By task, its prompts pushed (or pending when watching began), never pushed again. Only those still pending: one
+       * settled is never pending again.
+       */
+      const seen = new Map<TaskId, ReadonlySet<RequestId>>()
       /** The prompts pushed while watching that are still pending, by task: their devices aren't told the task needs attention too. */
       const prompted = yield* Ref.make<ReadonlyMap<TaskId, ReadonlySet<RequestId>>>(new Map())
       /** The columns the user moved tasks to lately, and when. */
@@ -184,10 +190,11 @@ export class Push extends Context.Service<Push, PushShape>()("huntaway-server/pu
       /** A task needing attention: its prompts raised since it was last seen are pushed, and those settled are let go. */
       const promptsOf = Effect.fnUntraced(function* (t: Task) {
         const pending = yield* prompts.pending({ task: t.id })
-        const before = yield* Ref.get(seen)
+        const before = seen.get(t.id) ?? new Set<RequestId>()
         const fresh = pending.filter((p) => !before.has(p.id))
-        if (fresh.length > 0) yield* Ref.set(seen, new Set([...before, ...fresh.map((p) => p.id)]))
         const ids = new Set(pending.map((p) => p.id))
+        if (ids.size === 0) seen.delete(t.id)
+        else seen.set(t.id, ids)
         yield* Ref.update(prompted, (all) => {
           const next = new Map(all)
           const kept = [...(all.get(t.id) ?? [])].filter((id) => ids.has(id))
@@ -204,8 +211,9 @@ export class Push extends Context.Service<Push, PushShape>()("huntaway-server/pu
         // Its prompts end with its run, if the board missed hearing so.
         if (!t.running) yield* Ref.update(prompted, (all) => (all.has(t.id) ? new Map([...all].filter(([id]) => id !== t.id)) : all))
         if (t.kind === "task" && t.status === "needs_attention") yield* promptsOf(t)
-        const prev = (yield* Ref.get(known)).get(t.id)
-        yield* Ref.update(known, (all) => new Map(all).set(t.id, t))
+        const prev = known.get(t.id)
+        known.set(t.id, seenOf(t))
+        if (reviewing.has(t.id)) reviewing.set(t.id, t)
         if (prev === undefined) return
         const e = taskEvent(prev, t)
         if (e === null || (yield* moved(t.id, e))) return
@@ -214,16 +222,17 @@ export class Push extends Context.Service<Push, PushShape>()("huntaway-server/pu
           return
         }
         // Ready to review only once it has stayed so for a few seconds.
+        if (!reviewing.has(t.id)) reviewing.set(t.id, t)
         yield* FiberMap.run(
           graces,
           t.id,
           Effect.gen(function* () {
             yield* Effect.sleep(REVIEW_GRACE)
-            const now = (yield* Ref.get(known)).get(t.id)
+            const now = known.get(t.id)
             if (now === undefined || !readyToCheck(now)) return
             const task = yield* whole(t.id)
             if (task !== null) yield* notify(task, "review")
-          }),
+          }).pipe(Effect.ensuring(Effect.sync(() => reviewing.delete(t.id)))),
           { onlyIfMissing: true },
         )
       })
@@ -251,7 +260,9 @@ export class Push extends Context.Service<Push, PushShape>()("huntaway-server/pu
         Effect.gen(function* () {
           if (ev.type === "task") yield* observe(ev.task)
           else if (ev.type === "task_deleted") {
-            yield* Ref.update(known, (all) => new Map([...all].filter(([id]) => id !== ev.id)))
+            known.delete(ev.id)
+            seen.delete(ev.id)
+            reviewing.delete(ev.id)
             yield* Ref.update(prompted, (all) => new Map([...all].filter(([id]) => id !== ev.id)))
           } else if (ev.type === "assistant_reply") yield* replied(ev.task_id)
           else if (ev.type === "routine_report") yield* reported(ev)
@@ -269,8 +280,9 @@ export class Push extends Context.Service<Push, PushShape>()("huntaway-server/pu
           const w = yield* events.watch(undefined)
           const tasks = yield* taskRepo.states
           const pending = yield* prompts.pending({})
-          yield* Ref.set(known, new Map(tasks.map((t) => [t.id, t])))
-          yield* Ref.update(seen, (s) => new Set([...s, ...pending.map((p) => p.id)]))
+          known.clear()
+          for (const t of tasks) known.set(t.id, seenOf(t))
+          for (const p of pending) seen.set(p.task_id, new Set([...(seen.get(p.task_id) ?? []), p.id]))
           yield* Ref.set(prompted, new Map())
           yield* SubscriptionRef.set(handled, w.seq)
           yield* Stream.runForEach(w.live, handle)

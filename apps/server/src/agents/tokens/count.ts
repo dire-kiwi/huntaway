@@ -78,21 +78,21 @@ const requestUsage = (v: unknown): readonly [string, string, Counts] | null => {
 }
 
 /**
- * The requests Claude Code `assistant` messages (`lines`) are of, by id, with their model: each request once, though its
- * message comes once for each content block, with the most output any of them says.
+ * Adds the request a Claude Code `assistant` message is of to `requests`, by id, with its model: each request once,
+ * though its message comes once for each content block, with the most output any of them says.
  */
-const requestsOf = (lines: ReadonlyArray<string>): Map<string, readonly [string, Counts]> => {
-  const requests = new Map<string, readonly [string, Counts]>()
-  for (const line of lines) {
-    const v = parse(line)
-    if (field(v, "type") !== "assistant") continue
-    const r = requestUsage(v)
-    if (r === null) continue
-    const [id, model, c] = r
-    const have = requests.get(id)
-    if (have !== undefined) have[1].output = Math.max(have[1].output, c.output)
-    else requests.set(id, [model, c])
-  }
+const addRequest = (requests: Map<string, readonly [string, Counts]>, v: unknown) => {
+  if (field(v, "type") !== "assistant") return
+  const r = requestUsage(v)
+  if (r === null) return
+  const [id, model, c] = r
+  const have = requests.get(id)
+  if (have !== undefined) have[1].output = Math.max(have[1].output, c.output)
+  else requests.set(id, [model, c])
+}
+
+/** `requests` without those that used nothing, by message id. */
+const finishRequests = (requests: Map<string, readonly [string, Counts]>): Map<string, readonly [string, Counts]> => {
   for (const [id, [, c]] of requests) if (total(c) <= 0) requests.delete(id)
   return new Map([...requests].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
 }
@@ -134,38 +134,47 @@ export const claudeLineCounts = (line: string): boolean => line.includes('"assis
  * with no result at all goes on from its earlier run's totals, and its tail adds to that run's.
  */
 export const countClaude = (lines: Iterable<string>, earlier: Earlier): Counted => {
+  const counter = claudeCounter(earlier)
+  for (const line of lines) counter.line(line)
+  return counter.done()
+}
+
+/**
+ * `countClaude` a line at a time (`line`, then `done`), so a run's output needn't be in memory: of the messages since
+ * the latest result, only their requests' usage is kept (HE-104).
+ */
+export const claudeCounter = (earlier: Earlier): { readonly line: (line: string) => void; readonly done: () => Counted } => {
   const out = counted("claude")
   let session: string | null = null
   // The session the totals in `out.snapshot` are for, and those totals without the earlier run's tail, if it had one.
   let baseSession: string | null = null
   let haveBase = false
   let withoutTail: ByModel | null = null
-  // The assistant messages since the latest result, which no result's totals have.
-  let since: Array<string> = []
-  for (const line of lines) {
-    const assistant = line.includes('"assistant"')
-    const other = line.includes('"result"') || line.includes('"init"')
+  // The requests of the assistant messages since the latest result, which no result's totals have.
+  let since = new Map<string, readonly [string, Counts]>()
+  const line = (text: string): void => {
+    const assistant = text.includes('"assistant"')
+    const other = text.includes('"result"') || text.includes('"init"')
     if (!other) {
-      // Read once it's known whether a result comes after it.
-      if (assistant) since.push(line)
-      continue
+      if (assistant) addRequest(since, parse(text))
+      return
     }
-    const v = parse(line)
+    const v = parse(text)
     const type = field(v, "type")
     if (type === "assistant") {
-      since.push(line)
-      continue
+      addRequest(since, v)
+      return
     }
     if (type === "system" && field(v, "subtype") === "init") {
       const id = field(v, "session_id")
       if (typeof id === "string") session = id
-      continue
+      return
     }
-    if (type !== "result") continue
+    if (type !== "result") return
     const usage = field(v, "modelUsage")
-    if (!isMap(usage) || isEmpty(usage)) continue
-    const made = requestsOf(since)
-    since = []
+    if (!isMap(usage) || isEmpty(usage)) return
+    const made = finishRequests(since)
+    since = new Map()
     const resultSession = field(v, "session_id")
     const sid: string | null = typeof resultSession === "string" ? resultSession : session
     if (!haveBase || baseSession !== sid) {
@@ -205,29 +214,32 @@ export const countClaude = (lines: Iterable<string>, earlier: Earlier): Counted 
     out.snapshot = totals
     out.session = sid
   }
-  // The requests after the last result.
-  const requests = requestsOf(since)
-  // No result set where the session's totals were: the run's requests go on from its earlier run's (and from its tail,
-  // if that had one too, which a run that resumes it may not find).
-  if (requests.size > 0 && !haveBase) {
-    const before = session !== null ? earlier(session) : null
-    if (before !== null) {
-      out.snapshot = copy(before.totals)
-      out.tail = copy(before.tail)
+  const done = (): Counted => {
+    // The requests after the last result.
+    const requests = finishRequests(since)
+    // No result set where the session's totals were: the run's requests go on from its earlier run's (and from its tail,
+    // if that had one too, which a run that resumes it may not find).
+    if (requests.size > 0 && !haveBase) {
+      const before = session !== null ? earlier(session) : null
+      if (before !== null) {
+        out.snapshot = copy(before.totals)
+        out.tail = copy(before.tail)
+      }
+      out.session = session
     }
-    out.session = session
+    for (const [model, c] of requests.values()) {
+      out.estimated = true
+      add(at(out.models, model), c)
+      add(at(out.snapshot, model), c)
+      add(at(out.tail, model), c)
+    }
+    for (const [m, c] of Object.entries(out.models)) if (!(total(c) > 0 || c.cost > 0)) delete out.models[m]
+    out.models = sorted(out.models)
+    out.snapshot = sorted(out.snapshot)
+    out.tail = sorted(out.tail)
+    return out
   }
-  for (const [model, c] of requests.values()) {
-    out.estimated = true
-    add(at(out.models, model), c)
-    add(at(out.snapshot, model), c)
-    add(at(out.tail, model), c)
-  }
-  for (const [m, c] of Object.entries(out.models)) if (!(total(c) > 0 || c.cost > 0)) delete out.models[m]
-  out.models = sorted(out.models)
-  out.snapshot = sorted(out.snapshot)
-  out.tail = sorted(out.tail)
-  return out
+  return { line, done }
 }
 
 /** Whether a line can matter to `countCodex`: the others are skipped unread. */

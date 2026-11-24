@@ -135,7 +135,8 @@ export class Desktop extends Context.Service<Desktop, DesktopShape>()("huntaway-
           window_id: windowId,
           at: yield* nowTimestamp,
         }
-        yield* Ref.update(frames, (all) => new Map([...all, [key, { at: now, frame: f }]]))
+        // Only a fresh frame is used (`FRAME_MS`): the others go, or every window ever looked at kept its screenshot.
+        yield* Ref.update(frames, (all) => new Map([...[...all].filter(([, held]) => now - held.at < FRAME_MS), [key, { at: now, frame: f }]]))
         return { frame: f }
       })
 
