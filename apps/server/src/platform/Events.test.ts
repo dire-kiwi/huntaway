@@ -10,7 +10,7 @@ const gone = (id: string) => ({ type: "project_deleted" as const, id: ProjectId.
 const taskGone = (id: string) => ({ type: "task_deleted" as const, id: TaskId.make(id), project_id: null })
 const usage = (config: string, plan: string) => ({
   type: "usage" as const,
-  usage: { config_id: AgentConfigId.make(config), limits: [], plan, updated_at: null, error: null },
+  usage: { config_id: AgentConfigId.make(config), limits: [], plan, updated_at: null, error: null, out_until: null, accounts: null },
 })
 
 describe("Events", () => {

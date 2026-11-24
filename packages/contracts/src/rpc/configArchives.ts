@@ -20,8 +20,8 @@ export interface ConfigArchive extends Schema.Schema.Type<typeof ConfigArchive> 
 
 export class ConfigArchiveRpcs extends RpcGroup.make(
   /**
-   * The config's login, settings, skills and the like (`Invalid` `config_dir` when it has none of them). Bounded by the
-   * RPC's 16 MiB message (base64: about 12 MiB of archive).
+   * The config's login, settings, skills and the like (`Invalid` `config_dir` when it has none of them, or when they
+   * pack to more than about 12 MiB: its base64 has to fit in the 16 MiB message another host's listener takes).
    */
   Rpc.make("configs.exportArchive", {
     payload: { id: AgentConfigId },
