@@ -1,0 +1,74 @@
+[
+  {
+    "key": "HE-59",
+    "title": "Visual indicator when task downgrades to Opus 4.8",
+    "description": "OC-38 got downgraded to opus 4,8 - can we have a visual indicator when this haoppens",
+    "branch": "ia/he-59-visual-indicator-when-task-downgrades-to",
+    "base": "80bb35a5a1d0267bf61de66e9c06010c1f6f616d",
+    "commit": "0bdf4327fcaae386c2c8cab1a6ef1608aa587990"
+  },
+  {
+    "key": "HE-64",
+    "title": "Restore last position when switching profiles",
+    "description": "when you switch profiles you should be whereever you were when you were last on the profile",
+    "branch": "ia/he-64-restore-last-position-when-switching-pro",
+    "base": "bd3aa9b8bdd33ea0802550554e2bf924b75bd094",
+    "commit": "4440ced68b761f58d673a4ac73ed1a78c3640e65"
+  },
+  {
+    "key": "HE-84",
+    "title": "Forward port: one slow tailcat start shouldn't hold up the others",
+    "description": "Follow-up to HE-81 (PR #76, merged). Small fixes to Forward port from its review:\n\n1. **One lock for every start.** Both `apps/server/src/runs/PortForwards.ts` and `apps/desktop/src/main/forwards.ts` hold a single `Semaphore` while tailcat starts (up to `START_TIMEOUT`, 30 s), so a slow start for one port delays Forward port for every other port and task. Lock per key (task and port on the server; address and port on the desktop) instead: `KeyedLock` on the server (docs/plan/06-server.md), something equivalent on the desktop. Two clicks on the same port must still start one tailcat.\n2. **Lost error line.** When `tailcat serve` fails, `PortForwards` reads `child.exitCode` and then `whyNotStarted(code, stderr)`, but the stderr reader is a separate fiber that may not have read tailcat's last line yet (exitCode resolves on Node's 'exit' event), so the user can get the generic \"stopped with exit code N\" instead of tailcat's reason. Wait for stderr to end before building the message.\n3. **Test temp folders.** `PortForwards.test.ts` and `forwards.test.ts` make folders with `mkdtempSync` and never remove them: make them in the test's scope and remove them after.\n\nTests for 1 and 2 with fake tailcat scripts (a slow one beside a quick one; one that writes its reason to stderr and exits at once).",
+    "branch": "ia/he-84-forward-port-one-slow-tailcat-start-shou",
+    "base": "2aa5cc81c7dbc4e5a4145aa6c4858eba3cd8b75b",
+    "commit": "09765e30ac1aa65477cce0c4d7c78183bd827dc3"
+  },
+  {
+    "key": "HE-85",
+    "title": "Forward port: share servers that listen only on a non-loopback address",
+    "description": "Follow-up to HE-81 (PR #76, merged). `runs/PortForwards` runs `tailcat --json serve --key=new <port>`, which proxies to `localhost:<port>` on the host. A dev server listed (`TaskServer.address`) on a specific non-loopback address only (e.g. `--host 192.168.1.5`) is shared, but connections through the share fail, and the user gets no error.\n\ntailcat v0.7.0 (the release `go install …@latest` gives) has no port mappings; its main branch has `tailcat serve <port>:<ip>:<port>`. Decide:\n- with a tailcat that has mappings (find out from `tailcat serve --help` or its version), serve `port:<address>:port` for such a server (IPv6 in brackets),\n- otherwise refuse with an `Invalid`/`Unavailable` that says why (\"listens only on 192.168.1.5; tailcat <version> can only share servers on localhost\").\n`127.0.0.1`, `::1`, `0.0.0.0` and `::` stay as now.\n\nTests in `PortForwards.test.ts` with fake tailcats (one whose help has mappings, one without). Update the Forward port bullet in `docs/plan/07-agents.md`.",
+    "branch": "ia/he-85-forward-port-share-servers-that-listen-o",
+    "base": "fb5783e52a50ee696e4f1194067a128de859b58f",
+    "commit": "5b1fd6a6cc6f9b5485da9e65b29264450aea4d24"
+  },
+  {
+    "key": "HE-86",
+    "title": "Add back-navigation links to docs pages",
+    "description": "when navigatin to a doc, as well as the lik to all docs, add a limk back to where you came from",
+    "branch": "ia/he-86-add-back-navigation-links-to-docs-pages",
+    "base": "bf629e76a5063dff53ebf4f0f16f483696664c72",
+    "commit": "6c295eddfcd5aadd11b991c90ad698f0eb64d138"
+  },
+  {
+    "key": "HE-90",
+    "title": "Show hidden files in code browser",
+    "description": "code browser how to show hidden files",
+    "branch": "ia/he-90-show-hidden-files-in-code-browser",
+    "base": "34bff55c2548bd5d8ffcbed3e83f46d95ee46bd5",
+    "commit": "7e9955a969bbdc4b7a6fe44287f90ea9b78561aa"
+  },
+  {
+    "key": "HE-92",
+    "title": "Hide forward port from same-host client",
+    "description": "forward port should not show on the client that is running on the same host",
+    "branch": "ia/he-92-hide-forward-port-from-same-host-client",
+    "base": "f67da83ed4825f1bb1a67619e88da9e77394c7fc",
+    "commit": "2e69084e8aea1d563be54cb9c7ffb346cffd991f"
+  },
+  {
+    "key": "HE-93",
+    "title": "Browser warning when connecting from another host",
+    "description": "browser says this if you are connected from another host\n\nAttached files:\n- /home/ivan/.local/share/huntaway-effect/attachments/6cee91f2edcc4b639428bd51bff705de/pasted-20261123-050104.png",
+    "branch": "ia/he-93-browser-warning-when-connecting-from-ano",
+    "base": "90f75a31932c7937b5474449471c5f0afbbbb29f",
+    "commit": "c08c5cb0d4aafb8b7ba12187a33c14a9acb958ea"
+  },
+  {
+    "key": "HE-94",
+    "title": "Auto-init git and commit placeholder README on new project",
+    "description": "when creating a new project whose folder does not exist, initialize git automatically and commit a placeholder readme to main",
+    "branch": "ia/he-94-auto-init-git-and-commit-placeholder-rea",
+    "base": "0a923a6998e5eb5ed1a4302ad4ac7bb3fe2b9b44",
+    "commit": "aea61426cbacbd76a38d24243dcad2aaf5e7c853"
+  }
+]

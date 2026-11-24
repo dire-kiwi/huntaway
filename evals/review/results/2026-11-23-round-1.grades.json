@@ -1,0 +1,396 @@
+{
+  "note": "Round 1, graded blind in one pass. a and b: versions/v1.md. c: candidates/v2.md. x1 and x2: the four v1 reviews set aside (see the round's page).",
+  "runs": {
+    "a": {
+      "HE-59": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "First serious issue, at translate.ts:180 and itemModel.ts:312: 'the web thread draws every notice with a code ... as the agent's own text ... appears as an ordinary assistant message, not as a warning'."
+          },
+          {
+            "issue": 2,
+            "grade": "minor",
+            "why": "Only in minor_issues, at output.ts:75-80 deferrable: 'each such line now ends its chunk's transaction and also runs `tasks.get` (the full SELECT_TASK)'."
+          }
+        ],
+        "extras": [
+          "output.ts:248-251 case ModelAnswered: the mark is cleared by comparing Claude Code's `fallback_model` with the API's `message.model` as raw text, which differ for `[1m]` (and dated) ids, so the badge goes at the fallback model's first reply; `modelName` does not match a `[1m]` suffix."
+        ],
+        "leak": null
+      },
+      "HE-64": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, at switchTo and profilePlace: 'the row of the profile you are already on no longer opens its board unless the page open is exactly its kept page ... from any page that is never kept (Settings, Analytics, the Guide ...)'."
+          },
+          {
+            "issue": 2,
+            "grade": "minor",
+            "why": "Only in minor_issues, at profilePlace: 'A kept place is never checked before it is opened ... a kept `/p/<id>` of a project that was pinned and later unpinned (or moved to another profile): clicking profile B navigates there, `activeProfile`'s `needs` moves the sidebar straight back to A'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-84": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, in both test files: 'The two new slow-start tests can read the fake tailcat's pid file while it is still empty, and then signal the test runner's own process group ... `process.kill(0, \"SIGUSR1\")`'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-85": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, at PortForwards.ts forward/serveTarget with DevServers.ts:256 and proc.ts:141: 'a task never lists more than one address for a port ... a server that listens on a specific address and also on localhost ... is listed as `192.168.1.5` ... Forward port refuses it'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-90": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, at Code.tsx lines 44-49: 'the render can loop until React throws \"Too many re-renders\" ... The payload of the `git.files` query is derived from the answer of the query it selects ... writes that atom's answer back into `lastTree` during render'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-92": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, at forwardPort.ts:41-49 isLoopback/onTaskHost: 'A loopback `location.hostname` is taken as proof that the page runs on the task's machine. That is false for ... `ssh -N -L 7879:127.0.0.1:7879`'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-94": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue: 'apps/web/tests/ui/fanout.test.mjs (not touched by this branch) is broken by the change. Its beforeAll makes the project `plain` ... relying on Projects.create making a plain, non-git folder ... `pnpm test:ui` fails'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-86": {
+        "verdict": "pass",
+        "expected": [],
+        "extras": [],
+        "leak": null
+      },
+      "HE-93": {
+        "verdict": "pass",
+        "expected": [],
+        "extras": [],
+        "leak": null
+      }
+    },
+    "b": {
+      "HE-59": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "First serious issue, at translate.ts modelFallback and the web itemModel.ts: 'the fallback warning is not drawn as a warning in the web thread ... shows as an ordinary assistant message, with no amber warning row'."
+          },
+          {
+            "issue": 2,
+            "grade": "minor",
+            "why": "Only in minor_issues, at output.ts deferrable: 'each assistant line ends its chunk's transaction ... and each also runs a full `tasks.get`'."
+          }
+        ],
+        "extras": [
+          "output.ts case ModelAnswered / contracts modelName: the mark is cleared by an exact string comparison of Claude Code's `fallback_model` (which can carry `[1m]`) with the API's `message.model`, so the badge goes at the fallback model's first reply, and `modelName` leaves `[1m]` ids raw."
+        ],
+        "leak": null
+      },
+      "HE-64": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, at useActiveProfile.ts switchTo: 'clicking the row of the profile you are already on no longer opens its board from any page that is not kept as a place (Settings, Analytics, the Guide ...)'."
+          },
+          {
+            "issue": 2,
+            "grade": "minor",
+            "why": "Only in minor_issues, at switchTo: 'a kept place is used without checking it is still that profile's or still exists ... a pinned project of test, which is later unpinned ... `needs` moves the sidebar back to test ... a project since archived or deleted'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-84": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, in both test files: 'read the slow fake tailcat's pid file as soon as it exists, which can be before the pid is in it, and then signal process group 0 ... `process.kill(0, \"SIGUSR1\")`'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-85": {
+        "verdict": "pass",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "minor",
+            "why": "Only in minor_issues (the review passed the change): 'A server with two sockets on a port, 127.0.0.1 and 192.168.1.5 say, is listed with whichever socket the scan met first ... a v0.7.0 tailcat now refuses it', naming DevServers.scanOnce and proc.ts shown."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-90": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, at Code.tsx lines 44-49: 'the `git.files` query's key is derived from the query's own last result, and that result is copied into state during render ... React stops with \"Too many re-renders\"' when two cached answers disagree on an ignored folder."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-92": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, at forwardPort.ts onTaskHost: 'a loopback hostname is taken as proof that the client is on the task's host', with the `ssh -N -L` tunnel at localhost losing Forward port."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-94": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, at apps/web/tests/ui/fanout.test.mjs: 'Its `plain` project is created with `repo_path: ${server.dataDir}/plain`, a folder that doesn't exist ... `plain.is_git` is true ... the wait times out'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-86": {
+        "verdict": "pass",
+        "expected": [],
+        "extras": [],
+        "leak": null
+      },
+      "HE-93": {
+        "verdict": "pass",
+        "expected": [],
+        "extras": [],
+        "leak": null
+      }
+    },
+    "c": {
+      "HE-59": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "minor",
+            "why": "Only in minor_issues, at the web itemModel.ts line 312: 'the `model_fallback` notice looks like something the agent said, with no warning style'."
+          },
+          {
+            "issue": 2,
+            "grade": "serious",
+            "why": "First serious issue, at output.ts deferrable and case ModelAnswered: 'a top-level assistant line is never deferrable any more: `handleChunk` ends its transaction after each one' and '`apply` calls `tasks.get(run.task_id)` for each of those lines'."
+          }
+        ],
+        "extras": [
+          "output.ts case ModelAnswered: the mark is cleared by an exact string comparison of Claude Code's `fallback_model` with the API's `message.model`, which differ for `[1m]` model names, so the badge goes on the fallback model's first reply; `modelName` does not match a `[1m]` name."
+        ],
+        "leak": null
+      },
+      "HE-64": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, at switchTo and profilePlace: 'clicking the row of the profile you are already on no longer opens that profile's board when the page open is one the hook does not save (Settings, Analytics, the Guide ...)'."
+          },
+          {
+            "issue": 2,
+            "grade": "minor",
+            "why": "Only in minor_issues, at profilePlace / switchTo: 'a saved place is never checked against the board. If the project was archived, deleted or unpinned, or the group dissolved ... a board whose own profile takes the sidebar back (so clicking B leaves you on A)'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-84": {
+        "verdict": "pass",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "minor",
+            "why": "Only in minor_issues (the review passed the change): 'Test flake that can signal the test runner itself ... `Number(\"\")` is 0, and `process.kill(0, \"SIGUSR1\")` signals every process in the test runner's own process group', in both test files."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-85": {
+        "verdict": "pass",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "minor",
+            "why": "Only in minor_issues (the review passed the change): 'A process with separate sockets on 127.0.0.1 and on a specific address is listed under whichever socket comes first; if that is the specific address, tailcat v0.7.0 now refuses it', naming proc.ts shown and the scan in DevServers.ts."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-90": {
+        "verdict": "pass",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "minor",
+            "why": "Only in minor_issues (the review passed the change), at Code.tsx:49: 'If two cached `git.files` atoms disagree on whether an open folder is ignored ... `opened` flips between the two atoms on every render and React stops with 'Too many re-renders''; the summary also says the read loop 'settles'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-92": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, at forwardPort.ts:49 onTaskHost: 'A loopback `location.hostname` is taken as proof that the page is on the task's machine, but a board reached from another computer through a tunnel is on loopback too'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-94": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "First serious issue, at apps/web/tests/ui/fanout.test.mjs: 'this change breaks that browser check (`pnpm test:ui`). Its `plain` project is created with `repo_path: ${server.dataDir}/plain`, a folder that doesn't exist ... `plain.is_git` is true'."
+          }
+        ],
+        "extras": [
+          "GithubRepos.ts create/createProject (projects.createOnGithub): with 'Create a GitHub repository for it' ticked, the folder is made with a bare `git init -q` before `projects.create`, so `made` is false and the project gets no `main` branch, README or first commit."
+        ],
+        "leak": null
+      },
+      "HE-86": {
+        "verdict": "pass",
+        "expected": [],
+        "extras": [],
+        "leak": null
+      },
+      "HE-93": {
+        "verdict": "pass",
+        "expected": [],
+        "extras": [],
+        "leak": null
+      }
+    },
+    "x1": {
+      "HE-59": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "Second serious issue, at translate.ts modelFallback and itemModel.ts:312: 'the web thread draws every notice that has a `code` ... as the agent's own text ... appears as an ordinary assistant message, as if the agent wrote it'."
+          },
+          {
+            "issue": 2,
+            "grade": "minor",
+            "why": "Only in minor_issues, and only half of it: '`ModelAnswered` reads the task (`tasks.get` ...) on every main-conversation assistant line, on the follower's path'; it names the read per reply at output.ts but does not say the effect is not deferrable or that each reply ends its chunk's transaction."
+          }
+        ],
+        "extras": [
+          "output.ts case ModelAnswered (`fallback.to !== effect.model`): the mark is cleared by exact string comparison of `fallback_model` with `message.model`, which differ for `[1m]` sessions, so the badge goes at the fallback model's first reply; `modelName` does not match a `[1m]` id."
+        ],
+        "leak": null
+      },
+      "HE-84": {
+        "verdict": "pass",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "minor",
+            "why": "Only in minor_issues (the review passed the change): 'Tests can read the slow fake's pid file empty ... `Number(\"\")` is 0, and `process.kill(0, \"SIGUSR1\")` then signals the test runner's own process group instead of the fake', in both test files."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      },
+      "HE-85": {
+        "verdict": "pass",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "minor",
+            "why": "Only in minor_issues (the review passed the change): 'A server bound to both a specific LAN address and loopback (two sockets, LAN one first) is listed as the LAN address: with tailcat v0.7.0 Forward port now refuses it', naming DevServers.scanOnce and proc.ts shown."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      }
+    },
+    "x2": {
+      "HE-84": {
+        "verdict": "needs_fixes",
+        "expected": [
+          {
+            "issue": 1,
+            "grade": "serious",
+            "why": "The one serious issue, in both test files: 'Both new slow-start tests read the fake tailcat's pid file while it can still be empty, and then signal the test runner's own process group ... `process.kill(0, \"SIGUSR1\")` sends SIGUSR1 to every process in the vitest process group'."
+          }
+        ],
+        "extras": [],
+        "leak": null
+      }
+    }
+  }
+}

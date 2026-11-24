@@ -58,7 +58,9 @@ packages/
   testing/                @huntaway/testing: fake agent CLIs, fake gh and GitHub, git and board fixtures, test layers
 rust/
   shim/                   ia-shim, unchanged
-scripts/                  test-server, ui-check, package-server, install scripts, release checks
+scripts/                  test-server, ui-check, package-server, install scripts, release checks, review-eval-*
+evals/
+  review/                 (HE-100) the answer key and prompts for scoring a change to the review instructions, by hand
 docs/
   guide/                  the user guide, carried over and corrected as features land
   plan/                   this plan, the spike, and the inventory of the old code
