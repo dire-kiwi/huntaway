@@ -21,10 +21,10 @@ import type { Scope } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Hex } from "effect/encoding"
 import { Headers } from "effect/http"
-import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
+import { RpcClient, RpcMiddleware } from "effect/rpc"
 import type { Rpc, RpcClientError, RpcGroup } from "effect/rpc"
 import { Socket } from "effect/socket"
-import { Auth, boardScopes, Capability, HostOffline, LinkId, LinkRefused, LINK_HEADER, PROTOCOL, PeerRpcs, SESSION_HEADER } from "@huntaway/contracts"
+import { Auth, boardScopes, Capability, HostOffline, LinkId, LinkRefused, LINK_HEADER, PROTOCOL, PeerRpcs, RpcNdjson, SESSION_HEADER } from "@huntaway/contracts"
 import type { AssertedSession, HostInfo, LinkHello, LinkStatus, OpenStream, SessionShape, Timestamp } from "@huntaway/contracts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { Events } from "../platform/Events.ts"
@@ -183,7 +183,7 @@ const clientOver = <E>(socket: Layer.Layer<Socket.Socket, E>, token: string, dis
       Layer.mergeAll(
         RpcClient.layerProtocolSocket({ pingInterval: PING, pingTimeout: SILENCE, ...(disconnected === null ? {} : { retryPolicy: Schedule.recurs(0) }) }).pipe(
           Layer.provide(socket),
-          Layer.provide(RpcSerialization.layerNdjson),
+          Layer.provide(RpcNdjson),
           Layer.provide(hooks),
         ),
         authHeader(token),

@@ -7,7 +7,7 @@ import { Aead, Cipher, Digest, Kdf, KeyAgreement, Signature } from "effect/crypt
 import { createSocket } from "node:dgram"
 import { networkInterfaces } from "node:os"
 import { FetchHttpClient, HttpRouter } from "effect/http"
-import { RpcSerialization, RpcServer } from "effect/rpc"
+import { RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
 import { createServer } from "node:http"
 import {
@@ -58,6 +58,7 @@ import {
   // HE-62
   BrowserRpcs,
   ThreadRpcs,
+  RpcNdjson,
   WorkflowRpcs,
 } from "@huntaway/contracts"
 // 6.4: skills and MCP servers.
@@ -858,7 +859,7 @@ export const HandlersLive = Layer.mergeAll(
 export const RpcLive = Layer.mergeAll(
   RpcServer.layerHttp({ group: Served, path: "/api/rpc", protocol: "websocket" }),
   RpcServer.layerHttp({ group: Served, path: "/api/rpc", protocol: "http" }),
-).pipe(Layer.provide(HandlersLive), Layer.provide(RpcSerialization.layerNdjson))
+).pipe(Layer.provide(HandlersLive), Layer.provide(RpcNdjson))
 
 /** The routes the server answers, `/api` first, then the UI. */
 export const RoutesLive = Layer.mergeAll(

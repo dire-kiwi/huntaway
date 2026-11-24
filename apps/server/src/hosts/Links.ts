@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Option, Redacted, Stream } from "effect"
 import { Headers, HttpClient } from "effect/http"
-import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
-import { Auth, HostId, HostRpcGroup, Invalid, LinkId, LinkRefused, NotFound } from "@huntaway/contracts"
+import { RpcClient, RpcMiddleware } from "effect/rpc"
+import { Auth, HostId, HostRpcGroup, Invalid, LinkId, LinkRefused, NotFound, RpcNdjson } from "@huntaway/contracts"
 import type { Unavailable } from "@huntaway/contracts"
 import type { Host, HostInfo, JoinInfo, LinkHello } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
@@ -131,7 +131,7 @@ export class Links extends Context.Service<
         Effect.gen(function* () {
           const context = yield* Layer.build(
             Layer.mergeAll(
-              RpcClient.layerProtocolHttp({ url: `${url}/api/rpc` }).pipe(Layer.provide(RpcSerialization.layerNdjson)),
+              RpcClient.layerProtocolHttp({ url: `${url}/api/rpc` }).pipe(Layer.provide(RpcNdjson)),
               RpcMiddleware.layerClient(Auth, ({ next, request }) =>
                 next({ ...request, headers: Headers.set(request.headers, "authorization", `Bearer ${token}`) }),
               ),
