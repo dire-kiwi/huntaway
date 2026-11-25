@@ -1,4 +1,5 @@
 import type { Task } from "@huntaway/contracts"
+import { planRest } from "../agents/prompts/start.ts"
 import type { MessageSource, QueuedRow } from "../tasks/TaskRepo.ts"
 import { fromAgent } from "../tasks/TaskRepo.ts"
 import type { RunKind, RunPhase } from "./Run.ts"
@@ -116,6 +117,28 @@ export const combine = (parts: ReadonlyArray<QueuedRow>): Combined => {
     automationRuns: parts.flatMap((p) => (p.automation_run_id === null ? [] : [p.automation_run_id])),
     hops: parts.length === 0 ? 0 : Math.min(...parts.map((p) => p.hops ?? 0)),
   }
+}
+
+/**
+ * `/compact` or `/plan` (HE-113): a queued one goes on its own, in a run of its own, as the board handles it: joined
+ * with other messages, a `/compact` would compact with them as its instructions, or be sent as text with them ahead.
+ */
+export const goesAlone = (text: string): boolean => isCompact(text) || planRest(text) !== null
+
+/** How many of the queued messages, from the front, are plain messages: those ahead of the first `/compact` or `/plan`. */
+export const plainAhead = (queued: ReadonlyArray<{ readonly text: string }>): number => {
+  const at = queued.findIndex((q) => goesAlone(q.text))
+  return at < 0 ? queued.length : at
+}
+
+/**
+ * How many of the queued messages, from the front, a run's start takes (`take` not `No`): the plain messages ahead of
+ * the first `/compact` or `/plan`; with none, a run for what is queued (`Only`) takes that one alone, and a run for a
+ * message of its own (`Ahead`) none. The rest stay queued, for when it ends.
+ */
+export const takenAtStart = (queued: ReadonlyArray<{ readonly text: string }>, take: Take): number => {
+  const plain = plainAhead(queued)
+  return plain > 0 || take !== "Only" ? plain : Math.min(1, queued.length)
 }
 
 /** What a run's start does with the thread's queue: `Ahead` takes it ahead of the message; `Only` is for what is queued. */

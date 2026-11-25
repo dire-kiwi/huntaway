@@ -233,24 +233,56 @@ describe("Runs.send", () => {
     ),
   )
 
-  it.effect("what is queued stays for the next run when the turn failed, or it holds a /compact (HE-113)", () =>
+  it.effect("what is queued stays for the next run when the turn failed; a /compact keeps what follows it (HE-113)", () =>
     run(
       Effect.gen(function* () {
-        {
-          const { task: id, agent } = yield* running()
-          yield* send(id, "and then this", { queue: true })
-          yield* output(agent, [result("error_during_execution", 0.1)])
-          const t = yield* task(id)
-          assert.deepStrictEqual([t.queued_message, t.steering.length], ["and then this", 0])
-          assert.isTrue(yield* agent.inputClosed)
-        }
         const { task: id, agent } = yield* running()
         yield* send(id, "and then this", { queue: true })
-        yield* send(id, "/compact")
-        yield* output(agent, [result("success", 0.1)])
+        yield* output(agent, [result("error_during_execution", 0.1)])
         const t = yield* task(id)
-        assert.deepStrictEqual([t.queued_message, t.steering.length], ["and then this\n\n/compact", 0])
-        assert.deepStrictEqual(yield* userLines(agent), [])
+        assert.deepStrictEqual([t.queued_message, t.steering.length], ["and then this", 0])
+        assert.isTrue(yield* agent.inputClosed)
+
+        // The messages ahead of a `/compact` start the next turn; it, and what follows it, wait for the run's end.
+        const second = yield* running()
+        yield* send(second.task, "first", { queue: true })
+        yield* send(second.task, "/compact")
+        yield* send(second.task, "then", { queue: true })
+        yield* output(second.agent, [result("success", 0.1)])
+        const u = yield* task(second.task)
+        assert.deepStrictEqual([u.queued_message, u.steering.map((s) => s.text)], ["/compact\n\nthen", ["first"]])
+        assert.deepStrictEqual(yield* userLines(second.agent), [{ type: "user", uuid: u.steering[0]?.id, message: { role: "user", content: "first" } }])
+      }),
+    ),
+  )
+
+  it.effect("as a run ends, a queued /compact goes alone, and the messages around it in runs of their own (HE-113)", () =>
+    run(
+      Effect.gen(function* () {
+        const runs = yield* Runs
+        const repo = yield* RunRepo
+        const queue = yield* TaskRepo
+        /** The task's run ends, and what is queued is sent as `RunEnds` sends it: the run it starts, and what is left. */
+        const next = Effect.fnUntraced(function* (id: TaskId) {
+          const live = some(yield* repo.latest(id))
+          yield* repo.setPhase(live.id, "exited")
+          const after = yield* runs.sendQueued(id)
+          const started = some(yield* repo.latest(id))
+          return [started.kind, after.queued_message] as const
+        })
+        const queued = (id: TaskId, texts: ReadonlyArray<string>) =>
+          Effect.forEach(texts, (text) => queue.enqueue(id, { text, source: "user", automation_run_id: null }, AT), { discard: true })
+
+        // A message, then `/compact`: the message is sent, then the conversation compacted.
+        const a = (yield* running()).task
+        yield* queued(a, ["and then this", "/compact"])
+        assert.deepStrictEqual(yield* next(a), ["prompt", "/compact"])
+        assert.deepStrictEqual(yield* userMessages(a), [{ text: "and then this", steered: false }])
+
+        // `/compact`, then a message: it compacts with no instructions, and the message is left for after it.
+        const b = (yield* running()).task
+        yield* queued(b, ["/compact", "A"])
+        assert.deepStrictEqual(yield* next(b), ["compact", "A"])
       }),
     ),
   )

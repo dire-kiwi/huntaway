@@ -46,10 +46,16 @@ and the 5-hour-window restarter.
 - Queue (one concatenated message per task) when it can't be steered; send it when the run ends (`db.queue`, `send_queued`).
 - HE-113 (new): the user can queue a message on purpose rather than steer it (`tasks.send`'s `queue`; the composer's
   Queue button, Alt+Enter). It waits in the queue while the agent is in a turn (steered at once if the run is between
-  turns); when the turn ends, `RunInput.turnEnded` moves the whole queue into steers of the same run and writes them,
-  so it starts the next turn rather than waiting for a new run. Not for a stopped run, a turn that failed, a compaction,
-  a run that takes no input, or a queue holding a `/compact` or `/plan` (those keep it for the next run, as before). A
-  queued message settles the agent's questions but leaves its permission prompts be.
+  turns); when the turn ends, `RunInput.turnEnded` moves the queued messages ahead of the first `/compact` or `/plan`
+  into steers of the same run and writes them, so they start the next turn rather than waiting for a new run; that
+  command and what follows it stay queued for the run's end. Nothing moves for a stopped run, a turn that failed, a
+  compaction, or a run that takes no input. A queued message settles the agent's questions but leaves its permission
+  prompts be, and it doesn't end the agent's `wait` while it is held for the turn's end (`Wait.check` asks
+  `RunInput.queuedForTurnEnd`); what waits for the run's end still does.
+- HE-113 (new): a queued `/compact` or `/plan` goes alone. A run's start takes the queued messages ahead of the first
+  of them (`takenAtStart`); a run for what is queued (`Only`) with one first takes it alone; the rest stay queued and
+  go when that run ends. Before, the queue was joined into one text, so a message and a `/compact` became one prompt,
+  or a compaction with the message as its instructions.
 - Requeue never-taken-in steers ahead of anything queued later (`requeue_steers`, `requeue_ahead`).
 - Unqueue (give the text back to the user) (`unqueue`).
 - Close the input when a turn ends with nothing waiting; grace timers when something should start a turn but doesn't.

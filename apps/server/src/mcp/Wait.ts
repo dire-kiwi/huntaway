@@ -15,6 +15,7 @@ import { ServerConfig } from "../platform/ServerConfig.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import type { Run } from "../runs/Run.ts"
+import { RunInput } from "../runs/RunInput.ts"
 import { RunRepo } from "../runs/RunRepo.ts"
 import { RunWaits } from "../runs/RunWaits.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
@@ -106,6 +107,7 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
       const prWatch = yield* PrWatch
       const events = yield* Events
       const runWaits = yield* RunWaits
+      const input = yield* RunInput
       const tmp = yield* TaskTmp
       const dataDir = yield* DataDir
       const config = yield* ServerConfig
@@ -163,7 +165,12 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
         // Only an explicit move counts: the board moves the task to Needs attention and back by itself for a
         // subagent's permission prompt.
         if (current.moved_to !== undefined) return { _tag: "Moved", status: current.moved_to } satisfies Ended
-        if ((yield* tasks.queued(task)).length > 0 || (yield* tasks.steers(task, wait.run_id)).length > 0) return { _tag: "Message" } satisfies Ended
+        // A message the user queued for after the agent's turn goes to it once the turn ends (HE-113): it doesn't end the
+        // wait, which is the turn's. What waits for the run's end ends it, as before, so that the run can end.
+        const queued = yield* tasks.queued(task)
+        if (queued.length > (yield* input.queuedForTurnEnd(run.value, queued)) || (yield* tasks.steers(task, wait.run_id)).length > 0) {
+          return { _tag: "Message" } satisfies Ended
+        }
         if (current.subagent_finished !== undefined) return { _tag: "Subagent", agent: current.subagent_finished } satisfies Ended
         if (current.pull_request?.news !== undefined) return { _tag: "PullRequest", news: current.pull_request.news } satisfies Ended
         if (wait.tasks.length === 0) return null

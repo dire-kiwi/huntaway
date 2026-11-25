@@ -30,7 +30,7 @@ import { TaskNotFound } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
 import type { WriteNo } from "../threads/model.ts"
 import { LaunchFacts } from "./LaunchFacts.ts"
-import { combine, decideSend, isCompact, newCommand, outputStyleCommand, rowOf } from "./queue.ts"
+import { combine, decideSend, isCompact, newCommand, outputStyleCommand, rowOf, takenAtStart } from "./queue.ts"
 import type { Outgoing, Refusal, Take } from "./queue.ts"
 import type { Run, RunKind } from "./Run.ts"
 import { AgentRequests } from "./AgentRequests.ts"
@@ -314,7 +314,11 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           Effect.gen(function* () {
             const before = yield* load(id)
             if (yield* runs.hasActive(id)) return yield* refused({ _tag: "AlreadyRunning" })
-            const taken = take === "No" ? [] : yield* tasks.takeQueued(id)
+            // What follows a `/compact` or `/plan` stays queued, for when this run ends (HE-113).
+            const queued = take === "No" ? [] : yield* tasks.takeQueued(id)
+            const n = takenAtStart(queued, take)
+            const taken = queued.slice(0, n)
+            for (const row of queued.slice(n)) yield* tasks.enqueue(id, row, at)
             if (take === "Only" && taken.every((q) => q.text.trim() === "")) {
               return yield* new SendRefused({ reason: "nothing_queued", detail: "nothing is queued to send" })
             }
