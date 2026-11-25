@@ -2,6 +2,7 @@ import { isMerged, type HostTask as Task } from "@huntaway/client"
 import { TaskId } from "@huntaway/contracts"
 import { Cause, Exit } from "effect"
 import { useState } from "react"
+import { parseModal, parsePanel } from "../../../../router"
 import { board } from "../../../../state/board"
 import { closeTask, closeTaskModal, navigate } from "../../../../state/route"
 import { isTagged, useMutation } from "../../../../state/mutation"
@@ -43,7 +44,8 @@ export function TeardownModal({ task, onClose }: { task: Task; onClose: () => vo
   )
 }
 
-export function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onClose: () => void }) {
+/** Deletes `task`, once asked: from its own view (`mode`), or from a board's menu (`board`), which stays where it is. */
+export function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode | "board"; onClose: () => void }) {
   const [deleteBranch, setDeleteBranch] = useState(false)
   // The tasks merging into it that aren't done (API 128): their merges wait for you to say where they go.
   const incoming = useReaching(task.id)
@@ -54,7 +56,11 @@ export function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mod
   /** Away from the deleted task: to its board, its group or its profile's board on a page of its own. */
   const leave = () => {
     const pid = task.project_id
-    if (mode === "modal") closeTaskModal(true)
+    if (mode === "board") {
+      // Only what showed it: the dialog or side panel open on it over the board.
+      if (parseModal(window.location.search) === task.id) closeTaskModal(true)
+      if (parsePanel(window.location.search)?.taskId === task.id) closeTask(true)
+    } else if (mode === "modal") closeTaskModal(true)
     else if (mode !== "page") closeTask(true)
     else if (pid) navigate({ name: "board", projectId: pid }, true)
     else if (isGroupTask(task) && task.group_name) navigate({ name: "group", hostId: task.host_id, group: task.group_name }, true)

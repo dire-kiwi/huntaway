@@ -1,13 +1,30 @@
-import { Check } from "lucide-react"
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { clsx } from "clsx"
+import { Check, ChevronRight } from "lucide-react"
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react"
+import { useNarrow } from "../../narrow"
 import { after } from "../../state/timers"
 
-/** `divider` puts a line above the item, to set it apart from the ones before. */
-export type MenuItem = { label: ReactNode; checked?: boolean | undefined; divider?: boolean | undefined; onSelect: () => void }
+/**
+ * `divider` puts a line above the item, to set it apart from the ones before; `danger` shows it in red. An item with
+ * `items` opens a menu of them beside it (on hover, a click or ArrowRight; on a phone, under it in place) and does
+ * nothing itself.
+ */
+export type MenuItem = {
+  label: ReactNode
+  checked?: boolean | undefined
+  divider?: boolean | undefined
+  danger?: boolean | undefined
+  items?: MenuItem[] | undefined
+  onSelect?: (() => void) | undefined
+}
+
+/** A menu's own items, not those of a menu opened from one of them. */
+const ownItems = (menu: Element): HTMLElement[] =>
+  Array.from(menu.querySelectorAll<HTMLElement>("[role^=menuitem]")).filter((el) => el.closest("[role=menu]") === menu)
 
 /**
  * A menu at the cursor (for a right-click), kept on screen. Pressing outside it, Escape, scrolling,
- * resizing or leaving the window closes it; the arrow keys move between its items.
+ * resizing or leaving the window closes it; the arrow keys move between its items, and into and out of its submenus.
  */
 export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: number; title?: ReactNode | undefined; items: MenuItem[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -44,8 +61,12 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
         close()
         return
       }
-      const all = Array.from(ref.current?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])
-      const i = all.findIndex((el) => el === document.activeElement)
+      // Within the menu (or submenu) the focus is in.
+      const root = ref.current
+      const focused = document.activeElement
+      const menu = (root && focused && root.contains(focused) && focused.closest("[role=menu]")) || root
+      const all = menu ? ownItems(menu) : []
+      const i = all.findIndex((el) => el === focused)
       const next = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: all.length - 1 }[e.key]
       if (next === undefined || !all.length) return
       e.preventDefault()
@@ -74,26 +95,205 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
       onContextMenu={(e) => e.preventDefault()}
     >
       {title && <div className="px-2 pt-1 pb-1.5 text-[11.5px] text-faint">{title}</div>}
-      {/* The items are the menu as it was opened, and have no ids: their places are their keys. */}
-      {items
-        .map((item, place) => ({ item, place, key: `item-${place}` }))
-        .map(({ item, place, key }) => (
+      <Items items={items} onClose={onClose} />
+    </div>
+  )
+}
+
+const itemClass = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] outline-none hover:bg-white/5 focus:bg-white/5 narrow:py-2.5"
+
+/** A menu's items; `back` is the item it was opened from, for a submenu, which ArrowLeft goes back to. */
+function Items({ items, onClose, back }: { items: MenuItem[]; onClose: () => void; back?: (() => void) | undefined }) {
+  const narrow = useNarrow()
+  // The item whose submenu is open, by its place.
+  const [open, setOpen] = useState<number | null>(null)
+  // Moving the pointer onto another item opens (or closes) its submenu a moment later, so crossing an item on the way
+  // into an open submenu doesn't close it.
+  const pending = useRef<(() => void) | null>(null)
+  const hover = (place: number | null) => {
+    pending.current?.()
+    pending.current = place === open ? null : after(120, () => setOpen(place))
+  }
+  useEffect(() => () => pending.current?.(), [])
+  // The items are the menu as it was opened, and have no ids: their places are their keys.
+  return items
+    .map((item, place) => ({ item, place, key: `item-${place}` }))
+    .map(({ item, place, key }) => {
+      const sub = item.items
+      const divider = item.divider && place > 0 && <div role="separator" className="mx-1 my-1 h-px bg-line" />
+      const mark = <span className="w-3.5 shrink-0 text-accent">{item.checked && <Check size={14} />}</span>
+      if (!sub)
+        return (
           <Fragment key={key}>
-            {item.divider && place > 0 && <div role="separator" className="mx-1 my-1 h-px bg-line" />}
+            {divider}
             <button
               role="menuitemradio"
               aria-checked={!!item.checked}
+              onMouseEnter={() => !narrow && hover(null)}
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowLeft" || !back) return
+                e.preventDefault()
+                e.stopPropagation()
+                back()
+              }}
               onClick={() => {
                 onClose()
-                item.onSelect()
+                item.onSelect?.()
               }}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-fg outline-none hover:bg-white/5 focus:bg-white/5 narrow:py-2.5"
+              className={clsx(itemClass, item.danger ? "text-red-400" : "text-fg")}
             >
-              <span className="w-3.5 shrink-0 text-accent">{item.checked && <Check size={14} />}</span>
+              {mark}
               {item.label}
             </button>
           </Fragment>
+        )
+      const isOpen = open === place
+      return (
+        <Fragment key={key}>
+          {divider}
+          <SubMenu
+            item={item}
+            sub={sub}
+            open={isOpen}
+            inline={narrow}
+            mark={mark}
+            onHover={() => !narrow && hover(place)}
+            onStay={() => {
+              pending.current?.()
+              pending.current = null
+            }}
+            onOpen={(v) => {
+              pending.current?.()
+              pending.current = null
+              setOpen(v ? place : null)
+            }}
+            onBack={back}
+            onClose={onClose}
+          />
+        </Fragment>
+      )
+    })
+}
+
+/** An item that opens a menu of `sub`: floating beside it, or (`inline`, on a phone) under it in this menu. */
+function SubMenu({
+  item,
+  sub,
+  open,
+  inline,
+  mark,
+  onHover,
+  onStay,
+  onOpen,
+  onBack,
+  onClose,
+}: {
+  item: MenuItem
+  sub: MenuItem[]
+  open: boolean
+  inline: boolean
+  mark: ReactNode
+  onHover: () => void
+  onStay: () => void
+  onOpen: (open: boolean) => void
+  onBack: (() => void) | undefined
+  onClose: () => void
+}) {
+  const button = useRef<HTMLButtonElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  // Whether its first item takes the focus when it opens: from the keyboard, not the pointer.
+  const focusFirst = useRef(false)
+  return (
+    <>
+      <button
+        ref={button}
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onMouseEnter={onHover}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft" && onBack) {
+            e.preventDefault()
+            e.stopPropagation()
+            onBack()
+          } else if (e.key === "ArrowRight" && !inline) {
+            e.preventDefault()
+            focusFirst.current = true
+            onOpen(true)
+          }
+        }}
+        onClick={(e) => {
+          // A click from the keyboard (Enter or Space) has no pointer behind it.
+          focusFirst.current = e.detail === 0
+          onOpen(inline ? !open : true)
+        }}
+        className={clsx(itemClass, "text-fg", open && "bg-white/5")}
+      >
+        {mark}
+        <span className="min-w-0 flex-1">{item.label}</span>
+        <ChevronRight size={13} className={clsx("shrink-0 text-faint transition-transform", inline && open && "rotate-90")} />
+      </button>
+      {open &&
+        (inline ? (
+          <div role="group" className="ml-3 border-l border-line pl-1">
+            <Items items={sub} onClose={onClose} />
+          </div>
+        ) : (
+          <Floating anchor={button} panel={panel} focusFirst={focusFirst} onStay={onStay}>
+            <Items
+              items={sub}
+              onClose={onClose}
+              back={() => {
+                onOpen(false)
+                button.current?.focus()
+              }}
+            />
+          </Floating>
         ))}
+    </>
+  )
+}
+
+/** A submenu's own panel, beside `anchor` (on its right, or its left where that doesn't fit) and on screen. */
+function Floating({
+  anchor,
+  panel,
+  focusFirst,
+  onStay,
+  children,
+}: {
+  anchor: RefObject<HTMLElement | null>
+  panel: RefObject<HTMLDivElement | null>
+  focusFirst: RefObject<boolean>
+  onStay: () => void
+  children: ReactNode
+}) {
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
+  useLayoutEffect(() => {
+    const el = panel.current
+    const a = anchor.current?.getBoundingClientRect()
+    if (!el || !a) return
+    const r = el.getBoundingClientRect()
+    const right = a.right + 6
+    const left = right + r.width + 4 <= window.innerWidth ? right : a.left - r.width - 6
+    setPos({ left: Math.max(4, Math.min(left, window.innerWidth - r.width - 4)), top: Math.max(4, Math.min(a.top - 5, window.innerHeight - r.height - 4)) })
+  }, [anchor, panel])
+  // Once it's placed: hidden, it can't take the focus.
+  const placed = pos !== null
+  useLayoutEffect(() => {
+    const el = panel.current
+    if (placed && el && focusFirst.current) (el.querySelector<HTMLElement>("[aria-checked=true]") ?? el.querySelector<HTMLElement>("[role^=menuitem]"))?.focus()
+  }, [placed, panel, focusFirst])
+  return (
+    <div
+      ref={panel}
+      role="menu"
+      // Measured where it is first drawn, out of sight, then placed.
+      style={pos ?? { left: 0, top: 0, visibility: "hidden" }}
+      onMouseEnter={onStay}
+      className="fixed z-50 min-w-44 rounded-lg border border-line bg-panel p-1 shadow-2xl shadow-black/50 max-h-[calc(100%-8px)] overflow-y-auto"
+    >
+      {children}
     </div>
   )
 }

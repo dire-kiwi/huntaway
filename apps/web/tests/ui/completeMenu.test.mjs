@@ -28,13 +28,13 @@ test("a failed complete from the card menu shows the error and puts the card bac
     await ui.run([`goto /p/${board.project.id}`, `wait ${TITLE}`])
     const before = await columnOf(page, TITLE)
     assert.ok(before)
-    await ui.run([`rclick ${TITLE}`, "wait [role=menu]", "click [role=menu] >> text=Won't fix", "wait nope", "gone [role=menu]"])
+    await ui.run([`rclick ${TITLE}`, "click role=menuitem[name='Move to']", "click [role=menu] >> text=Won't fix", "wait nope", "gone [role=menu]"])
     await eventually(async () => assert.equal(await columnOf(page, TITLE), before))
     assert.equal((await tasksByTitle(server, board.project))[TITLE].status, "todo")
 
     // Without the failure it's done, with the resolution picked.
     failing = false
-    await ui.run([`rclick ${TITLE}`, "click [role=menu] >> text=Not done", "gone [role=menu]", "gone nope"])
+    await ui.run([`rclick ${TITLE}`, "click role=menuitem[name='Move to']", "click [role=menu] >> text=Not done", "gone [role=menu]", "gone nope"])
     await eventually(async () => {
       const t = (await tasksByTitle(server, board.project))[TITLE]
       assert.deepEqual([t.status, t.resolution], ["done", "not_done"])

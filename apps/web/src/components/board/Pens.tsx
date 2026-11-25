@@ -58,7 +58,7 @@ function tabsFor(t: Task): PenTab[] {
  * The menu items that move a task into one of its profile's pens (the active ones, and the one it's in), out of its
  * pen, or into a new one (`onNew`): all the picked tasks if it's one of several, else just it.
  */
-export function penItems(task: Task, picked: Task[], onError: (msg: string) => void, onNew: (tasks: Task[]) => void): MenuItem[] {
+export function penItems(task: Task, picked: Task[], onError: (msg: string) => void, onNew: (tasks: Task[]) => void, prefix = "Pen: "): MenuItem[] {
   if (!canPen(task)) return []
   const among = picked.length > 1 && picked.some((t) => t.id === task.id)
   const targets = among ? picked : [task]
@@ -71,7 +71,8 @@ export function penItems(task: Task, picked: Task[], onError: (msg: string) => v
     .map((t, i) => ({
       label: (
         <span className="flex items-center gap-2">
-          <Fence size={13} style={{ color: PEN_COLORS[t.color].base }} /> Pen: {t.name}
+          <Fence size={13} style={{ color: PEN_COLORS[t.color].base }} /> {prefix}
+          {t.name}
           {suffix}
         </span>
       ),
@@ -137,6 +138,21 @@ export function PenNameModal({
       </form>
     </Modal>
   )
+}
+
+/** The pen items in a submenu of their own, "Pen" (none, where the task can't go in one). */
+export function penMenu(task: Task, picked: Task[], onError: (msg: string) => void, onNew: (tasks: Task[]) => void, divider = false): MenuItem[] {
+  const items = penItems(task, picked, onError, onNew, "")
+  return items.length
+    ? [
+        {
+          label: "Pen",
+          divider,
+          checked: !!task.pen_id,
+          items: items.map((i, n) => Object.assign(i, { divider: n > 0 && typeof i.label === "string" && i.label.startsWith("New pen") })),
+        },
+      ]
+    : []
 }
 
 /** The dialog that makes a pen and moves tasks into it, for penItems' `onNew`. */
