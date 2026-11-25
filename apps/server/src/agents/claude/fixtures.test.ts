@@ -317,7 +317,7 @@ describe("the recorded Claude sessions", () => {
       assert.deepStrictEqual(
         effects.filter((e) => e._tag === "SessionStarted" || e._tag === "TurnEnded"),
         [
-          { _tag: "SessionStarted", sessionId: "f3ea1afc-611c-40e9-92cd-b9af43f70400" },
+          { _tag: "SessionStarted", sessionId: "f3ea1afc-611c-40e9-92cd-b9af43f70400", codeMode: false },
           { _tag: "TurnEnded", error: null, interrupted: false, usageLimit: false },
         ],
       )

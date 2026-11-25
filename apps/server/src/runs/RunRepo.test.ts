@@ -85,7 +85,7 @@ describe("RunRepo", () => {
         const repo = yield* RunRepo
         const task = yield* fakeTask
         const first = yield* newRun(task)
-        yield* repo.update(first.id, { config_dir: "/a", session_id: "s1", board_tools: true })
+        yield* repo.update(first.id, { config_dir: "/a", session_id: "s1", board_tools: true, code_mode: true })
         // A later run that resumed it somewhere else doesn't move it.
         const later = yield* newRun(task)
         yield* repo.update(later.id, { config_dir: "/b", session_id: "s1" })
@@ -96,6 +96,9 @@ describe("RunRepo", () => {
         // A session from before runs kept their folder.
         assert.deepStrictEqual(yield* repo.sessionConfigDir(task, "s3"), Option.none())
         assert.deepStrictEqual([yield* repo.sessionBoardTools(task, "s1"), yield* repo.sessionBoardTools(task, "s2")], [true, false])
+        // HE-107: Code Mode is the session's first run's, and a session not known works without.
+        const codeMode = [yield* repo.sessionCodeMode(task, "s1"), yield* repo.sessionCodeMode(task, "s2"), yield* repo.sessionCodeMode(task, "s3")]
+        assert.deepStrictEqual(codeMode, [true, false, false])
       }),
     ),
   )

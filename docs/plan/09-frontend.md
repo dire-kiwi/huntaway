@@ -940,6 +940,9 @@ its name, and what it does behind the ? beside that (HE-39). All are off at firs
     test clock, a run skipped because the user has just written, a quiet one, and one that reports);
     `Automations.test.ts` and `schedule.test.ts` (several times, `{{last_run}}`, `{{quiet_runs}}`);
     `tests/ui/checkIns.test.mjs` (nothing while off; Add check-ins; the editor's times).
+- **Claude Code's Code Mode** (`code_mode`, HE-107): new Claude conversations ask Claude Code for its Code Mode; a
+  conversation keeps the mode it started in, so switching it on or off applies to new conversations. Claude Code
+  decides whether a conversation gets it, and the thread says when it doesn't. See [07-agents.md](07-agents.md#code-mode).
 
 ### Interactive replies (HE-77)<a id="interactive-replies"></a>
 
