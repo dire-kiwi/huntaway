@@ -1402,10 +1402,14 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   is refused, or the shells are still there 10 s later. "Asks on its output" is now "takes input" (every Claude run of
   this board; Codex's is M5). A run's kill and reap keep what was going as `background-killed` first.
 - **Dev servers left running (HE-56, the old HA-409)**: `RunInput.turnEnded` with only background tasks that
-  `detachable` allows (Bash shells not waited on whose commands `looksLikeServer`: a server word such as `dev` or
-  `serve`, a name ending in `-server` or `_server` even as the program's path after `exec` or `nohup`
-  (`exec target/release/app-server`), or `start` after a package manager or `expo`, `next` or `react-native`; HE-95
-  added the last three, whose servers held KIW2-5 in In progress), of a task `lastingOf` says goes to
+  `detachable` allows (Bash shells not waited on that `mayOutliveTurn` lets go: a dev server never holds its task in
+  In progress, a test, build, check or wait does. The command's words decide (a server word such as `dev` or `serve`,
+  a name ending in `-server` or `_server` even as the program's path after `exec` or `nohup`, or `start` after a
+  package manager or `expo`, `next` or `react-native` (HE-95, KIW2-5's) make it a server; `test`, `build`, `cargo`,
+  `timeout`, an `until` loop or a script named so, `scripts/build.mjs`, one waited on); a command that says neither is
+  read by its Bash call's description the same way, and one whose description says neither may be left too (HE-106:
+  ODS-92's `node --input-type=module < $TMPDIR/email-dev.mjs`, "Restart the email template preview server", held its
+  task in In progress). Listening on a port is what makes it a server), of a task `lastingOf` says goes to
   review, on Linux, arms a `detach` fiber: after `DETACH_AFTER` (1.5 s), and once `DevServers.shellsListen` sees each
   of the agent's shell sessions listening on a port (again every `DETACH_RETRY`, up to `DETACH_FOR_MS`), it writes
   `background-detached` and `Shim.killAgentOnly` (SIGKILL to the agent's group). `outcomeOf(…, detached)` makes the
