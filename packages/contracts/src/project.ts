@@ -64,8 +64,8 @@ export const Project = Schema.Struct({
   /** null uses the host's default. */
   permission_mode: Schema.NullOr(PermissionMode),
   model: Schema.NullOr(Schema.String),
-  /** HE-111: the output style its Claude tasks are given, unless a task has its own; null follows the profile. */
-  output_style: Schema.NullOr(Schema.String),
+  /** HE-111: the output style its Claude tasks are given, unless a task has its own; null follows the profile. Absent from older servers. */
+  output_style: Schema.optional(Schema.NullOr(Schema.String)),
   /** Overrides the profile's configs when set. */
   claude_config_ids: Schema.NullOr(Schema.Array(AgentConfigId)),
   /** Review each task's work when its agent finishes, the task in In progress meanwhile (not with `use_workflows`). */

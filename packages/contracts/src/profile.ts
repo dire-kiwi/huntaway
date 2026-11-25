@@ -13,8 +13,11 @@ export const Profile = Schema.Struct({
   /** The configs its threads can use, the default first. */
   claude_config_ids: Schema.Array(AgentConfigId),
   default_model: Schema.NullOr(Schema.String),
-  /** HE-111: the output style its Claude tasks are given, unless a project or the task has its own; null for Claude Code's settings'. */
-  default_output_style: Schema.NullOr(Schema.String),
+  /**
+   * HE-111: the output style its Claude tasks are given, unless a project or the task has its own; null for Claude
+   * Code's settings'. Absent from older servers.
+   */
+  default_output_style: Schema.optional(Schema.NullOr(Schema.String)),
   /** Names of the profiles whose agents may use this board's tools (`*` for all). Names, as profiles match by name across hosts. */
   agent_access: Schema.Array(Schema.String),
   /** The GitHub account its agents' gh acts as: a login, or `HOST/LOGIN`. null uses gh's active account. */

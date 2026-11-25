@@ -1519,8 +1519,9 @@ board has its own, for a Claude task:
   (the profile's)"). They are set in the profile form's Agents group and the project settings' Agents tab
   (`hosts/profileFields.tsx` `OutputStyleInput`: a text field suggesting Claude Code's built-in styles, which are
   `@huntaway/shared`'s `BUILT_IN_OUTPUT_STYLES`; any other name, a user's, a project's or a plugin's, is taken as typed).
-  The profile's syncs between hosts with its other settings (`settingsSync/fields.ts`). Codex and ACP have no output
-  styles: their launches never read either.
+  The profile's syncs between hosts with its other settings (`settingsSync/fields.ts`). On the wire both are optional
+  (`Project.output_style`, `Profile.default_output_style`), as a host from before HE-111 sends neither. Codex and ACP
+  have no output styles: their launches never read either.
 
 ### As built in 4.8 (HE-5): stack titles
 
