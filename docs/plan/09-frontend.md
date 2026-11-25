@@ -1204,12 +1204,28 @@ shape and its state modules are gone: `serverUrlAtom` and `tokenAtom` are set fr
   (`logic/links.ts`, `state/open.ts`); a link out of the app that a page asked for is asked about first.
 - **Board**: the board's sessions, its hosts, the profile shown (merged by name, kept), its plugins' other pages,
   connecting another, forgetting (asked about first).
+- **Dictation** (HE-99; `state/dictation.ts`, `logic/dictation.ts`, `components/mic.tsx`): a microphone in a task's
+  and the assistant's composer and in New task's description. **Decided** (the user's choice, for now): the phone's own speech
+  recognition (`expo-speech-recognition`: Android's recogniser, iOS's, a browser's on the web build), not the board's
+  `speech.transcribe` (HE-89), which stays a later choice. A tap dictates after what the field holds, in the phone's
+  language, the words showing as they are heard (a stretch being said, then the finished one); another tap stops and
+  keeps the last words. It listens on the phone itself where the phone says it can, and tries the phone's service
+  once when the phone has no model for the language (`language-not-supported`, `service-not-allowed`): that service
+  may send the sound to its maker. It goes on until stopped, but ends after one stretch on Android before 13. One
+  dictation for the app, owned by the field that started it: typing in the field, sending, or leaving the screen gives
+  it up (the text stays as it is), and no other begins until the recogniser says it has ended (or 3 s pass), so a late
+  end isn't taken for the next one's. A field has no microphone on a phone with no recogniser. The old app's voice
+  notes (a recording attached) wait for attachments. Android asks for `RECORD_AUDIO`, iOS for the microphone and
+  speech recognition (the config plugin in `app.json`, which also lets the app see Google's recognition services).
 
 Checked: its pure logic in `pnpm test` (`apps/mobile/tests`); the type check and lint in `pnpm check`; the screens on
 its web build (`pnpm --filter huntaway-mobile export:web`, served on a free port, driven by `scripts/ui-check.mjs`)
 against a test server with the fake agent; `expo export --platform android` (Hermes bytecode); a release build on an
 Android phone (HE-98). HE-99's screens and its documents were driven on the web build, where a plugin's page is a
 sandboxed `<iframe>`; the web view a phone shows it in (`components/frameView.tsx`) bundles and has not run on one.
+Dictation was driven on the web build with a stand-in for the browser's recogniser (words arriving, stopping, an
+edit, a send, a failure, leaving the screen), and the Android release build compiles with its native module; it has
+not listened on a phone.
 
 What is left, a task each:
 
@@ -1220,9 +1236,10 @@ What is left, a task each:
 3. **Several boards**: one atom registry per board (the client's atoms are per registry), an Inbox across them.
 4. **Expo push** and **answering from the lock screen**: the server's `expo` subscriptions are kept and not pushed to
    (6.8); with them, `push_answer_tokens` and the notification's Allow and Deny.
-5. **Sharing into the app, attachments, dictation**: the old app's share intent, photos and files
-   (`attachments.upload`), voice notes. The web's dictation (HE-89, below) has the server transcribe
-   (`speech.transcribe`), which the phone can send its recording to as well, rather than the platform's recogniser.
+5. **Sharing into the app, attachments, voice notes**: the old app's share intent, photos and files
+   (`attachments.upload`), and a recording attached to a message. Dictation is back with the phone's recogniser
+   (HE-99, above); the web's (HE-89, below) has the server transcribe (`speech.transcribe`), which the phone could
+   send a recording to as well, for a board whose owner wants nothing said to leave their machines.
 6. **One thread model**: the web's `itemModel.ts` and the phone's `thread.ts` moved into `packages/client`, so the two
    apps draw a thread from the same rows.
 

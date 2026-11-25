@@ -6,13 +6,16 @@ import { AsyncResult, Atom } from "effect/reactivity"
 import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { errorText, useAction } from "../state/action"
+import { useDictation } from "../state/dictation"
 import { colors, radius, space } from "../theme"
+import { MicButton } from "./mic"
 import { ErrorText, Icon, s } from "./ui"
 
 // A task's composer: what is typed goes with `sendMessage` (@huntaway/client), which starts the agent's run, steers the
 // running one, or is queued. A send outlives the screen that started it, and only what it took comes off the draft, so
 // text typed meanwhile stays. The draft is kept per task while the app runs. HE-99: its one button sends what is
 // typed, and with nothing typed stops the agent while it runs; a message waiting for the run to end shows above it.
+// Its microphone dictates into the field with the phone's speech recognition (state/dictation.ts).
 
 const draftByKey = Atom.family((_key: string) => Atom.make<ComposerDraft | null>(null).pipe(Atom.keepAlive))
 
@@ -42,11 +45,15 @@ export function Composer({
   const sending = useAtomValue(sendingAtom(ref)) > 0
   const [stopping, stop] = useAction()
   const text = draft?.text ?? ""
+  const write = (t: string) => setDraft((was) => (t === "" ? null : { text: t, files: was?.files ?? [] }))
+  const dictation = useDictation(write)
   const typed = text.trim() !== ""
   const failed = AsyncResult.isFailure(result) && !Cause.hasInterruptsOnly(result.cause) ? errorText(Cause.squash(result.cause)) : null
   const stops = running && !typed
   const go = () => {
     if (stops) return stop(mutate("tasks.stop", host, { id: TaskId.make(taskId) }))
+    // What is sent is what the field holds now: words still on their way would land in the next message.
+    dictation.drop()
     if (typed) send({ body: text.trim(), sent: text, files: [], draft: draftAtom })
   }
   const busy = sending || stopping.busy
@@ -72,16 +79,21 @@ export function Composer({
       )}
       {failed !== null && <ErrorText>{failed}</ErrorText>}
       {stopping.error !== null && <ErrorText>{stopping.error}</ErrorText>}
+      {dictation.error !== null && <ErrorText>{dictation.error}</ErrorText>}
       <View style={[s.row, { alignItems: "flex-end" }]}>
         <TextInput
           style={[s.input, { flex: 1, minHeight: 44, maxHeight: 140, paddingTop: 11, paddingBottom: 11, borderRadius: 22, paddingHorizontal: space.lg }]}
           multiline
-          placeholder={running ? "Steer the agent" : placeholder}
+          placeholder={dictation.phase === "listening" ? "Listening…" : running ? "Steer the agent" : placeholder}
           placeholderTextColor={colors.faint}
           accessibilityLabel={placeholder}
           value={text}
-          onChangeText={(t) => setDraft(t === "" ? null : { text: t, files: draft?.files ?? [] })}
+          onChangeText={(t) => {
+            dictation.edited(t)
+            write(t)
+          }}
         />
+        <MicButton dictation={dictation} text={text} />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={stops ? "Stop the agent" : "Send"}

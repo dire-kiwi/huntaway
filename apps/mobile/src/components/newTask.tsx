@@ -4,12 +4,15 @@ import { Exit } from "effect"
 import { useState } from "react"
 import { ScrollView, Switch, Text, TextInput, View } from "react-native"
 import { useAction } from "../state/action"
+import { useDictation } from "../state/dictation"
 import { openTask } from "../state/open"
 import { colors, space } from "../theme"
+import { MicButton } from "./mic"
 import { Button, Chip, ErrorText, s, Sheet } from "./ui"
 
 // A new task (HE-99: from the Tasks tab, for any of the profile's projects): what the agent should do, in which
-// project, and whether it starts now. Made, it opens.
+// project, and whether it starts now. Made, it opens. What it should do can be said: the field has a microphone
+// (state/dictation.ts).
 
 export function NewTask({
   projects,
@@ -27,8 +30,10 @@ export function NewTask({
   const [description, setDescription] = useState("")
   const [start, setStart] = useState(true)
   const [{ busy, error }, run] = useAction()
+  const dictation = useDictation(setDescription)
   const create = () => {
     if (project === undefined) return
+    dictation.drop()
     const host = project.host_id
     run(
       mutate("tasks.create", host, {
@@ -82,16 +87,23 @@ export function NewTask({
             </ScrollView>
           </View>
         )}
-        <TextInput
-          style={[s.input, { minHeight: 120, textAlignVertical: "top", paddingTop: 12 }]}
-          value={description}
-          onChangeText={setDescription}
-          placeholder="What should the agent do?"
-          placeholderTextColor={colors.faint}
-          accessibilityLabel="What should the agent do?"
-          multiline
-          autoFocus
-        />
+        <View>
+          <TextInput
+            style={[s.input, { minHeight: 120, textAlignVertical: "top", paddingTop: 12 }, dictation.available && { paddingBottom: 52 }]}
+            value={description}
+            onChangeText={(t) => {
+              dictation.edited(t)
+              setDescription(t)
+            }}
+            placeholder={dictation.phase === "listening" ? "Listening…" : "What should the agent do?"}
+            placeholderTextColor={colors.faint}
+            accessibilityLabel="What should the agent do?"
+            multiline
+            autoFocus
+          />
+          <MicButton dictation={dictation} text={description} size={40} style={{ position: "absolute", right: 8, bottom: 8 }} />
+        </View>
+        {dictation.error !== null && <ErrorText>{dictation.error}</ErrorText>}
         <TextInput
           style={s.input}
           value={title}
