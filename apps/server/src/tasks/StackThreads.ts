@@ -6,7 +6,7 @@ import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { sameStart } from "./decide.ts"
-import { stackOf, stackState, stackThreadHeir } from "./lanes.ts"
+import { stackedOn, stackOf, stackState } from "./lanes.ts"
 import type { Rows } from "./lanes.ts"
 import { TaskRepo } from "./TaskRepo.ts"
 import { Actor } from "../platform/Changes.ts"
@@ -59,24 +59,35 @@ const threadsUnder = (rows: Rows, levels: ReadonlyArray<Pick<Task, "id">>): Arra
   rows.filter((t) => isStackThread(t) && levels.some((l) => l.id === t.parent_id)).toSorted(oldestFirst)
 
 /**
+ * Where a thread of task `id`'s stack goes, among `rows`: its stack's bottom, or the task itself while it's held
+ * (`heldLevel`); null for none (gone, a stack thread, or a task in no stack).
+ */
+export const homeIn = (rows: Rows, id: string): TaskId | null => {
+  const level = rows.find((r) => r.id === id && !isStackThread(r))
+  if (level === undefined) return null
+  return stackOf(rows, level)?.bottom.id ?? (heldLevel(rows, level) ? level.id : null)
+}
+
+/** Whether every level of the stack (or held level) at `home` is done. */
+const allDone = (rows: Rows, home: TaskId): boolean => {
+  const level = rows.find((r) => r.id === home)
+  return (level === undefined ? null : groupOf(rows, level))?.every((t) => t.status === "done") ?? true
+}
+
+/**
  * Where the stack threads a change of a task touches go (`before` and `after` the change, null when it was made or
  * deleted), among `rows` (its project's tasks of its profile as they are now, the threads too). Only the threads of the
  * stack the task was in before the change (read from `rows` with the task as it was, so a change the reactor comes to
  * late decides as it would have) and of the one it's in now are touched. Each stays with its stack, under its bottom
  * (which changes when a level is put below it), or under a level held on a deleted or closed level below (`heldLevel`)
- * until the user says where it goes. One whose part of the old stack has neither follows another part that has one and
- * no thread (a split, a deleted middle level); with none, it goes. Two threads in one stack (two stacks joined): the
- * older stays and the other goes.
+ * until the user says where it goes. One whose part of the old stack has neither, or is all done while another part
+ * isn't, follows another part that has a home (a split, a deleted middle level); with none, it goes. Two threads in one
+ * stack (two stacks joined): the older stays and the other goes, whichever side it came from.
  */
 export const settleThreads = (rows: Rows, before: Task | null, after: Task | null): Settled => {
   const changed = after ?? before
   if (changed === null || isStackThread(changed)) return { moves: [], drops: [] }
-  const real = (id: string) => rows.find((r) => r.id === id && !isStackThread(r)) ?? null
-  /** Where a thread of `level`'s stack goes now: its stack's bottom, or the level itself while held; null for none. */
-  const homeOf = (id: string): TaskId | null => {
-    const level = real(id)
-    return level === null ? null : (stackOf(rows, level)?.bottom.id ?? (heldLevel(rows, level) ? level.id : null))
-  }
+  const homeOf = (id: string) => homeIn(rows, id)
   const parent = new Map<TaskId, TaskId | null>(rows.filter(isStackThread).map((t) => [t.id, t.parent_id]))
   const moves: Array<{ readonly id: TaskId; readonly to: TaskId }> = []
   const drops: Array<TaskId> = []
@@ -86,30 +97,33 @@ export const settleThreads = (rows: Rows, before: Task | null, after: Task | nul
   }
   /** The live threads (not dropped) whose level's home is `home`, as moved so far. */
   const threadsAt = (home: TaskId) => [...parent].filter(([t, p]) => !drops.includes(t) && p !== null && homeOf(p) === home).map(([t]) => t)
+  /** The homes a thread may have come to, whose threads are compared after. */
+  const touched = new Set<TaskId>()
 
   // The stack it was in before the change, with the task as it was.
   const then = [...rows.filter((r) => r.id !== changed.id), ...(before === null ? [] : [before])]
   const old = before === null ? null : groupOf(then, before)
   if (old !== null) {
-    const ours = threadsUnder(rows, old)
     const homes = [...new Set(old.map((l) => homeOf(l.id)).filter((h): h is TaskId => h !== null))]
+    // A part with a level still to land first: a thread is for the work still going on.
+    const ranked = [...homes.filter((h) => !allDone(rows, h)), ...homes.filter((h) => allDone(rows, h))]
     const claimed = new Set<TaskId>()
-    // Not claimed by one of these this round, nor home to a thread of another stack's.
-    const free = (h: TaskId) => !claimed.has(h) && threadsAt(h).every((o) => ours.some((x) => x.id === o))
-    for (const t of ours) {
+    for (const t of threadsUnder(rows, old)) {
       const own = t.parent_id === null ? null : homeOf(t.parent_id)
-      const home = own !== null && free(own) ? own : homes.find(free)
+      const keep = own !== null && !claimed.has(own) && !(allDone(rows, own) && ranked.some((h) => h !== own && !allDone(rows, h)))
+      const home = keep ? own : ranked.find((h) => !claimed.has(h))
       if (home === undefined || home === null) drops.push(t.id)
       else {
         claimed.add(home)
+        touched.add(home)
         move(t.id, home)
       }
     }
   }
-  // Two stacks joined: the stack it's in now keeps its older thread.
-  const now = after === null ? null : real(after.id)
-  const home = now === null ? null : homeOf(now.id)
-  if (home !== null) {
+  // The stack it's in now (two stacks joined, say) keeps its older thread, as does any it moved a thread to.
+  const now = after === null ? null : homeOf(after.id)
+  if (now !== null) touched.add(now)
+  for (const home of touched) {
     const threads = threadsAt(home)
       .map((id) => rows.find((r) => r.id === id))
       .filter((t): t is Task => t !== undefined)
@@ -117,7 +131,8 @@ export const settleThreads = (rows: Rows, before: Task | null, after: Task | nul
     for (const t of threads.slice(1)) drops.push(t.id)
     if (threads[0] !== undefined) move(threads[0].id, home)
   }
-  return { moves, drops }
+  // A thread that goes isn't moved first.
+  return { moves: moves.filter((m) => !drops.includes(m.id)), drops }
 }
 
 /**
@@ -134,6 +149,12 @@ const movesStacks = (before: Task | null, after: Task | null): boolean =>
   before.profile_id !== after.profile_id ||
   (before.status === "done") !== (after.status === "done")
 
+/** What `beforeDelete` reads of a task to be deleted. */
+export interface DeleteFacts {
+  readonly thread: TaskId | null
+  readonly on: ReadonlyArray<TaskId>
+}
+
 export interface StackThreadsShape {
   /**
    * The thread of the stack task `id` is in (any level), made the first time it's asked for: in the stack's project,
@@ -144,10 +165,16 @@ export interface StackThreadsShape {
   /** The thread of the stack `task` is in, if it has one; never made here. */
   readonly find: (task: Task) => Effect.Effect<Task | null>
   /**
-   * The stack threads under `task`, which is about to be deleted, and the level each goes under (`stackThreadHeir`, read
-   * now: a merged task's deletion unstacks the levels on it before it's deleted); null when none is left to take them.
+   * Before `task` is deleted (and the levels on a merged one unstacked): the thread of the stack it's in, and the levels
+   * that land on it, as `rehome` needs them once they're unstacked.
    */
-  readonly heirOf: (task: Task) => Effect.Effect<{ readonly threads: ReadonlyArray<TaskId>; readonly heir: TaskId | null }>
+  readonly beforeDelete: (task: Task) => Effect.Effect<DeleteFacts>
+  /**
+   * Once the levels on `task` are unstacked, before its row goes: the stack's thread goes where its part of the stack
+   * will have a home without `task` (`homeIn`), else under the home of a level that landed on it. The thread when it
+   * has none and would go with the row (its run is for the caller to stop); else null.
+   */
+  readonly rehome: (task: Task, facts: DeleteFacts) => Effect.Effect<TaskId | null>
   /** Moves thread `id` under task `to` (the board's change). */
   readonly moveUnder: (id: TaskId, to: TaskId) => Effect.Effect<void>
   /**
@@ -174,10 +201,29 @@ export class StackThreads extends Context.Service<StackThreads, StackThreadsShap
           ? Effect.succeed([])
           : Effect.map(repo.projectTasks(t.project_id), (all) => all.filter((x) => x.kind === "task" && x.profile_id === t.profile_id))
 
-      const heirOf = Effect.fn("StackThreads.heirOf")(function* (task: Task) {
+      const beforeDelete = Effect.fn("StackThreads.beforeDelete")(function* (task: Task): Effect.fn.Return<DeleteFacts> {
         const rows = yield* projectRows(task)
-        const threads = rows.filter((t) => isStackThread(t) && t.parent_id === task.id).map((t) => t.id)
-        return { threads, heir: threads.length === 0 ? null : (stackThreadHeir(rows, task.id)?.id ?? null) }
+        const group = isStackThread(task) ? null : groupOf(rows, task)
+        const thread = rows.find((t) => isStackThread(t) && t.parent_id === task.id) ?? (group === null ? null : threadsUnder(rows, group)[0]) ?? null
+        const on = stackedOn(rows, task.id)
+          .filter((t) => t.kind === "task" && t.merges_into === null && !isStackThread(t))
+          .map((t) => t.id)
+        return { thread: thread?.id ?? null, on }
+      })
+
+      const rehome = Effect.fn("StackThreads.rehome")(function* (task: Task, facts: DeleteFacts) {
+        if (facts.thread === null) return null
+        const rows = (yield* projectRows(task)).filter((t) => t.id !== task.id)
+        const thread = rows.find((t) => t.id === facts.thread)
+        if (thread === undefined) return null
+        const own = thread.parent_id === null ? null : homeIn(rows, thread.parent_id)
+        const homes = facts.on.map((id) => homeIn(rows, id)).filter((h): h is TaskId => h !== null)
+        const open = homes.find((h) => !allDone(rows, h))
+        // Its own part keeps it, unless that's all done and a part that landed on the task isn't.
+        const home = own !== null && (open === undefined || !allDone(rows, own)) ? own : (open ?? homes[0] ?? null)
+        if (home === null) return thread.parent_id === task.id ? thread.id : null
+        if (home !== thread.parent_id) yield* moveUnder(thread.id, home)
+        return null
       })
 
       const moveUnder = Effect.fn("StackThreads.moveUnder")(function* (id: TaskId, to: TaskId) {
@@ -260,7 +306,7 @@ export class StackThreads extends Context.Service<StackThreads, StackThreadsShap
         return made.task
       })
 
-      return StackThreads.of({ thread, find, heirOf, moveUnder, settle })
+      return StackThreads.of({ thread, find, beforeDelete, rehome, moveUnder, settle })
     }),
   )
 }

@@ -1571,15 +1571,18 @@ whole, which the user messages, and which the levels' agents are told to hand st
   deleted, changed in what it starts from or merges into, or closed or reopened; the plan is the pure `settleThreads`).
   A change touches only the threads of the stack the task was in before it (read from the rows with the task as the
   change says it was, so a change the reactor comes to late, after later ones, decides as it would have) and of the one
-  it's in now. A thread stays under its stack's bottom (which changes when a level is put below it), or under a level
-  held on a deleted or closed level below (`heldLevel`: its merge waits for the user to say where it goes), with a brief
-  that says so (`heldBrief`). When its part of the old stack has neither, it follows another part that has one and no
-  thread (a split, a deleted middle level); with none, it's deleted (`TaskDeletion`, which stops its run). Of two
-  threads in one stack (two stacks joined), the older stays and the other is deleted.
-- **Its bottom deleted** (`TaskDeletion`): the level it goes under (`lanes.ts` `stackThreadHeir`, the first landing on
-  the bottom) is read before `Worktrees.forDeletion`, which unstacks the levels on a merged bottom, and it's moved there
-  after that, before the row goes; with no level to take it, its run is stopped first and it goes with the row
-  (`Tasks.delete` emits its `task_deleted`). `decideDeleted` moves it too, for a `Tasks.delete` of its own.
+  it's in now. A thread's home (`homeIn`) is its stack's bottom (which changes when a level is put below it), or a level
+  held on a deleted or closed level below (`heldLevel`: its merge waits for the user to say where it goes; its brief
+  says so, `heldBrief`). A thread whose part of the old stack has no home, or is all done while another part isn't,
+  goes to another part's home (a split, a deleted middle level); with none, it's deleted (`TaskDeletion`, which stops
+  its run). Of two threads in one stack (two stacks joined), the older stays, whichever side it came from, and the other
+  is deleted.
+- **A level deleted** (`TaskDeletion`): the thread of the task's stack and the levels landing on it are read before
+  `Worktrees.forDeletion` (which unstacks the levels on a merged task); after it, on the rows as they'll be without the
+  task, the thread goes where its part will have a home, else (or when its part is all done and theirs isn't) under the
+  home of a level that landed on the task (`beforeDelete`, `rehome`). With no home at all, a thread under the task has
+  its run stopped and goes with the row (`Tasks.delete` emits its `task_deleted`); `decideDeleted` moves one under the
+  task to the first level on it, for a `Tasks.delete` of its own.
 - **Not a task to wait for, start from or merge into**: `checkDependencies`, `checkStartFrom` and `checkMergesInto`
   refuse it (`Invalid`), and the web's dependency and New task pickers leave out a project's rows with a `parent_id`.
 - **Not started on nothing**: a conversation (the assistant, the pens threads, a stack's thread) with no session isn't
@@ -1591,6 +1594,7 @@ whole, which the user messages, and which the levels' agents are told to hand st
 - **Tests**: `tasks/StackThreads.test.ts` (made once, from any level; refused for a task in no stack and for In review;
   what a level and the thread are told; kept when its bottom is deleted, a merged one through `TaskDeletion` too; moved
   to a new bottom and with a split; held with a level on a deleted middle level, then restacked; following the levels on a
-  deleted middle level that weren't flagged; gone once no stack is left; refused as a dependency, start or target),
+  deleted middle level that weren't flagged; kept when a merged level above the bottom is deleted; the older of two
+  joined stacks' threads kept; gone once no stack is left; refused as a dependency, start or target),
   `tasks/settleThreads.test.ts` (the plan, a change come to late among them),
   `system.test.ts`'s two cases, `queue.test.ts`'s empty start, `threadKind.test.ts`'s row.

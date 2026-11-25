@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect } from "effect"
+import { TestClock } from "effect/testing"
 import type { Task } from "@huntaway/contracts"
 import { gitRepo, TestBoard } from "@huntaway/testing"
 import { Prompts } from "../agents/Prompts.ts"
@@ -224,6 +225,50 @@ describe("StackThreads", () => {
         assert.strictEqual(yield* tag(tasks.update(lone.id, { depends_on: [made.id] }, Actor.user)), "Invalid")
         assert.strictEqual(yield* tag(tasks.update(lone.id, { merges_into: made.id }, Actor.user)), "Invalid")
         assert.strictEqual(yield* tag(tasks.update(lone.id, { start_from: { type: "task", task_id: made.id } }, Actor.user)), "Invalid")
+      }),
+    ),
+  )
+
+  it.effect("keeps the stack's thread when a merged level above the bottom is deleted", () =>
+    run(
+      Effect.gen(function* () {
+        const threads = yield* StackThreads
+        const tasks = yield* Tasks
+        const { a, b, c } = yield* board
+        const d = yield* startFrom(
+          yield* tasks.create({ project_id: a.project_id ?? assert.fail("no project"), title: "Export" }, Actor.user).pipe(Effect.orDie),
+          c,
+        )
+        const made = yield* threads.thread(d.id)
+        for (const t of [a, b]) yield* tasks.change(t.id, () => ({ status: "done", resolution: "done" }), Actor.user).pipe(Effect.orDie)
+        yield* settled
+        yield* deleteTask(b.id)
+        yield* settled
+        assert.strictEqual(yield* parentOf(made.id), c.id)
+        assert.strictEqual((yield* threads.thread(d.id)).id, made.id)
+      }),
+    ),
+  )
+
+  it.effect("keeps the older thread when two stacks are joined, whichever side it's on", () =>
+    run(
+      Effect.gen(function* () {
+        const threads = yield* StackThreads
+        const tasks = yield* Tasks
+        const { project, a, b, c } = yield* board
+        // Another stack, x then y, whose thread is made first.
+        const x = yield* tasks.create({ project_id: project.id, title: "Other" }, Actor.user).pipe(Effect.orDie)
+        const y = yield* startFrom(yield* tasks.create({ project_id: project.id, title: "Other on it" }, Actor.user).pipe(Effect.orDie), x)
+        const older = yield* threads.thread(y.id)
+        yield* TestClock.adjust("1 second")
+        const newer = yield* threads.thread(c.id)
+        yield* settled
+        // x's stack (with the older thread) put on c, the top of the other.
+        yield* startFrom(x, c)
+        yield* settled
+        assert.strictEqual(yield* parentOf(newer.id), "gone")
+        assert.strictEqual(yield* parentOf(older.id), a.id)
+        assert.strictEqual((yield* threads.thread(b.id)).id, older.id)
       }),
     ),
   )

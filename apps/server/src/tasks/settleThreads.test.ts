@@ -46,6 +46,19 @@ describe("settleThreads", () => {
     assert.deepStrictEqual(settleThreads([task("a"), closed, thread("s", "c")], on("c", "b"), closed), { moves: [], drops: [T("s")] })
   })
 
+  it("keeps the older thread of two stacks joined, from the stack that moved too", () => {
+    // c (with d on it, and the older thread) put on b: a's thread is the newer, and goes.
+    const rows = [task("a"), on("b", "a"), on("c", "b"), on("d", "c"), thread("s", "a", "2026-11-02T10:00:00.000Z"), thread("t", "c")]
+    assert.deepStrictEqual(settleThreads(rows, task("c"), on("c", "b")), { moves: [{ id: T("t"), to: T("a") }], drops: [T("s")] })
+  })
+
+  it("leaves a part that's all done for one with work still to land", () => {
+    // a and b merged, and b being deleted: c is taken off it (unstacked) first, leaving a and b, all done.
+    const merged = { status: "done", resolution: "done" } as const
+    const rows = [task("a", merged), on("b", "a", merged), task("c"), on("d", "c"), thread("s", "a")]
+    assert.deepStrictEqual(settleThreads(rows, on("c", "b"), task("c")), { moves: [{ id: T("s"), to: T("c") }], drops: [] })
+  })
+
   it("keeps the older thread of two stacks joined", () => {
     const rows = [task("a"), on("b", "a"), on("c", "b"), on("d", "c"), thread("s", "a"), thread("t", "c", "2026-11-02T10:00:00.000Z")]
     assert.deepStrictEqual(settleThreads(rows, task("c"), on("c", "b")), { moves: [], drops: [T("t")] })

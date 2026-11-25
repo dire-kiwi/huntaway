@@ -44,13 +44,13 @@ export class TaskDeletion extends Context.Service<TaskDeletion, TaskDeletionShap
         yield* runs.abort(id)
         const reviewThreads = yield* repo.reviewThreads(id)
         for (const r of reviewThreads) yield* runs.abort(r.id)
-        // HE-105: its stack's thread goes under the level that's the bottom after it, read before `forDeletion` (which
-        // unstacks the levels on a merged task); with none left to take it, it goes with it, its run stopped first.
-        const stack = yield* stackThreads.heirOf(task)
-        if (stack.heir === null) for (const t of stack.threads) yield* runs.abort(t)
+        // HE-105: its stack's thread, and the levels on it, read before `forDeletion` (which unstacks the levels on a merged
+        // task); then, on the rows as they'll be without it, the thread goes where its stack will have a home. With none,
+        // under the task, it goes with the row, its run stopped first.
+        const stack = yield* stackThreads.beforeDelete(task)
         yield* worktrees.forDeletion(task, options.deleteBranch)
-        // Moved after, so nothing moves it back to this task while its levels are being unstacked.
-        if (stack.heir !== null) for (const t of stack.threads) yield* stackThreads.moveUnder(t, stack.heir)
+        const homeless = yield* stackThreads.rehome(task, stack)
+        if (homeless !== null) yield* runs.abort(homeless)
         // 6.4: its review and summary threads' own skills folders go with them.
         const skillFolders = Effect.forEach(reviewThreads, (r) => (r.project_id === null ? Effect.void : agentTools.removeThreadSkills(r.project_id, r.id)), {
           concurrency: 1,
