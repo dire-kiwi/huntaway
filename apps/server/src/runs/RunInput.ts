@@ -240,8 +240,8 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
        * HE-113: what was queued for the task while the agent worked goes to it now that its turn is over, as steers of
        * its run, in the order queued, so that it starts the agent's next turn rather than waiting for the run to end
        * and a new one to start on it: the messages ahead of the first `/compact` or `/plan`, which stays queued with what
-       * follows it for the run's end (`queuedForTurnEnd`). Not into a run that is stopped or failed its turn, or one
-       * that can't take them. Whether any went.
+       * follows it for the run's end (`queuedForTurnEnd`); blank ones are dropped, not sent. Not into a run that is
+       * stopped or failed its turn, or one that can't take them. Whether any went.
        */
       const steerQueued = Effect.fnUntraced(function* (run: Run) {
         const at = yield* nowTimestamp
@@ -252,9 +252,12 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
             if (Option.isNone(row) || row.value.stop !== "none" || row.value.result_error !== null) return false
             const queued = yield* tasks.queued(run.task_id)
             const n = yield* queuedForTurnEnd(row.value, queued)
-            if (n === 0) return false
+            // A blank one (a Start queued behind dependencies or a usage limit) is no message: the run it asked for is
+            // this one. It goes with the messages, or stays, harmless, when there are none.
+            const messages = queued.slice(0, n).filter((q) => q.text.trim() !== "")
+            if (messages.length === 0) return false
             const all = yield* tasks.takeQueued(run.task_id)
-            for (const q of all.slice(0, n)) {
+            for (const q of messages) {
               const id = yield* random.uuidV4()
               yield* tasks.addSteer(
                 run.task_id,

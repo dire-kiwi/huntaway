@@ -133,12 +133,14 @@ export const plainAhead = (queued: ReadonlyArray<{ readonly text: string }>): nu
 
 /**
  * How many of the queued messages, from the front, a run's start takes (`take` not `No`): the plain messages ahead of
- * the first `/compact` or `/plan`; with none, a run for what is queued (`Only`) takes that one alone, and a run for a
- * message of its own (`Ahead`) none. The rest stay queued, for when it ends.
+ * the first `/compact` or `/plan`; with none that says anything (a blank one is a Start queued behind dependencies or a
+ * usage limit), a run for what is queued (`Only`) takes that command too, and a run for a message of its own (`Ahead`)
+ * only the blank ones. The rest stay queued, for when it ends.
  */
 export const takenAtStart = (queued: ReadonlyArray<{ readonly text: string }>, take: Take): number => {
   const plain = plainAhead(queued)
-  return plain > 0 || take !== "Only" ? plain : Math.min(1, queued.length)
+  const says = queued.slice(0, plain).some((q) => q.text.trim() !== "")
+  return says || take !== "Only" ? plain : Math.min(plain + 1, queued.length)
 }
 
 /** What a run's start does with the thread's queue: `Ahead` takes it ahead of the message; `Only` is for what is queued. */

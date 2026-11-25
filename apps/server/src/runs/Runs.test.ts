@@ -287,6 +287,30 @@ describe("Runs.send", () => {
     ),
   )
 
+  it.effect("a blank Start left queued is sent nothing at the turn's end, and doesn't hold a /plan behind it (HE-113)", () =>
+    run(
+      Effect.gen(function* () {
+        const runs = yield* Runs
+        const queue = yield* TaskRepo
+        const blank = { text: "", source: "user", automation_run_id: null } as const
+        // A task started behind its dependencies keeps its blank Start queued; its run starts with the board's message.
+        const { task: id, agent } = yield* running()
+        yield* queue.enqueue(id, blank, AT)
+        yield* output(agent, [result("success", 0.1)])
+        assert.deepStrictEqual(yield* userLines(agent), [])
+        assert.deepStrictEqual((yield* task(id)).steering, [])
+        assert.isTrue(yield* agent.inputClosed)
+
+        // A blank Start and a `/plan` queued behind dependencies: once they're merged, the run starts on the `/plan`.
+        const waiting = yield* newTask({ status: "todo" })
+        yield* queue.enqueue(waiting, blank, AT)
+        yield* queue.enqueue(waiting, { text: "/plan do it", source: "user", automation_run_id: null }, AT)
+        const t = yield* runs.sendQueued(waiting)
+        assert.deepStrictEqual([t.running, t.queued_message], [true, null])
+      }),
+    ),
+  )
+
   it.effect("queues for runs that can't take messages: an older build's, and /compact", () =>
     run(
       Effect.gen(function* () {

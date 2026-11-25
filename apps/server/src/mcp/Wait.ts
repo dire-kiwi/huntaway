@@ -167,7 +167,8 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
         if (current.moved_to !== undefined) return { _tag: "Moved", status: current.moved_to } satisfies Ended
         // A message the user queued for after the agent's turn goes to it once the turn ends (HE-113): it doesn't end the
         // wait, which is the turn's. What waits for the run's end ends it, as before, so that the run can end.
-        const queued = yield* tasks.queued(task)
+        // A blank one (a Start queued behind dependencies) is no message.
+        const queued = (yield* tasks.queued(task)).filter((q) => q.text.trim() !== "")
         if (queued.length > (yield* input.queuedForTurnEnd(run.value, queued)) || (yield* tasks.steers(task, wait.run_id)).length > 0) {
           return { _tag: "Message" } satisfies Ended
         }

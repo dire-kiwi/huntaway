@@ -54,7 +54,8 @@ and the 5-hour-window restarter.
   `RunInput.queuedForTurnEnd`); what waits for the run's end still does.
 - HE-113 (new): a queued `/compact` or `/plan` goes alone. A run's start takes the queued messages ahead of the first
   of them (`takenAtStart`); a run for what is queued (`Only`) with one first takes it alone; the rest stay queued and
-  go when that run ends. Before, the queue was joined into one text, so a message and a `/compact` became one prompt,
+  go when that run ends. A blank row (a Start queued behind dependencies or a usage limit) is no message: it is never
+  steered, ends no wait, and a run for what is queued takes it with the command after it. Before, the queue was joined into one text, so a message and a `/compact` became one prompt,
   or a compaction with the message as its instructions.
 - Requeue never-taken-in steers ahead of anything queued later (`requeue_steers`, `requeue_ahead`).
 - Unqueue (give the text back to the user) (`unqueue`).

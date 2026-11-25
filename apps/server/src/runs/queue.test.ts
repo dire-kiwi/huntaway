@@ -92,6 +92,10 @@ describe("decideSend", () => {
     assert.strictEqual(takenAtStart(rows("/compact", "b"), "Ahead"), 0)
     assert.strictEqual(takenAtStart(rows("a", "b"), "Ahead"), 2)
     assert.strictEqual(takenAtStart([], "Only"), 0)
+    // A blank one (a Start queued behind dependencies) says nothing: the command goes with it.
+    assert.strictEqual(takenAtStart(rows("", "/plan it"), "Only"), 2)
+    assert.strictEqual(takenAtStart(rows("", "/compact", "b"), "Only"), 2)
+    assert.strictEqual(takenAtStart(rows("", "/plan it"), "Ahead"), 1)
   })
 
   it("waits for dependencies, but not for a compaction, a merging task, the board's own message or a host without agents", () => {
