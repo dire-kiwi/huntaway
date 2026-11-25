@@ -344,6 +344,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           effort,
           permissionMode,
           outputStyle: nonBlank(task.output_style ?? null),
+          codeMode: host.experiments?.includes("code_mode") === true,
           rules: yield* rules.forTask(task),
           tools: yield* agentTools.forRun(task),
           served,

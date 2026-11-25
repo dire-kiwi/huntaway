@@ -125,6 +125,11 @@ export interface ClaudeLaunchInput {
   readonly permissionMode: PermissionMode
   /** HE-102: the task's output style (`/output-style`), given as a setting; null (or left out) for Claude Code's own settings'. */
   readonly outputStyle?: string | null | undefined
+  /**
+   * HE-107: ask Claude Code for its Code Mode (the `code_mode` experiment). Claude Code decides whether the run gets it,
+   * and says so in a `system/notification` line when it doesn't. False (or left out): not asked for.
+   */
+  readonly codeMode?: boolean | undefined
   /** The thread's approval rules (all modes'), if it has any. */
   readonly rules: Rules | null
   /** The project's own skills and MCP servers, and those it turns off. */
@@ -246,9 +251,11 @@ export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec
       const rulesHook = rules === null ? null : yield* claudeHook(input.exe, rules)
       if (rulesHook !== null) hooks.push(rulesHook)
     }
-    // The hooks and the task's output style, which outranks the user's and the project's settings files.
+    // The hooks, the task's output style, which outranks the user's and the project's settings files, and Code Mode,
+    // which a `-p` run takes only from here (not from the environment or the settings files).
     const outputStyle = input.outputStyle ?? null
-    if (hooks.length > 0 || outputStyle !== null) args.push("--settings", yield* hookSettings(hooks, outputStyle))
+    const codeMode = input.codeMode === true
+    if (hooks.length > 0 || outputStyle !== null || codeMode) args.push("--settings", yield* hookSettings(hooks, outputStyle, codeMode))
     // The board's tools never need approval, nor do some of the gh server's, nor the desktop's that only look, nor a
     // plugin's whose tools only touch its own data (the docs plugin's).
     args.push("--allowedTools", ...boardToolsAllowed(input.permissionMode, toolNames(input.mcp.manifest)))

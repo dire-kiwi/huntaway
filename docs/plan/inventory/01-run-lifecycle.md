@@ -276,7 +276,8 @@ Shim binary lookup (`shim_path`): `$IA_SHIM_BIN`; else the newer of `target/{rel
 --append-system-prompt-file <run dir>/system-prompt.md        # file, not arg: can exceed 128 KiB
 --permission-mode <default|acceptEdits|auto|plan|dontAsk|bypassPermissions>
 [--permission-prompt-tool stdio]                              # input && (mode != bypassPermissions || rules need a prompt)
-[--settings '{"hooks":{"PreToolUse":[…]}}']                   # gh hook and/or approval-rules hook
+[--settings '{"hooks":{"PreToolUse":[…]},"outputStyle":…,"env":{"CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"1"}}']
+                                                              # hooks, output style, Code Mode (HE-107): each when there is one
 --allowedTools <tool> <tool> …                                # separate args, see below
 [--disallowedTools "<space-joined list>"]
 [--resume <session id> [--resume-session-at <message uuid>]]  # rewind
@@ -320,7 +321,8 @@ response:{mcp_response:<JSON-RPC>}}` or `{subtype:"error", request_id, error}`.
 
 ### Claude lines the server reads from `out.jsonl`
 `system`/`init` (session id; a turn starts), `system`/`compact_boundary`, `system`/`background_tasks_changed`,
-`system`/`task_started|task_progress|task_updated|task_notification`, `rate_limit_event`, `stream_event` (top level only:
+`system`/`task_started|task_progress|task_updated|task_notification`, `system`/`model_refusal_fallback|model_fallback`
+(HE-59), `system`/`notification` (only `code-mode…` keys are shown, HE-107), `rate_limit_event`, `stream_event` (top level only:
 `message_start`, `content_block_start`, `content_block_delta` text deltas), `assistant`, `user` (tool results; `isReplay`
 echoes), `control_request` (`can_use_tool`, `mcp_message`; others answered with an error), `control_cancel_request`,
 `control_response` (to `huntaway-init-`, `bgstop-`, `context-` ids), `result`. Any line with a `method` field is Codex's.

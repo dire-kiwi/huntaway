@@ -6,6 +6,7 @@ import {
   type ClaudeLine,
   type CompactBoundaryLine,
   ModelFallbackLine,
+  type NotificationLine,
   type ResultLine,
   type TaskLine,
   TextBlock,
@@ -133,6 +134,7 @@ export const translate = (state: TranslatorState, line: ClaudeLine, ctx: LineCon
         step.effects.push({ _tag: "TurnStarted", from: "init" })
       } else if (line.subtype === "compact_boundary") compactBoundary(step, line)
       else if (isModelFallback(line)) modelFallback(step, line)
+      else if (line.subtype === "notification") notification(step, line)
       else if (line.subtype !== "background_tasks_changed") job(step, line)
       break
     case "stream_event":
@@ -183,6 +185,17 @@ const modelFallback = (step: Step, line: ModelFallbackLine): void => {
   }
   step.add(notice)
   if (!local) step.effects.push({ _tag: "ModelFallback", from: line.original_model, to: line.fallback_model, reason: refusal ? "refusal" : "error" })
+}
+
+/**
+ * Claude Code's notice about Code Mode (HE-107): a notice in the thread, a warning when Claude Code colours it one (it
+ * didn't start in Code Mode, and why). Its other notifications aren't shown.
+ */
+const notification = (step: Step, line: NotificationLine): void => {
+  const text = line.text ?? ""
+  if (!(line.key ?? "").startsWith("code-mode") || text === "") return
+  const level = line.color === "error" ? "error" : line.color === "warning" ? "warning" : "info"
+  step.add({ id: step.id(), type: "notice", level, text, created_at: step.ctx.at })
 }
 
 // ---------- what a line tells the run ----------

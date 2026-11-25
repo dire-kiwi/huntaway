@@ -31,6 +31,12 @@ export const EXPERIMENTS = [
     description:
       "Agents are told they can put interactive UI in a reply: an A2UI block, drawn in the thread as cards, choices, forms and buttons in the board's look. What you pick or fill in goes back to the agent as your message. Blocks are drawn whether this is on or not; it decides whether new runs are told about them.",
   },
+  {
+    id: "code_mode",
+    name: "Claude Code's Code Mode",
+    description:
+      "Claude Code agents start in Code Mode (Claude Code's own experiment, CLAUDE_CODE_EXPERIMENTAL_CODE_MODE): the agent works by writing scripts that call its tools, rather than one tool call at a time. From each thread's next run. Claude Code decides whether a run gets it (for now only on the Anthropic API, not through a gateway or cloud provider, and only for newer models); when it doesn't, the thread says why and the run goes on with the ordinary tools.",
+  },
 ] as const
 
 /** An experiment's id. */

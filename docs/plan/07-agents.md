@@ -1511,6 +1511,24 @@ board has its own, for a Claude task:
 - **The composer** (`task/SkillMenu.tsx`) offers `/output-style` (with the style it has now), and once its name is
   being typed lists the styles, the current one marked; picking one fills in `/output-style <name>`, and Enter sends it.
 
+### Code Mode (HE-107)<a id="code-mode"></a>
+
+Claude Code's Code Mode (its own experiment, `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`) has the agent work through a REPL
+tool, writing JavaScript scripts that call its tools, rather than one tool call at a time. The board's `code_mode`
+experiment (Settings → Experiments, [09-frontend.md](09-frontend.md#experiments-he-22)) asks for it on every Claude run.
+
+- **Asked for in `--settings`.** A `-p` run takes the variable only from `--settings` (Claude Code's `flagSettings`):
+  from the environment or the settings files it refuses it (`not_passed`). So `LaunchFacts.claude` gives `claudeLaunch`
+  `codeMode` (the host's `experiments` has `code_mode`, read at each launch), and `hookSettings` adds
+  `env: { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: "1" }` beside the hooks and the output style. Nothing else changes: a
+  thread's next run asks for it once it is on, and stops asking once it is off. Codex and ACP runs have no such thing.
+- **Claude Code decides.** It refuses a run Code Mode when it goes through a gateway or a cloud provider (a config's
+  proxy, `ANTHROPIC_BASE_URL` in the config folder's settings), on a model older than Opus 5.5 or Fable 5.2, with
+  tools that leave its REPL out, and for its other reasons; then it starts with the ordinary tools and writes
+  `system`/`notification` with `key: "code-mode-opt-in"` and why. The translator turns its `code-mode…` notifications
+  into thread notices (a warning when Claude Code colours it one) and drops its other notifications.
+- **Checks.** `launch.test.ts` (the setting with and without hooks, none when off), `translate.test.ts` (the notice).
+
 ### As built in 4.8 (HE-5): stack titles
 
 - **`agents/StackTitles.ts`** (the old `agent/stack_title.ts`, HA-387) writes a stack's title and description with the

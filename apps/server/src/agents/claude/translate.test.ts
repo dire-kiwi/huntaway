@@ -395,6 +395,20 @@ describe("translate", () => {
     assert.deepStrictEqual(c.codes, [])
   })
 
+  it("Claude Code's notice about Code Mode is shown, and its other notifications aren't (HE-107)", () => {
+    const refused = "Code Mode (experimental) isn't available: for now claude -p and Agent SDK apps get it only on the Anthropic API."
+    const c = convert([
+      task(1, { subtype: "notification", key: "code-mode-opt-in", text: refused, priority: "high", color: "warning" }),
+      task(2, { subtype: "notification", key: "code-mode-opt-in", text: "Code Mode is on." }),
+      task(3, { subtype: "notification", key: "something-else", text: "Not for the thread", color: "warning" }),
+    ])
+    const items = byId(c)
+    assert.deepStrictEqual(items["legacy:1"], { id: "legacy:1", type: "notice", level: "warning", text: refused, created_at: atOf(1) })
+    assert.strictEqual(items["legacy:2"]?.type === "notice" ? items["legacy:2"].level : null, "info")
+    assert.isUndefined(items["legacy:3"])
+    assert.deepStrictEqual(c.effects, [[], [], []])
+  })
+
   it("a subagent that runs again keeps when it first ended until it does", () => {
     const start = [
       assistant(1, null, [{ type: "tool_use", id: "bg", name: "Agent", input: { description: "Away", run_in_background: true } }]),
