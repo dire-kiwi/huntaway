@@ -3,46 +3,46 @@ import { Bot, ChevronDown, Loader2 } from "lucide-react"
 import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { createPortal } from "react-dom"
 import { useNarrow } from "../../narrow"
-import { subagentTitle, useSubagentView } from "../task/thread/subagentView"
+import { subagentTitle, useSubagentView, type Subagent } from "../task/thread/subagentView"
 import { SubagentStatusBadge } from "../task/thread/subagents"
 import { useThreadModel } from "../task/thread/threadView"
 import { useDismiss } from "../ui"
 
-/** Running/finished counts of the thread's subagents; opens a list that shows each one's own thread. */
-export function AgentsPill({
-  task,
-  onReveal,
-  className,
-}: {
-  task: { readonly host_id: string; readonly id: string; readonly running: boolean }
-  onReveal?: (() => void) | undefined
-  className?: string | undefined
-}) {
+/** The thread's subagents, newest first with the running ones on top, and how many are running and done. */
+export function useSubagentList(task: { readonly host_id: string; readonly id: string; readonly running: boolean }) {
   // The thread's own model (itemModel builds it once for both): a long thread's window knows the subagents started
   // before it, so the list has every one.
   const model = useThreadModel(task)
-  const subagents = useMemo(() => [...model.subagents.values()], [model.subagents])
+  return useMemo(() => {
+    const list = [...model.subagents.values()].toReversed().toSorted((a, b) => Number(b.status === "running") - Number(a.status === "running"))
+    const running = list.filter((s) => s.status === "running").length
+    return { list, running, settled: list.length - running }
+  }, [model.subagents])
+}
+
+/** How many of the thread's subagents are running and done. */
+export const subagentCounts = (running: number, settled: number) =>
+  [running > 0 && `${running} running`, settled > 0 && `${settled} done`].filter(Boolean).join(" · ")
+
+/** The subagents as buttons that each show the subagent's own thread (after `onPick`, and `onReveal` to show the thread). */
+export function SubagentItems({
+  task,
+  list,
+  onPick,
+  onReveal,
+}: {
+  task: { readonly id: string }
+  list: readonly Subagent[]
+  onPick?: (() => void) | undefined
+  onReveal?: (() => void) | undefined
+}) {
   const viewing = useSubagentView((s) => s.open[task.id])
   const show = useSubagentView((s) => s.show)
-  const [open, setOpen] = useState(false)
-  // In the narrow layout the list is a sheet along the window's bottom, drawn on the page's body: the header's row of
-  // controls fades its end out with a mask, which would hide it.
-  const narrow = useNarrow()
-  const menu = useRef<HTMLDivElement>(null)
-  const root = useDismiss<HTMLDivElement>(open, () => setOpen(false), menu)
-  const place = usePlace(root, open && !narrow)
-
-  if (subagents.length === 0) return null
-  const running = subagents.filter((s) => s.status === "running").length
-  const settled = subagents.length - running
-  // Newest first, running ones on top.
-  const list = subagents.toReversed().toSorted((a, b) => Number(b.status === "running") - Number(a.status === "running"))
-
-  const items = list.map((s) => (
+  return list.map((s) => (
     <button
       key={s.id}
       onClick={() => {
-        setOpen(false)
+        onPick?.()
         onReveal?.()
         show(task.id, s.id)
       }}
@@ -58,6 +58,32 @@ export function AgentsPill({
       <SubagentStatusBadge s={s} compact />
     </button>
   ))
+}
+
+/**
+ * Running/finished counts of the thread's subagents; opens a list that shows each one's own thread. Where the column
+ * beside the thread is shown, the list is there instead (details/SubagentsSection.tsx, HE-112).
+ */
+export function AgentsPill({
+  task,
+  onReveal,
+  className,
+}: {
+  task: { readonly host_id: string; readonly id: string; readonly running: boolean }
+  onReveal?: (() => void) | undefined
+  className?: string | undefined
+}) {
+  const { list, running, settled } = useSubagentList(task)
+  const [open, setOpen] = useState(false)
+  // In the narrow layout the list is a sheet along the window's bottom, drawn on the page's body: the header's row of
+  // controls fades its end out with a mask, which would hide it.
+  const narrow = useNarrow()
+  const menu = useRef<HTMLDivElement>(null)
+  const root = useDismiss<HTMLDivElement>(open, () => setOpen(false), menu)
+  const place = usePlace(root, open && !narrow)
+
+  if (list.length === 0) return null
+  const items = <SubagentItems task={task} list={list} onPick={() => setOpen(false)} onReveal={onReveal} />
 
   return (
     <div ref={root} className={clsx("relative shrink-0", className)}>
@@ -72,11 +98,7 @@ export function AgentsPill({
       >
         {running ? <Loader2 size={12} className="animate-spin text-st-progress" /> : <Bot size={13} />}
         Agents
-        <span className="text-faint">
-          {running > 0 && `${running} running`}
-          {running > 0 && settled > 0 && " · "}
-          {settled > 0 && `${settled} done`}
-        </span>
+        <span className="text-faint">{subagentCounts(running, settled)}</span>
         <ChevronDown size={11} className="text-faint" />
       </button>
       {open &&

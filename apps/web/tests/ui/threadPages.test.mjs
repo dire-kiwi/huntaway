@@ -105,8 +105,8 @@ test("a long thread opens at its latest window and loads older pages as it's scr
     )
     assert.equal(await page.getByText("Step 200 of the job.", { exact: true }).count(), 0)
     assert.equal(await page.getByText("Step 201 of the job.", { exact: true }).count(), 1)
-    // The subagent started before the window is in the Agents list (stopped with the run).
-    assert.match(await page.getByTitle("Subagents in this thread").innerText(), /1 done/)
+    // The subagent started before the window is in the Subagents list beside the thread (stopped with the run).
+    assert.match(await page.locator("section:has([data-subagents])").innerText(), /1 done/)
 
     // At the top: the page before comes in above, and what was on screen stays put.
     await threadScroller(page).evaluate((el) => (el.scrollTop = 0))
@@ -141,7 +141,7 @@ test("a subagent from before the window opens from the Agents list, and the thre
     await threadScroller(page).evaluate((el) => (el.scrollTop = el.scrollHeight - el.clientHeight - 1500))
     const shown = await topItem(page)
 
-    await ui.run(["click Subagents in this thread", "click css=.shadow-xl button:has-text('Watch the logs')", "wait Show in thread"])
+    await ui.run(["click css=[data-subagents] button:has-text('Watch the logs')", "wait Show in thread"])
     // It loads back to the subagent's start, for what it did.
     await ui.run(["wait Watcher reading the logs.", "wait Watch the logs as it goes.", "gone Load earlier messages", "gone Step 350 of the job."])
 
@@ -177,7 +177,7 @@ test("a failed page while loading back to a subagent can be tried again from its
     let failing = true
     await routeRpc(page, (r) => (r.tag === "threads.page" && failing ? failure({ _tag: "NotFound", what: "task", id: task.id }) : undefined))
     await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "wait Step 350 of the job."])
-    await ui.run(["click Subagents in this thread", "click css=.shadow-xl button:has-text('Watch the logs')", "wait Show in thread"])
+    await ui.run(["click css=[data-subagents] button:has-text('Watch the logs')", "wait Show in thread"])
     await ui.run(["wait Couldn't load earlier messages. Try again", "gone Watcher reading the logs."])
     failing = false
     await ui.run([
