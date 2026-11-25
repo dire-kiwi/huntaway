@@ -227,6 +227,9 @@ const SETUP_COMMANDS = new Set(["cd", "pushd", "export", "source", ".", "echo", 
 /** A word's last path part (`target/release/app-server` → `app-server`). */
 const baseName = (w: string): string => w.slice(w.lastIndexOf("/") + 1)
 
+/** Programs that run the script after them (`node scripts/build.mjs`), whose name says what it is. */
+const INTERPRETERS = new Set(["node", "tsx", "bun", "deno", "bash", "sh", "zsh", "python", "python3"])
+
 /**
  * Whether a script's or program's file name says it is waited on (`scripts/build.mjs`, `./run-tests.sh`, `ia-api
  * wait-idle`), but not a server's (`scripts/test-server.sh`).
@@ -242,8 +245,10 @@ const waitedName = (w: string): boolean => {
  * scripts/build.mjs` one the agent waits to hear the end of, even if what it runs listens on ports, as a test run's
  * servers do), or neither (`null`), by its words, not its text: redirections (`> $TMPDIR/test.log`, `2>/dev/null`),
  * `cd` and the like, variables and launchers (`exec`, `nohup`) before a command, and words with a `/` (paths such as
- * `apps/server`) don't count, but for the program's own path, which counts by its name, and a path's or a hyphenated
- * word's file name, which can say it's waited on. A Bash call's description ("Run the e2e tests") reads the same way.
+ * `apps/server`) don't count, but for the program's own path, which counts by its name. The name of what is run (the
+ * program, the script an interpreter runs, a hyphenated subcommand right after the program: `./run-tests.sh`, `node
+ * scripts/build.mjs`, `ia-api wait-idle`) can say it's waited on; other arguments' (`-C …/12-fix-build`, `--filter
+ * web-test`, `npx serve ./build`) can't (HE-106). A Bash call's description ("Run the e2e tests") reads the same way.
  */
 const commandKind = (command: string | null | undefined): "server" | "waited" | null => {
   if (command === null || command === undefined || command === "") return null
@@ -259,9 +264,11 @@ const commandKind = (command: string | null | undefined): "server" | "waited" | 
     const first = words[0]
     if (first === undefined || SETUP_COMMANDS.has(first)) continue
     if (WAITED_COMMANDS.has(first.toLowerCase())) return "waited"
+    const script = INTERPRETERS.has(baseName(first.toLowerCase())) ? words.findIndex((w, i) => i > 0 && !w.startsWith("-")) : -1
     for (let i = 0; i < words.length; i++) {
       const raw = (words[i] ?? "").toLowerCase()
-      if ((i === 0 || raw.includes("/") || (raw.includes("-") && !raw.startsWith("-"))) && waitedName(raw)) return "waited"
+      const run = i === 0 || i === script || (i === 1 && raw.includes("-") && !raw.startsWith("-") && !raw.includes("/"))
+      if (run && waitedName(raw)) return "waited"
       if (raw.includes("/") && i > 0) continue
       const w = baseName(raw)
       const head = w.split(":")[0] ?? w

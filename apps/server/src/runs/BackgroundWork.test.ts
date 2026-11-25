@@ -378,6 +378,21 @@ describe("background work", () => {
         "tail -f logs/api-server",
         "astro dev --config test.config.mjs",
         "scripts/test-server.sh --seed",
+        // Arguments naming a waited-on file or folder don't make a server's command waited on.
+        "npx serve ./build",
+        "npx http-server ./test-fixtures",
+        "python3 -m http.server 8000 -d ./build",
+        "python3 -m http.server --directory ./build 8000",
+        "pnpm -C /home/me/worktrees/120-fix-flaky-tests dev",
+        "pnpm -C packages/test-app dev",
+        "vite --config ./vite.test.config.ts",
+        "vite --root /x/worktrees/12-fix-build",
+        "astro dev --config ./test.config.mjs",
+        "pnpm --filter web-test dev",
+        "pnpm --filter test-app dev",
+        "pnpm --filter ci-dashboard dev",
+        "pnpm --filter ./apps/web-e2e dev",
+        "pnpm dev 2>&1 | tee $TMPDIR/dev-build.log",
         null,
       ]) {
         assert.isTrue(mayOutliveTurn(c), String(c))
