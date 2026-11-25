@@ -4,7 +4,7 @@ import { clsx } from "clsx"
 import { Exit } from "effect"
 import { Bot, GitBranch, GitPullRequest, Loader2, MessageSquareText, Puzzle, ScanSearch, SlidersHorizontal, SquareTerminal, Workflow, Zap } from "lucide-react"
 import { Fragment, useMemo, useState, type ReactNode } from "react"
-import { groupNames } from "../../../projectGroups"
+import { profileGroupNames } from "../../../projectGroups"
 import { useBoard } from "../../../state/board"
 import { exitError, useMutation } from "../../../state/mutation"
 import { navigate } from "../../../state/route"
@@ -176,7 +176,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
   const [moveRepo, setMoveRepo] = useState(false)
   const hostMode = useBoard((s) => (project ? s.hostSettings[project.host_id]?.default_permission_mode : null)) ?? "default"
   const allProjects = useBoard((s) => s.projects)
-  const groups = useMemo(() => (project ? groupNames(allProjects, project.host_id) : []), [allProjects, project])
+  const groups = useMemo(() => (project ? profileGroupNames(allProjects, project) : []), [allProjects, project])
   if (!project) return <div className="p-8 text-muted">Project not found.</div>
   const form: ProjectForm = Object.assign({}, project, edits)
   const tabs = PROJECT_TABS
