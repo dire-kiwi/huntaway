@@ -4,6 +4,7 @@ import type { AgentConfigId, PermissionMode, Project, Rewind, Task, TaskId } fro
 import type { LaunchSpec } from "../agents/AgentDriver.ts"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
 import { AgentTools } from "../agents/AgentTools.ts"
+import { launchStyle } from "../agents/agentTools/outputStyles.ts"
 import { cacheDirsIn, codexEffort, DOCS_SERVER, reviewFilesystem } from "../agents/claude/access.ts"
 import { acpLaunch } from "../agents/acp/launch.ts"
 import { claudeLaunch, recordedEffort } from "../agents/claude/launch.ts"
@@ -343,7 +344,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           model,
           effort,
           permissionMode,
-          outputStyle: nonBlank(task.output_style ?? null),
+          outputStyle: launchStyle(task, project, profile),
           codeMode: host.experiments?.includes("code_mode") === true,
           sessionCodeMode: task.session_id !== null && (yield* runs.sessionCodeMode(task.id, task.session_id)),
           rules: yield* rules.forTask(task),

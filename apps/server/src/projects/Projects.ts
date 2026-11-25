@@ -323,6 +323,7 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
                 use_worktrees: patch.use_worktrees,
                 permission_mode: patch.permission_mode,
                 model: text(patch.model),
+                output_style: text(patch.output_style),
                 auto_review: patch.auto_review,
                 review_rounds: yield* ifGiven(patch.review_rounds, checkReviewRounds),
                 reviewers: yield* ifGiven(patch.reviewers, (v) => reviewersValue(v, { ...reviewers, summarizers: false })),

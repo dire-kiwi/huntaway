@@ -64,7 +64,7 @@ const TAB_GROUPS: ReadonlyArray<ReadonlyArray<TabDef>> = [
       label: "Agents",
       icon: <Bot size={14} />,
       description: "How the project's agents run. What's left unset follows the profile or the host.",
-      fields: ["model", "claude_config_ids", "github_account", "permission_mode"],
+      fields: ["model", "output_style", "claude_config_ids", "github_account", "permission_mode"],
     },
     {
       id: "tools",
@@ -195,6 +195,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
     if (repoChanged && moveRepo) patch.move_repo = true
     if ("base_branch" in patch) patch.base_branch = patch.base_branch || null
     if ("model" in patch) patch.model = patch.model || null
+    if ("output_style" in patch) patch.output_style = patch.output_style?.trim() || null
     if ("group_name" in patch) patch.group_name = patch.group_name?.trim() || null
     if ("github_account" in patch) patch.github_account = patch.github_account || null
     if ("pr_preview_url" in patch) patch.pr_preview_url = patch.pr_preview_url?.trim() || null

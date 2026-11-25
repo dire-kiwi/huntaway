@@ -137,7 +137,7 @@ export const Task = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   effort: Schema.NullOr(Effort),
   permission_mode: Schema.NullOr(PermissionMode),
-  output_style: Schema.optional(Schema.NullOr(Schema.String)), // HE-102: `/output-style`, null for Claude Code's settings'
+  output_style: Schema.optional(Schema.NullOr(Schema.String)), // HE-102: `/output-style`, null for the project's, the profile's (HE-111) or Claude Code's settings'
   claude_config_id: Schema.NullOr(AgentConfigId),
   auto_allow: Schema.Array(Schema.String),
   review: Schema.NullOr(Review),
