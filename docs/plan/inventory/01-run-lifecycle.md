@@ -119,6 +119,7 @@ and the 5-hour-window restarter.
 | `session_id`, `session_cost` | the agent session the run is in and the session's running total at its last result |
 | `config_dir` TEXT | config folder the run was started with (`''` = agent default); the first run of a session pins the session's folder |
 | `board_tools` INT | Codex: this run gave the new session the board's tools as dynamic tools |
+| `code_mode` INT | Claude: its session works in Code Mode (its `init` listed `REPL`; HE-107, not the old board's) |
 | `effort` TEXT | effort as given to the agent (`''` = agent default) |
 | `turn_message_id` INT | user message the current turn started with (checkpoints) |
 | `agent_at` TEXT | Claude: uuid of the latest top-level message; Codex: current turn id (rewind target) |
@@ -127,7 +128,7 @@ and the 5-hour-window restarter.
 | `created_at`, `ended_at` | RFC 3339 ms |
 
 Queries of note: `active_runs` (status != exited, by created_at), `has_active_run`, `later_run` (rowid order), `latest_run`,
-`run_after`, `idle_sessions`, `session_board_tools`, `session_config_dir`, `add_cost`.
+`run_after`, `idle_sessions`, `session_board_tools`, `session_config_dir`, `add_cost` (and HE-107's `sessionCodeMode`).
 
 `add_cost(run, session, total, counted)`: Claude's `total_cost_usd` is the **session's** running total. The run is charged
 `total - before`, where `before` is the latest `session_cost` of this run or an earlier run of the task in the same
@@ -277,7 +278,8 @@ Shim binary lookup (`shim_path`): `$IA_SHIM_BIN`; else the newer of `target/{rel
 --permission-mode <default|acceptEdits|auto|plan|dontAsk|bypassPermissions>
 [--permission-prompt-tool stdio]                              # input && (mode != bypassPermissions || rules need a prompt)
 [--settings '{"hooks":{"PreToolUse":[…]},"outputStyle":…,"env":{"CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"1"}}']
-                                                              # hooks, output style, Code Mode (HE-107): each when there is one
+                                                              # hooks, output style, Code Mode (HE-107: a new conversation's
+                                                              # as the experiment says, a resumed one's as it started)
 --allowedTools <tool> <tool> …                                # separate args, see below
 [--disallowedTools "<space-joined list>"]
 [--resume <session id> [--resume-session-at <message uuid>]]  # rewind

@@ -35,7 +35,7 @@ export const EXPERIMENTS = [
     id: "code_mode",
     name: "Claude Code's Code Mode",
     description:
-      "Claude Code agents start in Code Mode (Claude Code's own experiment, CLAUDE_CODE_EXPERIMENTAL_CODE_MODE): the agent works by writing scripts that call its tools, rather than one tool call at a time. From each thread's next run. Claude Code decides whether a run gets it (for now only on the Anthropic API, not through a gateway or cloud provider, and only for newer models); when it doesn't, the thread says why and the run goes on with the ordinary tools.",
+      "New Claude Code conversations start in Code Mode (Claude Code's own experiment, CLAUDE_CODE_EXPERIMENTAL_CODE_MODE): the agent works by writing scripts that call its tools, rather than one tool call at a time. A conversation keeps the mode it started in, so switching this on or off applies to new conversations (a new task, or /new in a thread). Claude Code decides whether a conversation gets it (for now only on the Anthropic API, not through a gateway or cloud provider, and only for newer models); when it doesn't, the thread says why and the agent goes on with the ordinary tools.",
   },
 ] as const
 

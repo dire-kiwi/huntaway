@@ -51,6 +51,8 @@ export class Run extends Schema.Class<Run, { readonly brand: unique symbol }>("R
   effort: Schema.NullOr(Schema.String),
   /** Codex: this run gave the new session the board's tools as dynamic tools. */
   board_tools: Bit,
+  /** Claude: its session works in Code Mode (its `init` listed the REPL tool, HE-107). */
+  code_mode: Bit,
   /** Claude: uuid of the latest top-level message; Codex: the current turn's id (the rewind target). */
   agent_at: Schema.NullOr(Schema.String),
   /** The thread write its current turn started with (checkpoints). */

@@ -752,9 +752,15 @@ const resultLine = (fields: Readonly<Record<string, unknown>>) => {
 describe("what a line tells the run", () => {
   it("init: the session, and a turn starting", () => {
     assert.deepStrictEqual(effectsOf({ type: "system", subtype: "init", session_id: "s1", tools: ["Bash"] }), [
-      { _tag: "SessionStarted", sessionId: "s1" },
+      { _tag: "SessionStarted", sessionId: "s1", codeMode: false },
       { _tag: "TurnStarted", from: "init" },
     ])
+    // HE-107: a session whose tools have Claude Code's REPL works in Code Mode.
+    assert.deepStrictEqual(effectsOf({ type: "system", subtype: "init", session_id: "s2", tools: ["REPL", "Poll", "Bash"] })?.[0], {
+      _tag: "SessionStarted",
+      sessionId: "s2",
+      codeMode: true,
+    })
   })
 
   it("the stream: the reply being written, never stored, and only the main conversation's", () => {
