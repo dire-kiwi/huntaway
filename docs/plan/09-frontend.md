@@ -1354,3 +1354,13 @@ task, most of it rarely used (the status list, the title, the description, label
   `StatusSection` asks before a move to Done itself (`useConfirmDone`), no longer through `Details`.
 - Checks: `tests/ui/taskDetails.test.mjs` (the key items beside the thread, the Details tab's two columns, and an edit
   kept as the panel expands); the checks that reach a section through the Details tab are as they were.
+
+### Moving a task to another project (HE-110)
+
+A task can't change project (its key, branch and worktree are its project's), so _Move to project…_ (in a card's menu,
+and beside _Delete task_ in Details) makes a new task in the project picked with the task's title, description and
+labels (a scratch task stays scratch), in To do (Backlog, from there) with its agent not started, and then asks: _Delete
+original_ (a move) or _Keep original_ (a copy). Either way the new task opens. It's done in the browser
+(`layout/MoveTaskModal.tsx`): `tasks.create` on the target's host, then `tasks.delete` on the task's, so it works across
+profiles and hosts; if the delete fails, trying again only deletes. Not for the threads that last. Checks:
+`tests/ui/moveTaskProject.test.mjs`.
