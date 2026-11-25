@@ -64,7 +64,16 @@ export function Dependencies({ task, project, listOnly }: { task: Task; project?
   const candidates = useBoard(
     useShallow((s) =>
       Object.values(s.tasks)
-        .filter((t) => t.kind === "task" && t.project_id === task.project_id && t.id !== task.id && !isMerged(t) && !(task.depends_on ?? []).includes(t.id))
+        // Not a thread under a task (a stack's own, HE-105), which is never done.
+        .filter(
+          (t) =>
+            t.kind === "task" &&
+            !t.parent_id &&
+            t.project_id === task.project_id &&
+            t.id !== task.id &&
+            !isMerged(t) &&
+            !(task.depends_on ?? []).includes(t.id),
+        )
         .toSorted((a, b) => b.number - a.number),
     ),
   )

@@ -1567,12 +1567,25 @@ whole, which the user messages, and which the levels' agents are told to hand st
 - **A lasting thread**: its runs end in To do (`lastingOf` `stack`), never reviewed, never in a workflow
   (`workflows/engine/start.ts` skips it), nothing to merge (`decide.ts` `ownFolderKinds`); it can't be moved to In
   review, Ready for merge, Done or Backlog.
-- **Its bottom deleted**: it goes under the first level landing after it (`lanes.ts` `stackThreadHeir`, in
-  `decideDeleted`), which is the bottom then; with none, it goes with it (its row cascades; `Tasks.delete` emits its
-  `task_deleted`, `TaskDeletion` stops its run).
+- **It stays with its stack** (`StackThreads.settle`, the reactor's step after the stack titles', for a task made,
+  deleted or changed in what it starts from or merges into; the plan is the pure `settleThreads`): under the stack's
+  bottom, which changes when a level is put below it. When its level is in no stack any more, it follows the part the
+  changed task took with it (a split), if that part has no thread; otherwise it has no stack left and is deleted
+  (`TaskDeletion`, which stops its run). Of two threads in one stack (two stacks joined), the older stays and the other
+  is deleted.
+- **Its bottom deleted** (`TaskDeletion`): the level it goes under (`lanes.ts` `stackThreadHeir`, the first landing on
+  the bottom) is read before `Worktrees.forDeletion`, which unstacks the levels on a merged bottom, and it's moved there
+  after that, before the row goes; with no level to take it, its run is stopped first and it goes with the row
+  (`Tasks.delete` emits its `task_deleted`). `decideDeleted` moves it too, for a `Tasks.delete` of its own.
+- **Not a task to wait for, start from or merge into**: `checkDependencies`, `checkStartFrom` and `checkMergesInto`
+  refuse it (`Invalid`), and the web's dependency and New task pickers leave out a project's rows with a `parent_id`.
+- **Not started on nothing**: a conversation (the assistant, the pens threads, a stack's thread) with no session isn't
+  started on an empty message (`queue.ts` `decideSend` answers `Nothing`; its composer doesn't offer to), nor by
+  `update_task` moving it to In progress.
 - **The web**: the Stack card has a thread button (amber while the thread asks something), shows the thread's running
   dot and attention, and its menu has "Open the stack's thread"; the thread opens on its conversation, without Changes,
   Code or Review tabs, with a "Stack thread" section in Details.
 - **Tests**: `tasks/StackThreads.test.ts` (made once, from any level; refused for a task in no stack and for In review;
-  what a level and the thread are told; kept when its bottom is deleted, gone with the last), `system.test.ts`'s two
-  cases, `threadKind.test.ts`'s row.
+  what a level and the thread are told; kept when its bottom is deleted, a merged one through `TaskDeletion` too; moved
+  to a new bottom and with a split; gone once no stack is left; refused as a dependency, start or target),
+  `system.test.ts`'s two cases, `queue.test.ts`'s empty start, `threadKind.test.ts`'s row.

@@ -11,7 +11,7 @@ import { GhStacks } from "../github/GhStacks.ts"
 import { isMerged } from "../tasks/checks.ts"
 import { Threads } from "../threads/Threads.ts"
 import { Permissions } from "../permissions/Permissions.ts"
-import { Changes } from "../platform/Changes.ts"
+import { Actor, Changes } from "../platform/Changes.ts"
 import { Telemetry } from "../platform/Telemetry.ts"
 import type { Change } from "../platform/Changes.ts"
 import { Reviews } from "../review/Reviews.ts"
@@ -20,6 +20,8 @@ import { Routines } from "../automations/Routines.ts"
 import { Runs } from "../runs/Runs.ts"
 import { DevServers } from "../runs/DevServers.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
+import { StackThreads } from "../tasks/StackThreads.ts"
+import { TaskDeletion } from "../runs/TaskDeletion.ts"
 // 6.1
 import { Terminals } from "../terminal/Terminals.ts"
 import { WorkflowEngine } from "../workflows/WorkflowEngine.ts"
@@ -47,6 +49,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const devServers = yield* DevServers
       const titles = yield* Titles
       const stackTitles = yield* StackTitles
+      const stackThreads = yield* StackThreads
+      const taskDeletion = yield* TaskDeletion
       const permissions = yield* Permissions
       const statusScripts = yield* StatusScripts
       const taskBase = yield* TaskBase
@@ -140,6 +144,10 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
         yield* merges.taskChanged(change)
         // 4.8: the stacks it's in (or was in, or deleted from) keep their title on their bottom, written again after a pause.
         yield* stackTitles.changed(change)
+        // HE-105: the stack threads stay with their stacks, under each one's bottom; one with no stack left goes.
+        for (const id of yield* stackThreads.settle(change.before, change.after)) {
+          yield* taskDeletion.delete(id, { deleteBranch: false }, Actor.board).pipe(Effect.ignore)
+        }
         // A deleted task's temp folder goes (in the background), with what it left running; whoever waits on its
         // prompts is told they expired, and requests to delete it expire (it is deleted anyway).
         if (change.after === null) {

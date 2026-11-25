@@ -7,7 +7,7 @@ import type { Actor } from "../platform/Changes.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound, Tasks } from "../tasks/Tasks.ts"
 import { Runs } from "./Runs.ts"
-import { stackThreadHeir } from "../tasks/lanes.ts"
+import { StackThreads } from "../tasks/StackThreads.ts"
 
 export interface TaskDeletionShape {
   /**
@@ -32,6 +32,7 @@ export class TaskDeletion extends Context.Service<TaskDeletion, TaskDeletionShap
       const tasks = yield* Tasks
       const worktrees = yield* Worktrees
       const agentTools = yield* AgentTools
+      const stackThreads = yield* StackThreads
 
       const remove = Effect.fn("TaskDeletion.delete")(function* (id: TaskId, options: { readonly deleteBranch: boolean }, by: Actor) {
         const task = yield* repo.get(id)
@@ -43,12 +44,13 @@ export class TaskDeletion extends Context.Service<TaskDeletion, TaskDeletionShap
         yield* runs.abort(id)
         const reviewThreads = yield* repo.reviewThreads(id)
         for (const r of reviewThreads) yield* runs.abort(r.id)
-        // HE-105: and its stack's thread's, when that goes with it (no level is left to take it).
-        if (task.project_id !== null) {
-          const siblings = yield* repo.projectTasks(task.project_id)
-          if (stackThreadHeir(siblings, id) === null) for (const t of siblings) if (t.task_type === "stack" && t.parent_id === id) yield* runs.abort(t.id)
-        }
+        // HE-105: its stack's thread goes under the level that's the bottom after it, read before `forDeletion` (which
+        // unstacks the levels on a merged task); with none left to take it, it goes with it, its run stopped first.
+        const stack = yield* stackThreads.heirOf(task)
+        if (stack.heir === null) for (const t of stack.threads) yield* runs.abort(t)
         yield* worktrees.forDeletion(task, options.deleteBranch)
+        // Moved after, so nothing moves it back to this task while its levels are being unstacked.
+        if (stack.heir !== null) for (const t of stack.threads) yield* stackThreads.moveUnder(t, stack.heir)
         // 6.4: its review and summary threads' own skills folders go with them.
         const skillFolders = Effect.forEach(reviewThreads, (r) => (r.project_id === null ? Effect.void : agentTools.removeThreadSkills(r.project_id, r.id)), {
           concurrency: 1,

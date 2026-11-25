@@ -3,6 +3,8 @@ import { Effect } from "effect"
 import type { Task } from "@huntaway/contracts"
 import { gitRepo, TestBoard } from "@huntaway/testing"
 import { Prompts } from "../agents/Prompts.ts"
+import { Reactor } from "../lifecycle/Reactor.ts"
+import { TaskDeletion } from "../runs/TaskDeletion.ts"
 import { Actor } from "../platform/Changes.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { Projects } from "../projects/Projects.ts"
@@ -31,6 +33,19 @@ const board = Effect.gen(function* () {
   const lone = yield* mk("Unrelated", null)
   return { project, a, b, c, lone }
 }).pipe(Effect.orDie)
+
+/** What the reactor has to do with the changes so far, done. */
+const settled = Effect.flatMap(Reactor, (r) => r.idle)
+const parentOf = (id: Task["id"]) =>
+  Effect.map(
+    Effect.flatMap(TaskRepo, (r) => r.get(id)),
+    (t) => (t === null ? "gone" : t.parent_id),
+  )
+const deleteTask = (id: Task["id"]) => Effect.flatMap(TaskDeletion, (d) => d.delete(id, { deleteBranch: false }, Actor.user)).pipe(Effect.orDie)
+const startFrom = (t: Task, below: Task | null) =>
+  Effect.flatMap(Tasks, (tasks) => tasks.change(t.id, () => ({ start_from: below === null ? null : { type: "task", task_id: below.id } }), Actor.user)).pipe(
+    Effect.orDie,
+  )
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.scoped, Effect.provide(TestBoard()))
 
@@ -96,6 +111,69 @@ describe("StackThreads", () => {
         yield* tasks.delete(c.id, { deleteBranch: false }, Actor.user)
         yield* tasks.delete(b.id, { deleteBranch: false }, Actor.user)
         assert.isNull(yield* repo.get(made.id))
+      }),
+    ),
+  )
+
+  it.effect("keeps the thread with the stack when its merged bottom is deleted, which unstacks the levels first", () =>
+    run(
+      Effect.gen(function* () {
+        const threads = yield* StackThreads
+        const { a, b, c } = yield* board
+        const made = yield* threads.thread(c.id)
+        yield* (yield* Tasks).change(a.id, () => ({ status: "done", resolution: "done" }), Actor.user).pipe(Effect.orDie)
+        yield* settled
+        yield* deleteTask(a.id)
+        yield* settled
+        assert.strictEqual(yield* parentOf(made.id), b.id)
+        assert.strictEqual((yield* threads.thread(c.id)).id, made.id)
+        // Two levels merged and deleted from the bottom: the last one left is no stack, and its thread goes.
+        yield* (yield* Tasks).change(b.id, () => ({ status: "done", resolution: "done" }), Actor.user).pipe(Effect.orDie)
+        yield* settled
+        yield* deleteTask(b.id)
+        yield* settled
+        assert.strictEqual(yield* parentOf(made.id), "gone")
+      }),
+    ),
+  )
+
+  it.effect("follows the stack's bottom, and the part a split takes, and goes once there's no stack", () =>
+    run(
+      Effect.gen(function* () {
+        const threads = yield* StackThreads
+        const { a, b, c, lone } = yield* board
+        const made = yield* threads.thread(b.id)
+        // A level put below the bottom is the bottom now.
+        yield* startFrom(a, lone)
+        yield* settled
+        assert.strictEqual(yield* parentOf(made.id), lone.id)
+        // Split off below the bottom: it stays with the rest of the stack.
+        yield* startFrom(a, null)
+        yield* settled
+        assert.strictEqual(yield* parentOf(made.id), a.id)
+        // Split in the middle, leaving the bottom alone: it goes with the part that's still a stack.
+        yield* startFrom(b, null)
+        yield* settled
+        assert.strictEqual(yield* parentOf(made.id), b.id)
+        assert.strictEqual((yield* threads.thread(c.id)).id, made.id)
+        assert.strictEqual(yield* tag(threads.thread(a.id)), "Invalid")
+        // The two-level stack's bottom deleted: what's left is no stack, so its thread goes too.
+        yield* deleteTask(b.id)
+        yield* settled
+        assert.strictEqual(yield* parentOf(made.id), "gone")
+      }),
+    ),
+  )
+
+  it.effect("isn't something a task can wait for, start from or merge into", () =>
+    run(
+      Effect.gen(function* () {
+        const tasks = yield* Tasks
+        const { b, lone } = yield* board
+        const made = yield* (yield* StackThreads).thread(b.id)
+        assert.strictEqual(yield* tag(tasks.update(lone.id, { depends_on: [made.id] }, Actor.user)), "Invalid")
+        assert.strictEqual(yield* tag(tasks.update(lone.id, { merges_into: made.id }, Actor.user)), "Invalid")
+        assert.strictEqual(yield* tag(tasks.update(lone.id, { start_from: { type: "task", task_id: made.id } }, Actor.user)), "Invalid")
       }),
     ),
   )
