@@ -1187,7 +1187,10 @@ shape and its state modules are gone: `serverUrlAtom` and `tokenAtom` are set fr
   search by key and title; Backlog and Done folded until tapped (Done the latest 20); each task with its project, when
   it last moved, its agent's state, a pull request's failed or running checks and why it needs attention; New task from
   the + (`tasks.create` with `start`), for any of the profile's projects.
-- **A task**: its title, its status (a tap moves it: `optimisticMove`), its agent, its pull request with its checks,
+- **A task**: its title, its status (a tap moves it: `optimisticMove`, run by the app and not by the sheet it was
+  picked in, which closes at the tap and would take a move the host is slow to answer with it, leaving the board on
+  its guess: `logic/mounted.ts`, as the web's `startMove`; a move the agent's unfinished todo list holds back is asked
+  about first, as on the board, and one the host refuses says why), its agent, its pull request with its checks,
   and its agent's todo count; its thread (`threadAtom`, `threadPreviewAtom`, `olderPage`) as rows (`src/logic/thread.ts`,
   a smaller cut of the web's `itemModel.ts`), where a run of tool calls is one line that opens (`foldTools`), a
   document the agent published (`mcp__docs__publish_document`'s result) is a card that opens it, and a button comes

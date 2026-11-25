@@ -1,6 +1,6 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react"
-import { type HostTask, mutate, optimisticMove, query, STATUSES, taskAtom, unreadInReview } from "@huntaway/client"
-import { TaskId } from "@huntaway/contracts"
+import { useAtomValue } from "@effect/atom-react"
+import { heldTodos, type HostTask, mutate, query, STATUSES, taskAtom, unreadInReview } from "@huntaway/client"
+import { TaskId, type Todo } from "@huntaway/contracts"
 import { AsyncResult } from "effect/reactivity"
 import { Stack, useLocalSearchParams } from "expo-router"
 import { useEffect, useState } from "react"
@@ -9,9 +9,9 @@ import { Composer } from "../../../components/composer"
 import { Markdown } from "../../../components/markdown"
 import { PluginFrame } from "../../../components/pluginFrame"
 import { ThreadView } from "../../../components/thread"
-import { Empty, ErrorText, Icon, IconButton, Pill, s, Section, Sheet, SheetRow } from "../../../components/ui"
+import { Button, Empty, ErrorText, Icon, IconButton, Pill, s, Section, Sheet, SheetRow } from "../../../components/ui"
 import { agentNote, statusLabel } from "../../../logic/tasks"
-import { runExit, useAction } from "../../../state/action"
+import { moveTask, runExit, useAction } from "../../../state/action"
 import { connectionAtom } from "../../../state/connection"
 import { openInBrowser, param } from "../../../state/open"
 import { colors, space, STATUS_COLOR, tint } from "../../../theme"
@@ -19,7 +19,8 @@ import { colors, space, STATUS_COLOR, tint } from "../../../theme"
 // A task: what it is and where it stands at the top (its status, which moves it; its agent; its pull request), its
 // thread, and the composer, whose button also stops the agent. The rest is behind ⋯: start or stop, move, the details
 // (description, the agent's todo list, what its plugins show of it: the documents it published), and the ways out to
-// the web (HE-99).
+// the web (HE-99). A move is the app's own (`moveTask`), not the sheet's it was picked in; one the agent's unfinished
+// todo list holds back is asked about first, as on the board, and one the host refuses says why.
 
 const AGENT_COLOR = { working: colors.blue, waiting: colors.muted, idle: colors.muted, queued: colors.faint } as const
 
@@ -38,6 +39,10 @@ export default function TaskScreen() {
   const task = useAtomValue(taskAtom({ host_id: host, id }))
   const [{ busy, error }, run] = useAction()
   const [open, setOpen] = useState<Open>(null)
+  // Why the last move was refused; gone once another is tried.
+  const [moveError, setMoveError] = useState<string | null>(null)
+  // A move its agent's unfinished todo list holds back (the host refuses it unless told to move it anyway), asked about.
+  const [held, setHeld] = useState<{ readonly status: HostTask["status"]; readonly items: ReadonlyArray<Todo> } | null>(null)
   // Opened in In review, it has been seen there (HE-65); a failed save leaves the mark for the next time.
   const fresh = task !== undefined && unreadInReview(task)
   useEffect(() => {
@@ -98,6 +103,7 @@ export default function TaskScreen() {
           </View>
         )}
         {error !== null && <ErrorText>{error}</ErrorText>}
+        {moveError !== null && <ErrorText>{moveError}</ErrorText>}
       </View>
       <View style={{ flex: 1 }}>
         <ThreadView host={host} task={task} />
@@ -141,7 +147,45 @@ export default function TaskScreen() {
           <OnTheWeb id={id} />
         </Sheet>
       )}
-      {open === "move" && <Move host={host} task={task} onClose={() => setOpen(null)} />}
+      {open === "move" && (
+        <Move
+          task={task}
+          onClose={() => setOpen(null)}
+          onMove={(status) => {
+            setMoveError(null)
+            const items = heldTodos(task, status)
+            if (items.length > 0) return setHeld({ status, items })
+            moveTask({ host_id: host, id: task.id }, { status }, setMoveError)
+          }}
+        />
+      )}
+      {held !== null && (
+        <Sheet
+          title="The todo list isn't complete"
+          onClose={() => setHeld(null)}
+          footer={
+            <View style={[s.row, { justifyContent: "flex-end" }]}>
+              <Button title="Cancel" kind="ghost" onPress={() => setHeld(null)} />
+              <Button
+                title="Move anyway"
+                kind="primary"
+                onPress={() => {
+                  setHeld(null)
+                  moveTask({ host_id: host, id: task.id }, { status: held.status, todos_override: true }, setMoveError)
+                }}
+              />
+            </View>
+          }
+        >
+          <View style={{ paddingHorizontal: space.sm, gap: space.sm }}>
+            <Text style={s.muted}>
+              {task.key} stays In progress until its agent's todo list is complete. {held.items.length === 1 ? "This item isn't" : "These items aren't"} done:
+            </Text>
+            <Todos todos={held.items} />
+            <Text style={s.muted}>Its agent can finish them, or you can move it to {statusLabel(held.status)} anyway.</Text>
+          </View>
+        </Sheet>
+      )}
       {open === "details" && <Details host={host} task={task} onClose={() => setOpen(null)} />}
     </KeyboardAvoidingView>
   )
@@ -155,8 +199,11 @@ function OnTheWeb({ id }: { readonly id: string }) {
   return <SheetRow icon="open-outline" label="Open on the web" onPress={() => openInBrowser(url)} />
 }
 
-function Move({ host, task, onClose }: { readonly host: string; readonly task: HostTask; readonly onClose: () => void }) {
-  const move = useAtomSet(optimisticMove({ host_id: host, id: task.id }))
+/**
+ * Where the task goes. The move itself is not this sheet's: the sheet closes at the tap, and what it mounted would go
+ * with it (logic/mounted.ts).
+ */
+function Move({ task, onClose, onMove }: { readonly task: HostTask; readonly onClose: () => void; readonly onMove: (status: HostTask["status"]) => void }) {
   return (
     <Sheet title="Move to" onClose={onClose}>
       {STATUSES.map((st) => (
@@ -167,7 +214,7 @@ function Move({ host, task, onClose }: { readonly host: string; readonly task: H
           selected={st.id === task.status}
           onPress={() => {
             onClose()
-            if (st.id !== task.status) move({ status: st.id })
+            if (st.id !== task.status) onMove(st.id)
           }}
         />
       ))}
@@ -177,6 +224,19 @@ function Move({ host, task, onClose }: { readonly host: string; readonly task: H
 
 const TODO_ICON = { pending: "ellipse-outline", in_progress: "ellipsis-horizontal-circle", completed: "checkmark-circle" } as const
 const TODO_COLOR = { pending: colors.faint, in_progress: colors.blue, completed: colors.green } as const
+
+function Todos({ todos }: { readonly todos: ReadonlyArray<Todo> }) {
+  return (
+    <View style={{ gap: 6 }}>
+      {todos.map((todo, i) => (
+        <View key={`${i}:${todo.text}`} style={[s.row, { alignItems: "flex-start" }]}>
+          <Icon name={TODO_ICON[todo.status]} size={17} color={TODO_COLOR[todo.status]} />
+          <Text style={[s.body, { flex: 1 }, todo.status === "completed" && { color: colors.muted, textDecorationLine: "line-through" }]}>{todo.text}</Text>
+        </View>
+      ))}
+    </View>
+  )
+}
 
 function Details({ host, task, onClose }: { readonly host: string; readonly task: HostTask; readonly onClose: () => void }) {
   return (
@@ -195,15 +255,8 @@ function Details({ host, task, onClose }: { readonly host: string; readonly task
       {task.todos.length > 0 && (
         <>
           <Section title="Todos" count={task.todos.length} />
-          <View style={{ paddingHorizontal: space.sm, gap: 6 }}>
-            {task.todos.map((todo, i) => (
-              <View key={`${i}:${todo.text}`} style={[s.row, { alignItems: "flex-start" }]}>
-                <Icon name={TODO_ICON[todo.status]} size={17} color={TODO_COLOR[todo.status]} />
-                <Text style={[s.body, { flex: 1 }, todo.status === "completed" && { color: colors.muted, textDecorationLine: "line-through" }]}>
-                  {todo.text}
-                </Text>
-              </View>
-            ))}
+          <View style={{ paddingHorizontal: space.sm }}>
+            <Todos todos={task.todos} />
           </View>
         </>
       )}

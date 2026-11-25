@@ -1,6 +1,9 @@
+import { optimisticMove } from "@huntaway/client"
+import type { TaskPatch } from "@huntaway/contracts"
 import { Cause, Effect, Exit } from "effect"
 import { Atom, type AtomRegistry } from "effect/reactivity"
 import { useCallback, useState } from "react"
+import { runMounted } from "../logic/mounted"
 import { registry } from "./registry"
 
 // How screens change things, as the web app's state/mutation.ts: an effect of @huntaway/client (a mutation, a call)
@@ -27,6 +30,16 @@ export function runExit<A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegis
   )
   unmount = registry.mount(fn)
   registry.set(fn, undefined)
+}
+
+/**
+ * Moves a task as `patch` says, shown at once (@huntaway/client's `optimisticMove`), and tells `failed` why if the host
+ * refuses. The move is the app's, not the screen's: it goes on to its end whatever closes meanwhile (logic/mounted.ts).
+ */
+export function moveTask(task: { readonly host_id: string; readonly id: string }, patch: TaskPatch, failed: (why: string) => void): void {
+  runMounted(registry, optimisticMove({ host_id: task.host_id, id: task.id }), patch, (result) => {
+    if (result._tag === "Failure" && !Cause.hasInterruptsOnly(result.cause)) failed(errorText(Cause.squash(result.cause)))
+  })
 }
 
 /** Whether a component's own action is running, and why it failed last (null once it runs again). */
