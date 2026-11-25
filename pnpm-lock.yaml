@@ -224,8 +224,8 @@ importers:
   apps/server:
     dependencies:
       '@dire-kiwi/docs-huntaway':
-        specifier: https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.3.0/dire-kiwi-docs-huntaway-0.3.0.tgz
-        version: https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.3.0/dire-kiwi-docs-huntaway-0.3.0.tgz(@huntaway/plugin@packages+plugin)(@types/node@24.19.2)(effect@4.1.4)
+        specifier: https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.4.0/dire-kiwi-docs-huntaway-0.4.0.tgz
+        version: https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.4.0/dire-kiwi-docs-huntaway-0.4.0.tgz(@huntaway/plugin@packages+plugin)(@types/node@24.19.2)(effect@4.1.4)
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 4.1.3(effect@4.1.4)(redis@6.3.1)
@@ -966,17 +966,17 @@ packages:
   '@chevrotain/utils@13.2.0':
     resolution: {integrity: sha512-SzKYY68rseOrb9KILVzPsl6SjkQtdWw01SRGB5aCVI5kFcHltQsOYV3JB0Ffst72DgkvHCyDQ0NLwxtmCCf97Q==}
 
-  '@dire-kiwi/docs-huntaway@https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.3.0/dire-kiwi-docs-huntaway-0.3.0.tgz':
-    resolution: {integrity: sha512-6I7irly/nm1H20pNpXDDinAQVsPtF1TmkmbEJWDMMRFo1N7EP6ylmNgLQQJoYDhk+Ks713yIM0IaPCsPGdBzYw==, tarball: https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.3.0/dire-kiwi-docs-huntaway-0.3.0.tgz}
-    version: 0.3.0
+  '@dire-kiwi/docs-huntaway@https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.4.0/dire-kiwi-docs-huntaway-0.4.0.tgz':
+    resolution: {integrity: sha512-tFySrUhnI/v98MrDCOIEieV8tWH9Mvam/1G8JsJ0G1bFdaNNH1qR2/ifPlD+sPznBkb43jcbfNVKrIl4O9CgZg==, tarball: https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.4.0/dire-kiwi-docs-huntaway-0.4.0.tgz}
+    version: 0.4.0
     engines: {node: '>=24'}
     peerDependencies:
       '@huntaway/plugin': '*'
       effect: ^4.1.4
 
-  '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.6.0/dire-kiwi-docs-render-0.6.0.tgz':
-    resolution: {integrity: sha512-WimT2+GB2cqo0co5mYxBxvC/5jL3915Bcm2Hkc90/lZFu4JNQCZUZSjHCenBYbqZsKju6Z+4LxAf1M+oC6ZUXw==, tarball: https://github.com/dire-kiwi/docs/releases/download/render-v0.6.0/dire-kiwi-docs-render-0.6.0.tgz}
-    version: 0.6.0
+  '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.7.0/dire-kiwi-docs-render-0.7.0.tgz':
+    resolution: {integrity: sha512-9fgASMngU4KOMLSKuyNCLPY2G35IcH6X6ec1myEW7UM6WT0Gmahn6ad1W0ZiVdshQmjsTocokggIDWQtrRnNvQ==, tarball: https://github.com/dire-kiwi/docs/releases/download/render-v0.7.0/dire-kiwi-docs-render-0.7.0.tgz}
+    version: 0.7.0
     engines: {node: '>=20'}
 
   '@effect/atom-react@4.1.3':
@@ -6835,16 +6835,16 @@ snapshots:
 
   '@chevrotain/utils@13.2.0': {}
 
-  '@dire-kiwi/docs-huntaway@https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.3.0/dire-kiwi-docs-huntaway-0.3.0.tgz(@huntaway/plugin@packages+plugin)(@types/node@24.19.2)(effect@4.1.4)':
+  '@dire-kiwi/docs-huntaway@https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.4.0/dire-kiwi-docs-huntaway-0.4.0.tgz(@huntaway/plugin@packages+plugin)(@types/node@24.19.2)(effect@4.1.4)':
     dependencies:
-      '@dire-kiwi/docs-render': https://github.com/dire-kiwi/docs/releases/download/render-v0.6.0/dire-kiwi-docs-render-0.6.0.tgz
+      '@dire-kiwi/docs-render': https://github.com/dire-kiwi/docs/releases/download/render-v0.7.0/dire-kiwi-docs-render-0.7.0.tgz
       '@huntaway/plugin': link:packages/plugin
       effect: 4.1.4
       sharp: 0.35.5(@types/node@24.19.2)
     transitivePeerDependencies:
       - '@types/node'
 
-  '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.6.0/dire-kiwi-docs-render-0.6.0.tgz': {}
+  '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.7.0/dire-kiwi-docs-render-0.7.0.tgz': {}
 
   '@effect/atom-react@4.1.3(effect@4.1.4)(react@19.3.0)(scheduler@0.28.0)':
     dependencies:

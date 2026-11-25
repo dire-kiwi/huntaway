@@ -93,7 +93,7 @@ Exact versions go in the pnpm catalog. These are the ones checked by the spike.
 | `@effect/atom-react`            | 4.1.3    | client, web        | Hooks over atoms (`useAtomValue`, `useAtomSet`, `RegistryProvider`)                   |
 | `@effect/platform-browser`      | 4.1.3    | web                | `BrowserKeyValueStore` (localStorage behind `Atom.kvs`), `BrowserSocket`, workers     |
 | `sharp`                         | ^0.35    | server             | Document images to AVIF, as now                                                       |
-| `@dire-kiwi/docs-huntaway`      | 0.3.0    | server             | The docs plugin (HE-42, 15-plugins.md), which brings `@dire-kiwi/docs-render` 0.6.0   |
+| `@dire-kiwi/docs-huntaway`      | 0.4.0    | server             | The docs plugin (HE-42, 15-plugins.md), which brings `@dire-kiwi/docs-render` 0.7.0   |
 | `react`, `react-dom`            | ^19.3    | web                | As now                                                                                |
 | the web app's other dependencies | as now  | web                | `@xterm/*`, `shiki`, `mermaid`, `react-markdown`, `remark-gfm`, `lucide-react`, `clsx`, `qrcode-generator`, Tailwind 4 |
 | `electron`                      | ^45      | desktop            | As now                                                                                |
