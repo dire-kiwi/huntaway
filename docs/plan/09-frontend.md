@@ -1362,5 +1362,7 @@ and beside _Delete task_ in Details) makes a new task in the project picked with
 labels (a scratch task stays scratch), in To do (Backlog, from there) with its agent not started, and then asks: _Delete
 original_ (a move) or _Keep original_ (a copy). Either way the new task opens. It's done in the browser
 (`layout/MoveTaskModal.tsx`): `tasks.create` on the target's host, then `tasks.delete` on the task's, so it works across
-profiles and hosts; if the delete fails, trying again only deletes. Not for the threads that last. Checks:
+profiles and hosts. Files attached to the prompt are paths on the task's host, so to another host they're copied
+(`attachments.get`, then `attachments.upload` there) and the description lists the copies. If the delete fails, trying
+again only deletes. Not for the threads that last. Checks:
 `tests/ui/moveTaskProject.test.mjs`.

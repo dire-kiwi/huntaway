@@ -2,7 +2,7 @@
 // to delete the original.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, makeProject, seedBoard, startServer, withBrowser } from "./harness.mjs"
+import { eventually, makeProfile, makeProject, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
 let server, board, other
 beforeAll(async () => {
@@ -59,4 +59,48 @@ test("Move to project… in the details, keeping the original", async () => {
   assert.equal(copy.description, "Kept in both.")
   assert.equal(copy.status, "todo")
   assert.equal((await server.rpc("tasks.get", { id: task.id })).title, "Copied from the details")
+})
+
+// To a project on another host, the files attached to its prompt are copied there: their paths on the task's host
+// aren't on the other one.
+test("Move to project… to another host copies the prompt's files", async () => {
+  const laptop = startServer()
+  try {
+    const away = await makeProject(laptop, await makeProfile(laptop, "Laptop"), "Away", "AWAY")
+    const { id } = await server.rpc("hub.hosts.add", { url: laptop.url, token: laptop.token })
+    await eventually(
+      async () =>
+        assert.ok(
+          (await server.rpc("hub.hosts.list")).some((h) => h.id === id && h.connected),
+          "laptop didn't connect",
+        ),
+      15_000,
+    )
+    const file = await server.rpc("attachments.upload", { name: "notes.txt", data: Buffer.from("hello from the hub").toString("base64") })
+    await newTask({ title: "Moved with a file", description: `Read the notes.\n\nAttached files:\n- ${file.path}` })
+    await withBrowser(server, {}, async (ui) => {
+      await ui.run([
+        `goto /p/${board.project.id}`,
+        "rclick Moved with a file",
+        "click [role=menu] >> text=Move to project…",
+        "click [role=dialog] >> role=combobox",
+        "click role=option >> text=Away",
+        "click [role=dialog] >> text=Keep original",
+        "gone [role=dialog]",
+      ])
+    })
+    const moved = await eventually(async () => {
+      const found = (await laptop.rpc("tasks.list", { filter: { _tag: "ByProject", project_id: away.id } })).find((t) => t.title === "Moved with a file")
+      assert.ok(found)
+      return found
+    })
+    const [text, list] = moved.description.split("\n\nAttached files:\n- ")
+    assert.equal(text, "Read the notes.")
+    assert.ok(list.startsWith(laptop.dataDir), `the copy is the laptop's: ${list}`)
+    const [copyId, name] = list.split("/").slice(-2)
+    const copy = await laptop.rpc("attachments.get", { id: copyId, name })
+    assert.equal(Buffer.from(copy.data, "base64").toString(), "hello from the hub")
+  } finally {
+    laptop.stop()
+  }
 })

@@ -63,6 +63,6 @@ test("the right-click menu scrolls on a short desktop window", async () => {
     await last.scrollIntoViewIfNeeded()
     const r = await last.boundingBox()
     assert.ok(r.y >= box.y && r.y + r.height <= box.y + box.height + 1 && r.y + r.height <= 600, `the last item is reachable: ${JSON.stringify(r)}`)
-    assert.match(await last.textContent(), /Set title/)
+    assert.match(await last.textContent(), /Move to project/)
   })
 })

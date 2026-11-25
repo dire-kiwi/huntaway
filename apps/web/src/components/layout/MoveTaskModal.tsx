@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { useMemo, useState } from "react"
-import { isScratch, mutate, taskKey, taskLabels, type HostTask as Task } from "@huntaway/client"
-import { TaskId } from "@huntaway/contracts"
+import { callRpc, isScratch, mutate, splitAttachments, taskKey, taskLabels, withAttachments, type HostTask as Task } from "@huntaway/client"
+import { AttachmentId, TaskId } from "@huntaway/contracts"
 import { Loader2 } from "lucide-react"
 import { sortProjects } from "../../projectOrder"
 import { useBoard } from "../../state/board"
@@ -30,20 +30,38 @@ export function MoveTaskModal({ task, onClose }: { task: Task; onClose: () => vo
   // The task made, if deleting this one then failed: trying again only deletes, rather than making another.
   const [made, setMade] = useState<{ id: string; key: string } | null>(null)
 
+  /**
+   * The description as the task on `host` has it. The files attached to it are paths on the task's host: to another
+   * host they're copied (`attachments.get` here, `attachments.upload` there), and the list names the copies.
+   */
+  const descriptionOn = Effect.fn("descriptionOn")(function* (host: string) {
+    const description = task.description ?? ""
+    const { text, files } = splitAttachments(description)
+    if (host === task.host_id || !files.length) return description
+    const copies = yield* Effect.forEach(files, (f) =>
+      callRpc(task.host_id, "attachments.get", { id: AttachmentId.make(f.id), name: f.name }).pipe(
+        Effect.flatMap((a) => mutate("attachments.upload", host, { name: a.name, data: a.data })),
+      ),
+    )
+    return withAttachments(text, copies)
+  })
+
   /** Makes the new task in `to`. */
-  const create = (to: NonNullable<typeof target>) => {
+  const create = Effect.fn("createMoved")(function* (to: NonNullable<typeof target>) {
     const labels = taskLabels(task)
-    return mutate("tasks.create", to.host_id, {
+    const description = yield* descriptionOn(to.host_id)
+    const t = yield* mutate("tasks.create", to.host_id, {
       task: {
         project_id: to.id,
         title: task.title,
-        ...(task.description ? { description: task.description } : {}),
+        ...(description ? { description } : {}),
         status: task.status === "backlog" ? "backlog" : "todo",
         ...(labels.length ? { labels } : {}),
         ...(isScratch(task) ? { task_type: "scratch" as const } : {}),
       },
-    }).pipe(Effect.map((t) => ({ id: t.id, key: taskKey(t) })))
-  }
+    })
+    return { id: t.id, key: taskKey(t) }
+  })
 
   const go = (deleteOriginal: boolean) => {
     const making = made ? Effect.succeed(made) : target ? create(target) : null
