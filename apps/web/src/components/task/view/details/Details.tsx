@@ -1,7 +1,7 @@
 import { isAssistant, taskLabels, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
 import { TaskId, type TaskPatch } from "@huntaway/contracts"
-import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react"
+import { ArrowRightLeft, Copy, GitBranch, Loader2, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../../../state/board"
 import { exitError, useMutation } from "../../../../state/mutation"
@@ -15,6 +15,7 @@ import { marksMergeWork, MergeWorkLine } from "../../../board/MergeWork"
 import { Button, PrIcon, PreviewDot, showsPreview, Toggle } from "../../../ui"
 import { LinkedTasks, usesAsana } from "../../ExternalLinks"
 import { TitleSection } from "../Title"
+import { MoveTaskModal } from "../../../layout/MoveTaskModal"
 import type { Mode } from "../layout"
 import { AgentSection } from "./AgentSection"
 import { DescriptionSection } from "./DescriptionSection"
@@ -94,6 +95,7 @@ function DetailsRest({ task, mode }: { task: Task; mode: Mode }) {
     })
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [teardown, setTeardown] = useState(false)
+  const [moving, setMoving] = useState(false)
   const [, update] = useMutation("tasks.update")
   /** Changes the task, and says why it couldn't under `part`. */
   const change = (part: keyof typeof errs, patch: TaskPatch, clear: boolean) => {
@@ -340,15 +342,21 @@ function DetailsRest({ task, mode }: { task: Task; mode: Mode }) {
 
       <AgentSection task={task} />
 
-      {/* The assistant lasts: it can't be deleted. */}
+      {/* The assistant lasts: it can't be deleted. The threads that last aren't moved to another project (HE-110). */}
       {!assistant && (
-        <div className="px-4 py-4">
+        <div className="flex flex-wrap gap-2 px-4 py-4">
+          {task.kind === "task" && !lasting && (
+            <Button size="sm" onClick={() => setMoving(true)}>
+              <ArrowRightLeft size={12} /> Move to project…
+            </Button>
+          )}
           <Button size="sm" variant="danger" onClick={() => setConfirmDelete(true)}>
             <Trash2 size={12} /> Delete task
           </Button>
         </div>
       )}
 
+      {moving && <MoveTaskModal task={task} onClose={() => setMoving(false)} />}
       {teardown && <TeardownModal task={task} onClose={() => setTeardown(false)} />}
       {confirmDelete && <DeleteTaskModal task={task} mode={mode} onClose={() => setConfirmDelete(false)} />}
     </>
