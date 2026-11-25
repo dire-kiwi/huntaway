@@ -38,10 +38,14 @@ export function MoveTaskModal({ task, onClose }: { task: Task; onClose: () => vo
     const description = task.description ?? ""
     const { text, files } = splitAttachments(description)
     if (host === task.host_id || !files.length) return description
-    const copies = yield* Effect.forEach(files, (f) =>
-      callRpc(task.host_id, "attachments.get", { id: AttachmentId.make(f.id), name: f.name }).pipe(
-        Effect.flatMap((a) => mutate("attachments.upload", host, { name: a.name, data: a.data })),
-      ),
+    // One at a time: each is up to MAX_ATTACHMENT_BYTES, held in the page while it goes.
+    const copies = yield* Effect.forEach(
+      files,
+      (f) =>
+        callRpc(task.host_id, "attachments.get", { id: AttachmentId.make(f.id), name: f.name }).pipe(
+          Effect.flatMap((a) => mutate("attachments.upload", host, { name: a.name, data: a.data })),
+        ),
+      { concurrency: 1 },
     )
     return withAttachments(text, copies)
   })
