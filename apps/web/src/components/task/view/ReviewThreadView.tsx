@@ -15,6 +15,7 @@ import { Thread } from "../Thread"
 import { Button, cost, IconButton } from "../../ui"
 import { PanelButtons, useControlsFit, useWide, type Mode } from "./layout"
 import { Row, Section } from "./details/Section"
+import { SubagentsSection } from "./details/SubagentsSection"
 
 const NO_REVIEW = <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">No review has run yet.</div>
 const NO_STEP = <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">This step hasn't run yet.</div>
@@ -44,9 +45,11 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
     })
   }
   const err = stopErr?.thread === thread.id ? stopErr.text : null
+  const side = !!parent && wide
   const controls = (
     <>
-      <AgentsPill task={thread} />
+      {/* HE-112: the subagents are in the column beside the thread where it's shown. */}
+      {!side && <AgentsPill task={thread} />}
       <ContextPill task={thread} />
       {thread.running && (
         <Button size="sm" onClick={stop}>
@@ -114,7 +117,7 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
             empty={step ? NO_STEP : summary ? NO_SUMMARY : NO_REVIEW}
           />
         </main>
-        {parent && wide && (
+        {parent && side && (
           <aside className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40">
             <Section title={step ? "Working on" : summary ? "Summarising" : "Reviewing"}>
               <button className="text-left text-[13px] text-fg hover:underline" onClick={back}>
@@ -137,6 +140,7 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
                 <ReviewSummary task={parent} threadId={thread.id} />
               </Section>
             )}
+            <SubagentsSection task={thread} />
             <Section title={step ? "Agent" : summary ? "Summarizer" : "Reviewer"}>
               <Row label="Cost">{cost(thread.cost_usd) ?? "—"}</Row>
               <Row label="Session">{thread.session_id ? <span className="font-mono text-[11px]">{thread.session_id}</span> : "—"}</Row>
