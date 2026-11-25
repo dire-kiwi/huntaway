@@ -153,7 +153,7 @@ export interface LiveRun {
 }
 
 export interface SendFacts {
-  readonly task: Pick<Task, "kind" | "merging" | "merge_approval" | "session_id" | "queued_message">
+  readonly task: Pick<Task, "kind" | "task_type" | "merging" | "merge_approval" | "session_id" | "queued_message">
   /** The message; null to send what is queued (the old `send_queued`). */
   readonly message: Outgoing | null
   /** It is `/plan …` for a task. */
@@ -167,6 +167,9 @@ export interface SendFacts {
   /** The keys of what it depends on that isn't merged. */
   readonly unmet: ReadonlyArray<string>
 }
+
+/** The lasting threads whose first prompt is the user's message (the assistant, the pens threads, a stack's thread). */
+const CONVERSATIONS: ReadonlySet<string> = new Set(["assistant", "pens", "pen", "stack"])
 
 /** The old `send_message`'s cases, in its order. */
 export const decideSend = (f: SendFacts): SendDecision => {
@@ -182,6 +185,9 @@ export const decideSend = (f: SendFacts): SendDecision => {
   if (f.task.merging && !auto && f.task.merge_approval !== "pending" && f.activeMerge !== null) {
     return { _tag: "Refuse", refusal: { _tag: "MergeQueued", after: f.activeMerge.title } }
   }
+  // HE-105: a conversation has nothing to start on but a message (its first prompt is the message alone).
+  const conversation = f.task.kind === "task" && f.task.task_type !== null && CONVERSATIONS.has(f.task.task_type)
+  if (conversation && f.live === null && f.task.session_id === null && text === "" && (f.task.queued_message ?? "").trim() === "") return { _tag: "Nothing" }
   if (!auto && f.live !== null) {
     if (text === "") return { _tag: "Nothing" }
     const run = f.live

@@ -6,7 +6,7 @@ import type { SendFacts } from "./queue.ts"
 // tests (Runs.test.ts) then see carried out.
 
 const facts = (over: Partial<SendFacts> = {}): SendFacts => ({
-  task: { kind: "task", merging: false, merge_approval: null, session_id: "s1", queued_message: null },
+  task: { kind: "task", task_type: null, merging: false, merge_approval: null, session_id: "s1", queued_message: null },
   message: { text: "go", source: "user" },
   plan: false,
   project: null,
@@ -20,6 +20,16 @@ const facts = (over: Partial<SendFacts> = {}): SendFacts => ({
 const live = { kind: "prompt", phase: "running", acceptsInput: true, writesDocuments: false } as const
 
 describe("decideSend", () => {
+  it("doesn't start a conversation that has no message (HE-105)", () => {
+    const fresh = { ...facts().task, session_id: null }
+    for (const task_type of ["stack", "pen", "pens", "assistant"] as const) {
+      assert.deepStrictEqual(decideSend(facts({ task: { ...fresh, task_type }, message: { text: " ", source: "user" } })), { _tag: "Nothing" })
+      assert.strictEqual(decideSend(facts({ task: { ...fresh, task_type } }))._tag, "Start")
+    }
+    // A task starts on its own description.
+    assert.strictEqual(decideSend(facts({ task: fresh, message: { text: "", source: "user" } }))._tag, "Start")
+  })
+
   it("starts a run, taking what is queued ahead of the message", () => {
     assert.deepStrictEqual(decideSend(facts()), { _tag: "Start", kind: "prompt", take: "Ahead" })
     // What is queued, alone.

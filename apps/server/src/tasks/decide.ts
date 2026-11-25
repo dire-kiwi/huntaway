@@ -35,7 +35,7 @@ import {
   todosRefusal,
 } from "./checks.ts"
 import type { ProjectFacts, TaskIndex } from "./checks.ts"
-import { heldReason, reaching, stackedBelow, stackedLevels, stackWaits } from "./lanes.ts"
+import { heldReason, reaching, stackedBelow, stackedLevels, stackThreadHeir, stackWaits } from "./lanes.ts"
 
 // The rules of a task's changes (docs/plan/06-server.md, Tasks), as plain functions of the rows they read: the old
 // `api/tasks.ts` (`update_task_inner`), `api/new_task.ts` and `db/tasks/write.ts` (`update_task`'s side effects),
@@ -53,7 +53,8 @@ export type TaskColumns = { -readonly [K in TaskField]?: Task[K] }
 const conflict = (reason: ConflictReason, detail: string) => Result.fail(new Conflict({ reason, detail }))
 const changes = (columns: TaskColumns, ...fields: ReadonlyArray<TaskField>) => fields.some((f) => Object.hasOwn(columns, f))
 
-const sameStart = (a: StartFrom | null, b: StartFrom | null): boolean => {
+/** Whether two places to start from are the same one. */
+export const sameStart = (a: StartFrom | null, b: StartFrom | null): boolean => {
   if (a === null || b === null) return a === b
   if (a.type === "branch") return b.type === "branch" && a.branch === b.branch
   if (a.type === "task") return b.type === "task" && a.task_id === b.task_id
@@ -166,7 +167,7 @@ export interface Decision {
 }
 
 /** Threads that work in a folder of their own, and so have nothing to merge. */
-const ownFolderKinds: ReadonlySet<string> = new Set(["Scratch", "Assistant", "Routine", "PensRoot", "Pen", "Document"])
+const ownFolderKinds: ReadonlySet<string> = new Set(["Scratch", "Assistant", "Routine", "PensRoot", "Pen", "Stack", "Document"])
 
 /**
  * The fields that make task `t` merge into `target` (null: the base branch) instead of what it merges into now
@@ -236,10 +237,18 @@ export const decideUpdate = (before: Task, patch: TaskPatch, facts: UpdateFacts,
         if (items.length > 0) return yield* conflict("todos_unfinished", todosRefusal(items, actor._tag === "Agent"))
       }
     }
-    // Lasting threads (the assistant, the pens thread, a pen's thread) are never reviewed, merged, done or parked.
+    // Lasting threads (the assistant, the pens thread, a pen's thread, a stack's) are never reviewed, merged, done or parked.
     if (status !== undefined && status !== before.status && takesStatus(kind) && !canMoveTo(kind, status)) {
       const who =
-        kind._tag === "Assistant" ? "the assistant" : kind._tag === "Pen" ? "a pen's thread" : kind._tag === "PensRoot" ? "the pens thread" : "this thread"
+        kind._tag === "Assistant"
+          ? "the assistant"
+          : kind._tag === "Pen"
+            ? "a pen's thread"
+            : kind._tag === "PensRoot"
+              ? "the pens thread"
+              : kind._tag === "Stack"
+                ? "a stack's thread"
+                : "this thread"
       return yield* invalid("status", `${who} can't go to review, merge, Done or Backlog`)
     }
 
@@ -554,6 +563,9 @@ export const decideDeleted = (gone: Task, tasks: ReadonlyArray<Task>): ReadonlyA
   const out = new Map<TaskId, TaskColumns>()
   const add = (id: TaskId, columns: TaskColumns) => out.set(id, { ...out.get(id), ...columns })
   for (const t of others) if (t.depends_on.includes(gone.id)) add(t.id, { depends_on: t.depends_on.filter((d) => d !== gone.id) })
+  // HE-105: its stack's thread stays with the stack, under the level that is its bottom now (else it goes with it).
+  const heir = stackThreadHeir(others, gone.id)
+  if (heir !== null) for (const t of others) if (t.task_type === "stack" && t.parent_id === gone.id) add(t.id, { parent_id: heir.id })
   if (isMerged(gone)) {
     const index = indexTasks(others)
     // Where it went: what it merges into, past those merged since.

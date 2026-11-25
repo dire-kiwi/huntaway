@@ -1537,3 +1537,64 @@ board has its own, for a Claude task:
   queued (not forced): those already written from what their levels say cost nothing.
 - **Tests**: `agents/StackTitles.test.ts`, every case of the old `agent/stack_title.test.ts` on the test board with
   `TitleScript`, but the wire and MCP parts it names at its top.
+
+### Stack threads (HE-105)<a id="stack-threads"></a>
+
+A stack's levels each have their own agent, and restacking (rebasing a level onto the level below after that changed,
+force-pushing, putting pull requests' bases right) touches several of them at once: left to the levels' agents, they
+each tried to coordinate it (work:ODS-89). So a stack has **one lasting thread of its own** that manages the stack as a
+whole, which the user messages, and which the levels' agents are told to hand stack work to.
+
+- **The row** (`tasks/StackThreads.ts`): `task_type` `stack` (`ThreadKind` `Stack`), in the stack's project (numbered
+  and keyed as the project's tasks, e.g. `HE-12`), `parent_id` the stack's bottom, `use_worktree` off, titled
+  `Stack: <the stack's title>`. `thread(id)` (`tasks.stackThread`, any level) finds the one under any of the stack's
+  levels (`stackThreadOf`, the bottom's first) or makes it in the transaction that looked; `Invalid` for a task in no
+  stack, or a stack in no project. Off the board: the web board already leaves out a project's rows with a `parent_id`.
+- **Made when it's first needed**: from the Stack card (its thread button, or its menu's "Open the stack's thread"), or
+  when a level's run is launched (`Prompts.system`), so a level's agent always has a key to send to.
+- **What it's told** (`prompts/stackThread.ts`, then `prompts/stackBrief.ts` last, as a pen's thread is told its pen):
+  that it is where the stack is managed; how to restack (bottom up, in each level's own worktree, never under a running
+  agent, `git rebase --onto <below> refs/huntaway/start/<id>`, the start ref moved after, checks, `--force-with-lease`,
+  GitHub's stack keeping its bases); to leave a level whose `restack` is `due` to the board; to hand the levels' own
+  work to their tasks; not to merge, move or delete them. The brief lists the levels bottom first with key, state,
+  title, id, the level each lands after, branch and base, start ref, worktree (once set up), pull request and GitHub
+  stack, and restack state. Its first prompt is the message (a conversation, like the pens threads).
+- **What a level is told** (`codeTask`'s `stackNote`, from `agents/prompts/stack.ts` `stackLevelOf`): "This task is
+  level N of M of a stack (…), whose own thread, KEY, manages the stack as a whole. Refer any stack management to it…",
+  with `send_to_task`; a restack the board itself asks of it (`RestackAsk`) it still does.
+- **Where it works**: in the project's repository (`cwdOf` falls through to it), with the open levels' set-up worktrees
+  as `--add-dir`s (Claude) or writable roots (Codex, `workDirs`); its permissions are the project's, as a task's.
+- **A lasting thread**: its runs end in To do (`lastingOf` `stack`), never reviewed, never in a workflow
+  (`workflows/engine/start.ts` skips it), nothing to merge (`decide.ts` `ownFolderKinds`); it can't be moved to In
+  review, Ready for merge, Done or Backlog.
+- **It stays with its stack** (`StackThreads.settle`, the reactor's step after the stack titles', for a task made,
+  deleted, changed in what it starts from or merges into, or closed or reopened; the plan is the pure `settleThreads`).
+  A change touches only the threads of the stack the task was in before it (read from the rows with the task as the
+  change says it was, so a change the reactor comes to late, after later ones, decides as it would have) and of the one
+  it's in now. A thread's home (`homeIn`) is its stack's bottom (which changes when a level is put below it), or a level
+  held on a deleted or closed level below (`heldLevel`: its merge waits for the user to say where it goes; its brief
+  says so, `heldBrief`). A thread whose part of the old stack has no home, or is all done while another part isn't,
+  goes to another part's home (a split, a deleted middle level); with none, it's deleted (`TaskDeletion`, which stops
+  its run). Of two threads in one stack (two stacks joined), the older stays, whichever side it came from, and the other
+  is deleted.
+- **A level deleted** (`TaskDeletion`): the thread of the task's stack and the levels landing on it are read before
+  `Worktrees.forDeletion` (which unstacks the levels on a merged task); after it, on the rows as they'll be without the
+  task, the thread goes where its part will have a home, else (or when its part is all done and theirs isn't) under the
+  home of a level that landed on the task (`beforeDelete`, `rehome`). With no home at all, a thread under the task has
+  its run stopped and goes with the row (`Tasks.delete` emits its `task_deleted`); `decideDeleted` moves one under the
+  task to the first level on it, for a `Tasks.delete` of its own.
+- **Not a task to wait for, start from or merge into**: `checkDependencies`, `checkStartFrom` and `checkMergesInto`
+  refuse it (`Invalid`), and the web's dependency and New task pickers leave out a project's rows with a `parent_id`.
+- **Not started on nothing**: a conversation (the assistant, the pens threads, a stack's thread) with no session isn't
+  started on an empty message (`queue.ts` `decideSend` answers `Nothing`; its composer doesn't offer to), nor by
+  `update_task` moving it to In progress.
+- **The web**: the Stack card has a thread button (amber while the thread asks something), shows the thread's running
+  dot and attention, and its menu has "Open the stack's thread"; the thread opens on its conversation, without Changes,
+  Code or Review tabs, with a "Stack thread" section in Details.
+- **Tests**: `tasks/StackThreads.test.ts` (made once, from any level; refused for a task in no stack and for In review;
+  what a level and the thread are told; kept when its bottom is deleted, a merged one through `TaskDeletion` too; moved
+  to a new bottom and with a split; held with a level on a deleted middle level, then restacked; following the levels on a
+  deleted middle level that weren't flagged; kept when a merged level above the bottom is deleted; the older of two
+  joined stacks' threads kept; gone once no stack is left; refused as a dependency, start or target),
+  `tasks/settleThreads.test.ts` (the plan, a change come to late among them),
+  `system.test.ts`'s two cases, `queue.test.ts`'s empty start, `threadKind.test.ts`'s row.

@@ -21,10 +21,10 @@ export const TaskKind = Schema.Literals(["task", "review"])
 export type TaskKind = typeof TaskKind.Type
 
 /**
- * What a thread is, if not a code task or a review. Of a task: `scratch`, `assistant`, `routine`, `pens`, `pen`. Of a
- * review thread: `summary` or `workflow`. See `threadKindOf`.
+ * What a thread is, if not a code task or a review. Of a task: `scratch`, `assistant`, `routine`, `pens`, `pen`, `stack`
+ * (HE-105: a stack's own thread, under its bottom task). Of a review thread: `summary` or `workflow`. See `threadKindOf`.
  */
-export const TaskType = Schema.Literals(["scratch", "assistant", "routine", "pens", "pen", "summary", "workflow"])
+export const TaskType = Schema.Literals(["scratch", "assistant", "routine", "pens", "pen", "stack", "summary", "workflow"])
 export type TaskType = typeof TaskType.Type
 
 /** A document a task's agent writes besides its other work: an HTML plan or artifact, or a Mermaid diagram. */

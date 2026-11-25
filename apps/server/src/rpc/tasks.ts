@@ -20,6 +20,7 @@ import type { ReviewRefused } from "../review/model.ts"
 import { Runs } from "../runs/Runs.ts"
 import { TaskDeletion } from "../runs/TaskDeletion.ts"
 import type { SendRefused } from "../runs/Runs.ts"
+import { StackThreads } from "../tasks/StackThreads.ts"
 import { TaskRefs } from "../tasks/TaskRefs.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 
@@ -80,6 +81,7 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const portForwards = yield* PortForwards
     const meter = yield* ContextMeter
     const stackTitles = yield* StackTitles
+    const stackThreads = yield* StackThreads
     const targets = yield* MergeTargets
     const reviews = yield* Reviews
     const workflowEngine = yield* WorkflowEngine
@@ -149,6 +151,8 @@ export const TaskHandlers = TaskRpcs.toLayer(
         stackTitles
           .update(id, { title, description, regenerate })
           .pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, StackInvalid: (e) => Effect.fail(new Invalid({ field: e.field, reason: e.reason })) })),
+      // HE-105: the stack's own thread, made the first time.
+      "tasks.stackThread": ({ id }) => stackThreads.thread(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       // 4.8: where the tasks held by a closed or deleted task go now, and a whole stack's merge.
       "tasks.mergeTarget": ({ id, to }) => targets.setTarget(id, to).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       "tasks.mergeStack": ({ id }) => targets.mergeStack(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),

@@ -35,7 +35,27 @@ export interface CodeTaskFacts {
   readonly ghTools: boolean
   /** The project's workflow pushes the branch and opens the pull request once the agent's work is done. */
   readonly boardPr: boolean
+  /** HE-105: the stack it's a level of (`level` from 1, the bottom), with its own thread's key. */
+  readonly stack?: StackLevel | null | undefined
 }
+
+/** A task's place in its stack, and the stack's own thread. */
+export interface StackLevel {
+  readonly title: string
+  readonly level: number
+  readonly levels: number
+  /** The stack thread's key, e.g. `HE-12`. */
+  readonly thread: string
+}
+
+/** HE-105: what a stack's level is told: stack management is its stack thread's. */
+export const stackNote = (st: StackLevel): string =>
+  `\n\nThis task is level ${st.level} of ${st.levels} of a stack ("${st.title}"), whose own thread, ${st.thread}, manages the ` +
+  "stack as a whole. Refer any stack management to it: restacking or rebasing this branch onto the level below, rebasing " +
+  "or pushing other levels' branches, changing pull requests' bases or GitHub's stack, or getting the levels to agree. " +
+  `Ask it with \`send_to_task\` (task ${st.thread}), saying what you need and why, rather than doing it yourself or ` +
+  "coordinating with the other levels' agents, and carry on with this level's own work on this branch meanwhile. If the " +
+  "board itself asks you to restack this branch, do what it asks."
 
 export const codeTask = (t: CodeTaskFacts): string => {
   const p = t.project
@@ -114,6 +134,7 @@ export const codeTask = (t: CodeTaskFacts): string => {
       "\n\nThis project's settings turn off pull requests for its tasks, so don't push this task's branch or open a " +
       "pull request for it unless the user asks, even if the project's own instructions (e.g. in CLAUDE.md) say to."
   }
+  if (t.stack != null) s += stackNote(t.stack)
   s += `\n\n${boardTools}\n\n${askAndFinish("what you did")} You may create follow-up tasks with \`create_task\`.`
   return s
 }

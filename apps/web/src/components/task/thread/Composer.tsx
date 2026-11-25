@@ -4,6 +4,7 @@ import {
   dependencyQueued,
   isAssistant,
   isPenThreads,
+  isStackThread,
   limitQueued,
   runningAgentSteers,
   sendingAtom,
@@ -199,8 +200,8 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
   }
 
   const shownErr = err ?? sendErr ?? unqueueErr ?? modeControl.err
-  // The assistant has nothing to start on but the user's message.
-  const canStartEmpty = task.kind === "task" && !task.session_id && !task.running && !isAssistant(task) && !isPenThreads(task)
+  // The assistant has nothing to start on but the user's message; nor have the pens threads and a stack's (HE-105).
+  const canStartEmpty = task.kind === "task" && !task.session_id && !task.running && !isAssistant(task) && !isPenThreads(task) && !isStackThread(task)
   return (
     <div className="shrink-0 px-5 pb-4 narrow:px-2 narrow:pb-2">
       <div className="mx-auto w-full max-w-3xl">

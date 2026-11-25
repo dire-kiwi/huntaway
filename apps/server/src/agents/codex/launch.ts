@@ -79,6 +79,8 @@ export interface CodexLaunchInput {
   readonly gitDir: string | null
   /** Package managers' caches (`cacheDirsIn`), made if missing. */
   readonly cacheDirs: ReadonlyArray<string>
+  /** HE-105: folders it works in besides its own (a stack thread's levels' worktrees); none by default. */
+  readonly workDirs?: ReadonlyArray<string> | undefined
   /** The task's own documents folder, when it writes there and works elsewhere. */
   readonly documentsDir: string | null
   /** A reviewer's read-only sandbox's paths (`reviewFilesystem`); null for any other run. */
@@ -141,6 +143,7 @@ export const codexLaunch = (input: CodexLaunchInput): Effect.Effect<CodexLaunch,
     const instructions = Object.keys(filesystem).length > 0 ? input.systemPrompt + REVIEW_SANDBOX_NOTE : input.systemPrompt
     const writable = [
       ...(input.gitDir === null ? [] : [input.gitDir]),
+      ...(input.workDirs ?? []),
       ...input.cacheDirs,
       ...(input.documentsDir === null ? [] : [input.documentsDir]),
       ...(input.tmp === null ? [] : [input.tmp]),
