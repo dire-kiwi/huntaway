@@ -1,6 +1,7 @@
 import { Effect } from "effect"
 import type { FileSystem } from "effect"
-import type { TaskSkill } from "@huntaway/contracts"
+import type { Project, Profile, Task, TaskSkill } from "@huntaway/contracts"
+import { BUILT_IN_OUTPUT_STYLES } from "@huntaway/shared"
 import { frontmatter } from "./validation.ts"
 
 // A Claude task's output styles (HE-102; docs/plan/07-agents.md, Output styles), for the composer's `/output-style`
@@ -9,13 +10,7 @@ import { frontmatter } from "./validation.ts"
 // built-in ones and the user's and the project's files. Descriptions come from the files' frontmatter.
 
 /** The built-in styles of Claude Code 2.1, with their descriptions: what a task has before any run lists them. */
-export const BUILT_IN_STYLES: ReadonlyArray<TaskSkill> = [
-  { name: "default", description: "Claude Code's own: completes coding tasks efficiently" },
-  { name: "Proactive", description: "Claude executes immediately, minimizes interruptions, and prefers action over planning" },
-  { name: "Concise", description: "Claude responds tersely, leading with results and skipping preamble and narration" },
-  { name: "Explanatory", description: "Claude explains its implementation choices and codebase patterns" },
-  { name: "Learning", description: "Claude pauses and asks you to write small pieces of code for hands-on practice" },
-]
+export const BUILT_IN_STYLES: ReadonlyArray<TaskSkill> = BUILT_IN_OUTPUT_STYLES
 
 /** What a run's `initialize` answer said of output styles. */
 export interface ReportedStyles {
@@ -74,3 +69,27 @@ export const styleNamed = (styles: ReadonlyArray<TaskSkill>, name: string): stri
   const lower = name.toLowerCase()
   return styles.find((s) => s.name.toLowerCase() === lower)?.name ?? null
 }
+
+const named = (s: string | null | undefined): string | null => (s != null && s.trim() !== "" ? s.trim() : null)
+
+/**
+ * HE-111: the style a task's runs are given, and whose it is: its own (`/output-style`), else its project's, else its
+ * profile's; null leaves it to Claude Code's settings. A review thread (a reviewer's, a summarizer's) takes only its
+ * own, as its report is read by the board and the user, not taught or explained to.
+ */
+export const styleOf = (
+  task: Pick<Task, "kind" | "output_style">,
+  project: Pick<Project, "output_style"> | null,
+  profile: Pick<Profile, "default_output_style"> | null,
+): { readonly style: string; readonly from: "task" | "project" | "profile" } | null => {
+  const own = named(task.output_style)
+  if (own !== null) return { style: own, from: "task" }
+  if (task.kind === "review") return null
+  const ofProject = named(project?.output_style)
+  if (ofProject !== null) return { style: ofProject, from: "project" }
+  const ofProfile = named(profile?.default_output_style)
+  return ofProfile === null ? null : { style: ofProfile, from: "profile" }
+}
+
+/** The style a task's runs are given (`styleOf`), or null for Claude Code's settings'. */
+export const launchStyle = (...args: Parameters<typeof styleOf>): string | null => styleOf(...args)?.style ?? null

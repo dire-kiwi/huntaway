@@ -105,6 +105,13 @@ const flag = (read: (p: Profile) => boolean, columns: (value: boolean) => Profil
 const PROFILE: ReadonlyArray<readonly [string, ProfileField]> = [
   ["default_model", { read: (p) => p.default_model, columns: (v) => Effect.map(stringOrNull(v), (s) => ({ default_model: s?.trim() ? s.trim() : null })) }],
   [
+    "default_output_style",
+    {
+      read: (p) => p.default_output_style,
+      columns: (v) => Effect.map(stringOrNull(v), (s) => ({ default_output_style: s?.trim() ? s.trim() : null })),
+    },
+  ],
+  [
     "github_account",
     {
       read: (p) => p.github_account,

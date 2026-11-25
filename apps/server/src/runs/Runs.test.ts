@@ -467,6 +467,27 @@ describe("Runs.send", () => {
       }),
     ),
   )
+
+  it.effect("a task with no style of its own is launched with its profile's, which /output-style names (HE-111)", () =>
+    run(
+      Effect.gen(function* () {
+        const runs = yield* Runs
+        const repo = yield* RunRepo
+        const dir = yield* RunDir
+        const sql = yield* SqlClient.SqlClient
+        const id = yield* newTask({ status: "todo" })
+        yield* sql`UPDATE profiles SET default_output_style = 'Concise' WHERE id = 'p'`.pipe(Effect.orDie)
+        yield* send(id, "/output-style")
+        const notices = (yield* items(id)).flatMap((i) => (i.type === "notice" ? [i.text] : []))
+        assert.deepStrictEqual(notices, ["Output style: Concise (the profile's)"])
+        yield* send(id, "hello")
+        yield* runs.launched(id)
+        const spec = yield* dir.spec(some(yield* repo.latest(id)).id)
+        const settings = spec?.args[spec.args.indexOf("--settings") + 1] ?? ""
+        assert.include(settings, '"outputStyle":"Concise"')
+      }),
+    ),
+  )
 })
 
 describe("starting a run", () => {

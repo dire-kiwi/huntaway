@@ -3,7 +3,7 @@ import { SecureRandom } from "effect/crypto"
 import { DocumentLabel, RunId, threadKindOf } from "@huntaway/contracts"
 import type { NewTask, ProjectId, Task, TaskId, Timestamp } from "@huntaway/contracts"
 import { AgentTools } from "../agents/AgentTools.ts"
-import { styleNamed } from "../agents/agentTools/outputStyles.ts"
+import { styleNamed, styleOf } from "../agents/agentTools/outputStyles.ts"
 import { ContextMeter } from "../agents/ContextMeter.ts"
 import { planRest, startInstructions } from "../agents/prompts/start.ts"
 import { worthAsking } from "../agents/titles/text.ts"
@@ -614,11 +614,16 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         const names = styles.map((s) => s.name).join(", ")
         const reported = listing.output_style !== undefined && listing.output_style !== null
         if (name === "") {
-          const now = task.output_style ?? listing.output_style ?? null
+          // HE-111: without its own, the project's or the profile's, else what its last run was given by the settings files.
+          const project = task.project_id === null ? null : Option.getOrNull(yield* projects.get(task.project_id))
+          const profile = Option.getOrNull(yield* profileRepo.get(task.profile_id))
+          const given = styleOf(task, project, profile)
+          const now = given?.style ?? listing.output_style ?? null
+          const from = given === null || given.from === "task" ? "" : ` (the ${given.from}'s)`
           yield* threads.notice(
             id,
             "info",
-            now === null ? "Output style: as Claude Code's settings say" : `Output style: ${now}`,
+            now === null ? "Output style: as Claude Code's settings say" : `Output style: ${now}${from}`,
             `The styles: ${names}. /output-style <name> picks one for this task.`,
           )
           return task

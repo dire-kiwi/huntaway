@@ -12,6 +12,7 @@ export const ProfileRow = Schema.Struct({
   name: Schema.String,
   claude_config_ids: JsonColumn(Schema.Array(AgentConfigId), []),
   default_model: Schema.NullOr(Schema.String),
+  default_output_style: Schema.NullOr(Schema.String),
   agent_access: JsonColumn(Schema.Array(Schema.String), []),
   github_account: Schema.NullOr(Schema.String),
   clone_dir: Schema.NullOr(Schema.String),

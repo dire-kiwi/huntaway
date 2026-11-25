@@ -1510,6 +1510,17 @@ board has its own, for a Claude task:
   and ACP tasks have none: the command says so in a warning notice there.
 - **The composer** (`task/SkillMenu.tsx`) offers `/output-style` (with the style it has now), and once its name is
   being typed lists the styles, the current one marked; picking one fills in `/output-style <name>`, and Enter sends it.
+- **A project's and a profile's (HE-111).** `projects.output_style` and `profiles.default_output_style` (text columns,
+  `2026-11-26-default-output-style.ts`; blank is null) are the style of their Claude tasks that have none of their
+  own: a launch gives the task's, else its project's, else its profile's (`agentTools/outputStyles.ts` `styleOf`), and
+  null leaves it to Claude Code's settings files. A review thread (a reviewer's, a summarizer's) takes only its own, so
+  a `Learning` or `Explanatory` default doesn't reach the reports the board reads. A changed default reaches a task's
+  next launch, not a running agent. `/output-style` alone names the one given and whose it is ("Output style: Concise
+  (the profile's)"). They are set in the profile form's Agents group and the project settings' Agents tab
+  (`hosts/profileFields.tsx` `OutputStyleInput`: a text field suggesting Claude Code's built-in styles, which are
+  `@huntaway/shared`'s `BUILT_IN_OUTPUT_STYLES`; any other name, a user's, a project's or a plugin's, is taken as typed).
+  The profile's syncs between hosts with its other settings (`settingsSync/fields.ts`). Codex and ACP have no output
+  styles: their launches never read either.
 
 ### As built in 4.8 (HE-5): stack titles
 
