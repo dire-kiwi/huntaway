@@ -62,7 +62,8 @@ and the 5-hour-window restarter.
 - Scan `/proc` every 4 s for listening TCP sockets of processes whose environ has `HUNTAWAY_TASK_ID=<task>`; show `Task.servers`; stop one by port.
 - A turn that ends with only dev servers left (HA-409, after this inventory was taken; HE-56 on this board): Bash
   shells, not waited on, whose commands look like servers' (`looks_like_server`: `pnpm dev`, `astro dev`, `vite`, not
-  a test, build, check or wait), each with a process in its session listening on a port (looked at 1.5 s after the
+  a test, build, check or wait; on this board, HE-106, any command or Bash description that doesn't say it's a test,
+  build, check or wait), each with a process in its session listening on a port (looked at 1.5 s after the
   turn's end, then every 5 s for up to 2 minutes), of a task that goes to review (not the assistant's, pens' or a
   routine's thread), on Linux: the agent's process group gets SIGKILL (Claude Code stops its shells on a TERM; they're
   in sessions of their own), `background-detached` keeps them, and the run ends Ok (not Failed) as a turn's end does.
