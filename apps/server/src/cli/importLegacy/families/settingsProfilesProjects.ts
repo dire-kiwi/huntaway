@@ -286,6 +286,8 @@ export const convertProfile = (
     id: old.id,
     name: old.name,
     default_model: old.default_model,
+    // HE-111: the old board had no output styles.
+    default_output_style: null,
     created_at: old.created_at,
     claude_config_ids: list("claude_config_ids", old.claude_config_ids),
     agent_access: list("agent_access", old.agent_access),
@@ -402,6 +404,7 @@ export const convertProject = (
     use_worktrees: bit(old.use_worktrees, 1),
     permission_mode: permissionMode,
     model: old.model,
+    output_style: null,
     next_number: old.next_number,
     created_at: old.created_at,
     auto_review: bit(old.auto_review, 1),

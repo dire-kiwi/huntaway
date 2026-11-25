@@ -14,7 +14,7 @@ import { exitError, runExit } from "../../../state/mutation"
 
 /**
  * The board's menus and dialogs: a card's menu and what its items do, the picked tasks' pen menu, the task being
- * renamed, given a reminder or deleted, and where New task was clicked.
+ * renamed, moved to another project, given a reminder or deleted, and where New task was clicked.
  */
 export function useBoardMenus({
   statuses,
@@ -39,6 +39,8 @@ export function useBoardMenus({
   const [renaming, setRenaming] = useState<Task | null>(null)
   // The task being deleted from its menu, in the dialog that asks first.
   const [deleting, setDeleting] = useState<Task | null>(null)
+  // The task being moved to another project (HE-110).
+  const [moving, setMoving] = useState<Task | null>(null)
   // Where the picked tasks' pen menu is, from the selection bar.
   const [penMenu, setPenMenu] = useState<{ x: number; y: number } | null>(null)
   const { newPen, dialog: newPenDialog } = useNewPen(setDropErr)
@@ -116,6 +118,8 @@ export function useBoardMenus({
     setRenaming,
     deleting,
     setDeleting,
+    moving,
+    setMoving,
     penMenu,
     setPenMenu,
     newPen,

@@ -398,11 +398,18 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       )
     )
 
+  // The column beside the main area. A document, the changes' panels, the code and the terminals get the room; so do the
+  // desktop, the browser, the memory and the brief.
+  const side =
+    wide && !desktop && !browser && !docShown && shown !== "changes" && shown !== "code" && shown !== "memory" && shown !== "brief" && !isTerminalTab(tab)
+  const keyItems = side && shown !== "details" && !pensThread
+
   const controls = (
     <>
       {assistant && profileName && <AssistantHostPicker profile={profileName} onError={setMarkErr} />}
       {canMark && <ReminderButton task={task} onError={setMarkErr} />}
-      <AgentsPill task={task} onReveal={() => setTab("thread")} />
+      {/* HE-112: the subagents are in the key items' column where it's shown. */}
+      {!keyItems && <AgentsPill task={task} onReveal={() => setTab("thread")} />}
       <ContextPill task={task} />
       {/* On a phone, tighter, so every tab (Code too, HE-79) fits its width. */}
       <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5 narrow:order-first narrow:gap-0.5">
@@ -574,21 +581,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             </div>
           </>
         )}
-        {/* A document, the changes' panels, the code and the terminals get the room; so do the desktop, the browser, the memory and the brief. */}
-        {wide &&
-          !desktop &&
-          !browser &&
-          !docShown &&
-          shown !== "changes" &&
-          shown !== "code" &&
-          shown !== "memory" &&
-          shown !== "brief" &&
-          !isTerminalTab(tab) &&
-          // Beside the Details tab, the rest of the details; beside the others, the key items (a pens thread has none).
+        {/* Beside the Details tab, the rest of the details; beside the others, the key items (a pens thread has none). */}
+        {side &&
           (shown === "details" ? (
             <DetailsSide key={task.id} task={task} mode={mode} className={SIDE} />
           ) : (
-            !pensThread && <KeyItems key={task.id} task={task} className={SIDE} />
+            keyItems && <KeyItems key={task.id} task={task} className={SIDE} onReveal={() => setTab("thread")} />
           ))}
       </div>
     </div>

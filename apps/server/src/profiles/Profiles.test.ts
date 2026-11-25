@@ -223,8 +223,8 @@ describe("Profiles", () => {
         ["upper", "Work"],
         ["lower", "work"],
       ] as const) {
-        const saved = yield* profiles.update(ProfileId.make(id), { name: ` ${name} `, default_model: " haiku " })
-        assert.deepStrictEqual([saved.name, saved.default_model], [name, "haiku"])
+        const saved = yield* profiles.update(ProfileId.make(id), { name: ` ${name} `, default_model: " haiku ", default_output_style: " Concise " })
+        assert.deepStrictEqual([saved.name, saved.default_model, saved.default_output_style], [name, "haiku", "Concise"])
       }
       assert.strictEqual(yield* tag(profiles.update(ProfileId.make("lower"), { name: "WORK" })), "Conflict")
       assert.strictEqual((yield* profiles.update(ProfileId.make("lower"), { name: "office" })).name, "office")

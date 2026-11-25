@@ -253,7 +253,8 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   approval rules in Details (3.6, 6.12); worktree set-up and tear-down (4.1); "Stacked on" and "Landing after" in
   Details (4.8); fix-checks buttons (4.5, 4.6); the context breakdown's lists and "carry on" (2.8); Codex config models
   (M5); a review thread's own view (M4); the Agents pill (`layout/AgentsPill`, HE-40), in the task view's and a review
-  thread's header. Subprojects are a legacy branch, deleted.
+  thread's header where the column beside the thread isn't shown; where it is, its list is a Subagents section there
+  (HE-112). Subprojects are a legacy branch, deleted.
 - **Smaller changes the lint asked for**: the thread notes its top row as it is scrolled and after each change (not
   while it draws) to keep the place when older items come in; its source of rows is filled by an effect; tool groups'
   stable keys are kept per thread for the page's life. A host's tagged errors have no message, so `errorText` reads
@@ -940,6 +941,9 @@ its name, and what it does behind the ? beside that (HE-39). All are off at firs
     test clock, a run skipped because the user has just written, a quiet one, and one that reports);
     `Automations.test.ts` and `schedule.test.ts` (several times, `{{last_run}}`, `{{quiet_runs}}`);
     `tests/ui/checkIns.test.mjs` (nothing while off; Add check-ins; the editor's times).
+- **Claude Code's Code Mode** (`code_mode`, HE-107): new Claude conversations ask Claude Code for its Code Mode; a
+  conversation keeps the mode it started in, so switching it on or off applies to new conversations. Claude Code
+  decides whether a conversation gets it, and the thread says when it doesn't. See [07-agents.md](07-agents.md#code-mode).
 
 ### Interactive replies (HE-77)<a id="interactive-replies"></a>
 
@@ -1337,7 +1341,8 @@ task, most of it rarely used (the status list, the title, the description, label
 - **Key items** (`task/view/details/KeyItems.tsx`) are what that column shows now, beside every tab that leaves it room
   (not a document, the changes, the terminals, the desktop, the memory or the brief): the status with when it last
   moved and what it has cost, and what it waits for (`StatusNotes`, out of `StatusSection.tsx`); the agent's todo list
-  in full (`TodosSection.tsx`: the card has only its start); the assistant's tracked work; the pull request with its
+  in full (`TodosSection.tsx`: the card has only its start); the thread's subagents, each opening its own thread
+  (`SubagentsSection.tsx`, HE-112); the assistant's tracked work; the pull request with its
   checks and _Fix broken checks_; the preview; the workflows; the plugins' panels (HE-34); the tasks from the same prompt and the ones it created;
   what it depends on, merges into, is merged into by and is stacked with; its branch, and a worktree that failed. Each
   only when there is one, so a task with none of them has just its status. A pens thread has no column.
@@ -1354,3 +1359,15 @@ task, most of it rarely used (the status list, the title, the description, label
   `StatusSection` asks before a move to Done itself (`useConfirmDone`), no longer through `Details`.
 - Checks: `tests/ui/taskDetails.test.mjs` (the key items beside the thread, the Details tab's two columns, and an edit
   kept as the panel expands); the checks that reach a section through the Details tab are as they were.
+
+### Moving a task to another project (HE-110)
+
+A task can't change project (its key, branch and worktree are its project's), so _Move to project…_ (in a card's menu,
+and beside _Delete task_ in Details) makes a new task in the project picked with the task's title, description and
+labels (a scratch task stays scratch), in To do (Backlog, from there) with its agent not started, and then asks: _Delete
+original_ (a move) or _Keep original_ (a copy). Either way the new task opens. It's done in the browser
+(`layout/MoveTaskModal.tsx`): `tasks.create` on the target's host, then `tasks.delete` on the task's, so it works across
+profiles and hosts. Files attached to the prompt are paths on the task's host, so to another host they're copied
+(`attachments.get`, then `attachments.upload` there) and the description lists the copies. If the delete fails, trying
+again only deletes. Not for the threads that last. Checks:
+`tests/ui/moveTaskProject.test.mjs`.

@@ -123,6 +123,16 @@ const echoes = (line: ClaudeLine, raw: string, id: string): boolean => {
 const neverAnswered = (line: ResultLine): boolean =>
   line.is_error === true && typeof line.session_id === "string" && line.duration_api_ms === 0 && (line.total_cost_usd ?? 0) === 0
 
+/**
+ * How Claude Code's error for a session started in Code Mode that this run can't have starts (HE-107): the switch was
+ * on then, and the model, the config's gateway or Claude Code's own rules now keep Code Mode from it.
+ */
+const CODE_MODE_RESUME_REFUSED = "Failed to resume session: This session was started in Code Mode"
+
+/** The result says Claude Code refused to resume the session: it started in Code Mode, which this run can't have. */
+export const codeModeResumeRefused = (line: ResultLine): boolean =>
+  Array.isArray(line.errors) && line.errors.some((e) => typeof e === "string" && e.startsWith(CODE_MODE_RESUME_REFUSED))
+
 export const ClaudeOutput = Layer.effect(
   RunOutput,
   Effect.gen(function* () {
@@ -199,7 +209,19 @@ export const ClaudeOutput = Layer.effect(
         dud = Option.getOrUndefined(first) === run.id && Option.isSome(row) && row.value.cost_usd - cost === 0
       }
       if (dud) yield* Effect.logInfo(`task=${run.task_id} run=${run.id} session ${line.session_id} was never answered, so the next run starts a new one`)
-      const session = dud ? null : typeof line.session_id === "string" ? line.session_id : task.session_id
+      // HE-107: a Code Mode conversation Claude Code won't resume can't go on: the next message starts a new one.
+      const refused = codeModeResumeRefused(line)
+      if (refused) {
+        yield* Effect.logWarning(`task=${run.task_id} run=${run.id} Claude Code refused to resume Code Mode session ${task.session_id ?? "?"}`)
+        yield* threads
+          .notice(
+            run.task_id,
+            "warning",
+            "This conversation was started in Claude Code's Code Mode, which this run can't have, so it can't go on. Send your message again to start a new conversation.",
+          )
+          .pipe(Effect.catchTag("TaskNotFound", () => Effect.void))
+      }
+      const session = dud || refused ? null : typeof line.session_id === "string" ? line.session_id : task.session_id
       yield* writeTask(run.task_id, { cost_usd: task.cost_usd + cost, session_id: session })
       // 4.3: a checkpoint of what the turn left, taken in the background once this commits, with the message the turn
       // started with, which goes (a turn the agent starts by itself didn't start with one).
@@ -229,7 +251,7 @@ export const ClaudeOutput = Layer.effect(
           case "SessionStarted": {
             const task = yield* tasks.get(run.task_id)
             if (task !== null && task.session_id !== effect.sessionId) yield* writeTask(run.task_id, { session_id: effect.sessionId })
-            yield* repo.update(run.id, { session_id: effect.sessionId })
+            yield* repo.update(run.id, { session_id: effect.sessionId, code_mode: effect.codeMode })
             break
           }
           case "TurnStarted":

@@ -3,16 +3,21 @@ import { Resolution } from "@huntaway/contracts"
 import { Schema } from "effect"
 import { useSelection } from "../../../selection"
 import { openCompare } from "../../../state/route"
+import { moveItem } from "../../layout/MoveTaskModal"
 import { titleItem } from "../../layout/TitleModal"
+import { taskFacts } from "../../task/view/details/taskFacts"
 import { reminderMenu, starItem } from "../../task/Reminders"
 import { ContextMenu, RESOLUTION_LABELS, StatusIcon, useClock } from "../../ui"
 import { penItems, penMenu } from "../Pens"
 import type { BoardMenus } from "./useBoardMenus"
 
+/** What can move to another project: a task of its own, not a thread that lasts (HE-110). */
+const movable = (t: Task) => t.kind === "task" && !taskFacts(t).lasting
+
 /**
- * A card's menu, for `task`: the columns and resolutions to move it to, its star, reminder and pen, renaming and
- * deleting it. Right-clicked, the moves are in a submenu of their own; from the card's Move button (on a phone or a
- * touch screen), they come first, in the menu itself.
+ * A card's menu, for `task`: the columns and resolutions to move it to, its star, reminder and pen, renaming it, moving
+ * it to another project and deleting it. Right-clicked, the moves are in a submenu of their own; from the card's Move
+ * button (on a phone or a touch screen), they come first, in the menu itself.
  */
 export function CardMenu({
   menus,
@@ -27,7 +32,7 @@ export function CardMenu({
   projectOf: (t: Task) => Project | undefined
   setDropErr: (msg: string | null) => void
 }) {
-  const { menu, setMenu, moveItems, complete, setPicking, setRenaming, setDeleting, newPen, menuSiblings } = menus
+  const { menu, setMenu, moveItems, complete, setPicking, setRenaming, setMoving, setDeleting, newPen, menuSiblings } = menus
   const now = useClock(1000)
   if (!menu) return null
   const key = `${keyPrefix(menuTask, projectOf(menuTask))}-${menuTask.number}`
@@ -58,6 +63,7 @@ export function CardMenu({
         reminderMenu(menuTask, () => setPicking(menuTask), setDropErr),
         ...penMenu(menuTask, picked, setDropErr, newPen),
         titleItem(() => setRenaming(menuTask), true),
+        ...(movable(menuTask) ? [moveItem(() => setMoving(menuTask))] : []),
         ...(menuSiblings > 1 ? [{ label: `Compare all ${menuSiblings} from its prompt`, onSelect: () => openCompare(menuTask.id) }] : []),
         // The assistant lasts: it can't be deleted.
         ...(isAssistant(menuTask) ? [] : [{ label: "Delete…", divider: true, danger: true, onSelect: () => setDeleting(menuTask) }]),

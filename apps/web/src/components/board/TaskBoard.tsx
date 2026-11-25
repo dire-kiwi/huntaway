@@ -10,6 +10,7 @@ import { FilterBar, FilterMenu, SearchBox, SortMenu } from "./BoardControls"
 import { useConfirmDone } from "./ConfirmDone"
 import { useConfirmTodos } from "./ConfirmTodos"
 import { ReminderModal } from "../task/Reminders"
+import { MoveTaskModal } from "../layout/MoveTaskModal"
 import { TitleModal } from "../layout/TitleModal"
 import { DeleteTaskModal } from "../task/view/details/Modals"
 import { useSelection } from "../../selection"
@@ -146,7 +147,24 @@ export function TaskBoard({
     dropTask: drops.dropTask,
     setDropErr,
   })
-  const { newIn, setNewIn, newLane, setNewLane, menu, menuTask, onMenu, picking, setPicking, renaming, setRenaming, penMenu, setPenMenu, newPen } = menus
+  const {
+    newIn,
+    setNewIn,
+    newLane,
+    setNewLane,
+    menu,
+    menuTask,
+    onMenu,
+    picking,
+    setPicking,
+    renaming,
+    setRenaming,
+    moving,
+    setMoving,
+    penMenu,
+    setPenMenu,
+    newPen,
+  } = menus
   const canAdd = !!project || !!scratch
   const stackMenu = stacks.menu ? stacks.byKey(stacks.menu.key) : undefined
   const editStack = stacks.editing ? stacks.byKey(stacks.editing) : undefined
@@ -262,6 +280,7 @@ export function TaskBoard({
       {picking && <ReminderModal task={picking} onClose={() => setPicking(null)} />}
       {renaming && <TitleModal task={renaming} onClose={() => setRenaming(null)} />}
       {menus.deleting && <DeleteTaskModal task={menus.deleting} mode="board" onClose={() => menus.setDeleting(null)} />}
+      {moving && <MoveTaskModal task={moving} onClose={() => setMoving(null)} />}
       {doneDialog}
       {todosDialog}
       {menus.newPenDialog}

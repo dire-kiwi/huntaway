@@ -29,6 +29,7 @@ export const ProjectRow = Schema.Struct({
   setup_task_id: Schema.NullOr(TaskId),
   permission_mode: Schema.NullOr(PermissionMode),
   model: Schema.NullOr(Schema.String),
+  output_style: Schema.NullOr(Schema.String),
   claude_config_ids: NullableJsonColumn(Schema.Array(AgentConfigId)),
   auto_review: Bit,
   done_when_merged: Bit,

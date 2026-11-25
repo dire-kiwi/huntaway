@@ -1,13 +1,35 @@
 import { useAtomValue } from "@effect/atom-react"
 import { agentSuffix, canRunAgents, holdsProjects, type HostAgentConfig as ClaudeConfig, query } from "@huntaway/client"
+import { BUILT_IN_OUTPUT_STYLES } from "@huntaway/shared"
 import { clsx } from "clsx"
+import { useId } from "react"
 import { profileNames, useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
-import { resultError, resultValue, Select } from "../../ui"
+import { Input, resultError, resultValue, Select } from "../../ui"
 
 // The fields of a profile's form (docs/plan/09-frontend.md). gh's accounts are 6.11's `profiles.githubAccounts`.
 
 const label = (c: ClaudeConfig | undefined): string => (c ? `${c.name}${agentSuffix(c)}` : "")
+
+/**
+ * HE-111: an output style for Claude agents, suggesting Claude Code's built-in ones; any other name (a user's, a
+ * project's or a plugin's style) is taken as typed.
+ */
+export function OutputStyleInput({ value, placeholder, onChange }: { value: string; placeholder: string; onChange: (style: string) => void }) {
+  const list = useId()
+  return (
+    <>
+      <Input value={value} placeholder={placeholder} list={list} spellCheck={false} onChange={(e) => onChange(e.target.value)} />
+      <datalist id={list}>
+        {BUILT_IN_OUTPUT_STYLES.map((s) => (
+          <option key={s.name} value={s.name}>
+            {s.description}
+          </option>
+        ))}
+      </datalist>
+    </>
+  )
+}
 
 /** One of a profile's configs for its assistant or its threads, or "" for its default (the first). */
 export function ThreadConfigSelect({ configs, value, onChange }: { configs: ReadonlyArray<ClaudeConfig>; value: string; onChange: (id: string) => void }) {

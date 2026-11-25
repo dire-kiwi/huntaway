@@ -1,12 +1,26 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, FileSystem } from "effect"
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import { BUILT_IN_STYLES, fileStyles, outputStyles, reportedStyles, styleNamed } from "./outputStyles.ts"
+import { BUILT_IN_STYLES, fileStyles, launchStyle, outputStyles, reportedStyles, styleNamed, styleOf } from "./outputStyles.ts"
 
 // A Claude task's output styles for the `/output-style` menu (HE-102): what a run's `initialize` answer lists, the
 // styles' files, and a typed name matched to one.
 
+/** A task (or a review thread) with its own style, or none. */
+const task = (output_style: string | null, kind: "task" | "review" = "task") => ({ kind, output_style })
+
 describe("output styles", () => {
+  it("gives a task its own style, else its project's, else its profile's; a review thread only its own (HE-111)", () => {
+    const project = { output_style: "Explanatory" }
+    const profile = { default_output_style: "Concise" }
+    assert.deepStrictEqual(styleOf(task("Learning"), project, profile), { style: "Learning", from: "task" })
+    assert.deepStrictEqual(styleOf(task(null), project, profile), { style: "Explanatory", from: "project" })
+    assert.deepStrictEqual(styleOf(task(" "), { output_style: null }, profile), { style: "Concise", from: "profile" })
+    assert.isNull(launchStyle(task(null), null, { default_output_style: "" }))
+    assert.isNull(launchStyle(task(null, "review"), project, profile))
+    assert.strictEqual(launchStyle(task("default", "review"), project, profile), "default")
+  })
+
   it("reads the styles from Claude Code's initialize answer, and nothing from one without them", () => {
     assert.deepStrictEqual(reportedStyles({ output_style: "Explanatory", available_output_styles: ["default", "Explanatory", 3, ""] }), {
       current: "Explanatory",

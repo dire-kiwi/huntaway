@@ -89,6 +89,21 @@ export const ModelFallbackLine = Schema.Struct({
 })
 export type ModelFallbackLine = typeof ModelFallbackLine.Type
 
+/**
+ * `system`/`notification`: a notice Claude Code shows the user (`key` names which). The board shows Code Mode's
+ * (`code-mode…`: why a run asked for it didn't get it, HE-107) and drops the rest.
+ */
+export const NotificationLine = Schema.Struct({
+  type: Schema.Literal("system"),
+  subtype: Schema.Literal("notification"),
+  ...session,
+  key: text,
+  text: text,
+  /** How Claude Code colours it: `warning`, `error`… */
+  color: text,
+})
+export type NotificationLine = typeof NotificationLine.Type
+
 /** `stream_event`: the API's own stream, of which the server reads where messages and blocks start and text deltas. */
 export const StreamEventLine = Schema.Struct({
   type: Schema.Literal("stream_event"),
@@ -242,6 +257,7 @@ export const ClaudeLine = Schema.Union([
   BackgroundTasksLine,
   TaskLine,
   ModelFallbackLine,
+  NotificationLine,
   StreamEventLine,
   AssistantLine,
   UserLine,
@@ -281,6 +297,7 @@ const decoders: ReadonlyMap<string, Decoder> = new Map<string, Decoder>([
   ["system/task_notification", Schema.decodeUnknownResult(TaskLine)],
   ["system/model_refusal_fallback", Schema.decodeUnknownResult(ModelFallbackLine)],
   ["system/model_fallback", Schema.decodeUnknownResult(ModelFallbackLine)],
+  ["system/notification", Schema.decodeUnknownResult(NotificationLine)],
   ["stream_event", Schema.decodeUnknownResult(StreamEventLine)],
   ["assistant", Schema.decodeUnknownResult(AssistantLine)],
   ["user", Schema.decodeUnknownResult(UserLine)],
