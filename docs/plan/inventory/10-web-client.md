@@ -47,6 +47,7 @@ is no server-side rendering, no router library, no data-fetching library and no 
 - Stacks (`stacks.ts`, `StackCard.tsx`, `StackedOn.tsx`, `useBoardStacks.tsx`): gathered or spread, per stack; merge a whole stack by dropping on Ready for merge (`api.mergeStack`, API 153).
 - Merges-into trees (`MergesInto.tsx`), dependencies (`Dependencies.tsx`), fan-out of one prompt (`Fanout.tsx`), pending permission prompts answerable from the card (`PendingPrompts.tsx`).
 - Pens (`Pens.tsx`, `pens.ts`): a profile's named task sets as tabs and lanes, merged across hosts by name; lasso multi-select (`Lasso.tsx`, `lasso.ts`, `selection.ts`).
+- A card's right-click menu (`taskBoard/Menus.tsx`, HE-109): Move to (the columns, then Done's resolutions), Star, Remind me, Pen, Set title…, Move to project… (HE-110), Compare all N, and Delete… (not the assistant; `DeleteTaskModal`, which on the board closes only the panel or dialog that showed the task). Move to, Remind me and Pen are submenus (`ContextMenu` items with `items`): beside the menu on hover, a click or ArrowRight (ArrowLeft back), in place under their item in the narrow layout. From a card's Move button the moves are in the menu itself.
 - Narrow layout shows one column at a time (`useBoardColumn.ts`), touch gets a move menu instead of drag.
 
 ### 2.5 Task view (`components/task/`, 66 files)

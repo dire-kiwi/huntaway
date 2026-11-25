@@ -37,7 +37,7 @@ test("tasks move into pens, which show as the profile board's tabs", async () =>
     )
 
     // From a card's menu, on the All tab.
-    await ui.run([`click ${tab("All")}`, `rclick ${DRAG}`, "click [role=menu] >> text=Pen: Today", "gone [role=menu]"])
+    await ui.run([`click ${tab("All")}`, `rclick ${DRAG}`, "click role=menuitem[name='Pen']", "click [role=menu] >> text=Today", "gone [role=menu]"])
     await eventually(async () => assert.equal((await tasks())[DRAG].pen_id, today.id))
     // Dropped on the tab.
     await page.evaluate(
@@ -76,7 +76,7 @@ test("tasks move into pens, which show as the profile board's tabs", async () =>
     await eventually(async () => assert.equal((await penNow()).active, true))
 
     // Out of the pen from its menu.
-    await ui.run([`rclick ${DRAG}`, "click [role=menu] >> text=Out of Today", "gone [role=menu]", `gone ${DRAG}`])
+    await ui.run([`rclick ${DRAG}`, "click role=menuitem[name='Pen']", "click [role=menu] >> text=Out of Today", "gone [role=menu]", `gone ${DRAG}`])
     await eventually(async () => assert.equal((await tasks())[DRAG].pen_id, null))
   })
 })

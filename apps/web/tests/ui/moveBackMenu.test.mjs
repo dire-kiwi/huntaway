@@ -28,8 +28,8 @@ const movedTo = (title, status) =>
 test("a done task moves back to To do or Backlog from its right-click menu", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    await ui.run([`goto /p/${project.id}`, `wait ${DONE}`, `rclick ${DONE}`, "wait [role=menu]"])
-    // The statuses to move to, then Done's resolutions.
+    await ui.run([`goto /p/${project.id}`, `wait ${DONE}`, `rclick ${DONE}`, "click role=menuitem[name='Move to']"])
+    // The statuses to move to, then Done's resolutions, in its Move to submenu.
     const labels = await page.locator("[role=menu] [role^=menuitem]").allTextContents()
     for (const l of ["Backlog", "To do", "In progress", "Won't fix"])
       assert.ok(
@@ -45,24 +45,53 @@ test("a done task moves back to To do or Backlog from its right-click menu", asy
       "click css=#archived-tasks button",
       `wait ${ARCHIVED}`,
       `rclick ${ARCHIVED}`,
-      "wait [role=menu]",
+      "click role=menuitem[name='Move to']",
       "click [role=menu] >> text=To do",
     ])
     await movedTo(ARCHIVED, "todo")
   })
 })
 
-// The menu is taller with the moves in it: on a short desktop window it stays on screen and scrolls to its last item.
-test("the right-click menu scrolls on a short desktop window", async () => {
+/** That `menu` fits a 1280×600 window, and its last item (matching `last`) scrolls into it. */
+const reachable = async (menu, last) => {
+  const box = await menu.boundingBox()
+  assert.ok(box.y >= 0 && box.y + box.height <= 600 && box.x >= 0 && box.x + box.width <= 1280, `the menu fits the window: ${JSON.stringify(box)}`)
+  const item = menu.locator(":scope > [role^=menuitem]").last()
+  await item.scrollIntoViewIfNeeded()
+  const r = await item.boundingBox()
+  assert.ok(r.y >= box.y && r.y + r.height <= box.y + box.height + 1 && r.y + r.height <= 600, `the last item is reachable: ${JSON.stringify(r)}`)
+  assert.match(await item.textContent(), last)
+}
+
+// On a short desktop window the menu, and the submenu of moves beside it, stay on screen and reach their last items.
+test("the right-click menu and its submenu stay on a short desktop window", async () => {
   await withBrowser(server, { size: "1280x600" }, async (ui) => {
     const { page } = ui
     await ui.run([`goto /p/${project.id}`, `wait ${TODO}`, `rclick ${TODO}`, "wait [role=menu]"])
-    const box = await page.locator("[role=menu]").boundingBox()
-    assert.ok(box.y >= 0 && box.y + box.height <= 600, `the menu fits the window: ${JSON.stringify(box)}`)
-    const last = page.locator("[role=menu] [role^=menuitem]").last()
-    await last.scrollIntoViewIfNeeded()
-    const r = await last.boundingBox()
-    assert.ok(r.y >= box.y && r.y + r.height <= box.y + box.height + 1 && r.y + r.height <= 600, `the last item is reachable: ${JSON.stringify(r)}`)
-    assert.match(await last.textContent(), /Move to project/)
+    await reachable(page.locator("[role=menu]").first(), /Delete/)
+    await ui.run(["click role=menuitem[name='Move to']"])
+    await reachable(page.locator("[role=menu] [role=menu]"), /Won't fix/)
+  })
+})
+
+// HE-109: the keyboard goes into a submenu (ArrowRight, Enter) and back out of it (ArrowLeft).
+test("the arrow keys go into and out of the menu's submenus", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    await ui.run([`goto /p/${project.id}`, `wait ${TODO}`, `rclick ${TODO}`, "wait [role=menu]"])
+    const focused = () => page.evaluate(() => document.activeElement?.textContent)
+    assert.equal(await focused(), "Move to")
+    await page.keyboard.press("ArrowRight")
+    // Into the moves, at the column it's in.
+    assert.match(await focused(), /To do/)
+    await page.keyboard.press("ArrowLeft")
+    assert.equal(await focused(), "Move to")
+    assert.equal(await page.locator("[role=menu]").count(), 1, "the submenu closed")
+    await page.keyboard.press("ArrowDown")
+    await page.keyboard.press("ArrowDown")
+    assert.equal(await focused(), "Remind me")
+    await page.keyboard.press("Enter")
+    assert.equal(await focused(), "In 1 hour")
+    await ui.run(["press Escape", "gone [role=menu]"])
   })
 })

@@ -1,4 +1,4 @@
-import { isArchived, keyPrefix, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
+import { isArchived, isAssistant, keyPrefix, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
 import { Resolution } from "@huntaway/contracts"
 import { Schema } from "effect"
 import { useSelection } from "../../../selection"
@@ -6,16 +6,19 @@ import { openCompare } from "../../../state/route"
 import { moveItem } from "../../layout/MoveTaskModal"
 import { titleItem } from "../../layout/TitleModal"
 import { taskFacts } from "../../task/view/details/taskFacts"
-import { reminderItems, starItem } from "../../task/Reminders"
+import { reminderMenu, starItem } from "../../task/Reminders"
 import { ContextMenu, RESOLUTION_LABELS, StatusIcon, useClock } from "../../ui"
-import { penItems } from "../Pens"
+import { penItems, penMenu } from "../Pens"
 import type { BoardMenus } from "./useBoardMenus"
 
 /** What can move to another project: a task of its own, not a thread that lasts (HE-110). */
 const movable = (t: Task) => t.kind === "task" && !taskFacts(t).lasting
 
-/** A card's menu, for `task`: the columns and resolutions to move it to, its star, reminder and pen, renaming
- * it and moving it to another project. */
+/**
+ * A card's menu, for `task`: the columns and resolutions to move it to, its star, reminder and pen, renaming it, moving
+ * it to another project and deleting it. Right-clicked, the moves are in a submenu of their own; from the card's Move
+ * button (on a phone or a touch screen), they come first, in the menu itself.
+ */
 export function CardMenu({
   menus,
   task: menuTask,
@@ -29,35 +32,41 @@ export function CardMenu({
   projectOf: (t: Task) => Project | undefined
   setDropErr: (msg: string | null) => void
 }) {
-  const { menu, setMenu, moveItems, complete, setPicking, setRenaming, setMoving, newPen, menuSiblings } = menus
+  const { menu, setMenu, moveItems, complete, setPicking, setRenaming, setMoving, setDeleting, newPen, menuSiblings } = menus
   const now = useClock(1000)
   if (!menu) return null
+  const key = `${keyPrefix(menuTask, projectOf(menuTask))}-${menuTask.number}`
+  const moves = [
+    ...moveItems(menuTask),
+    ...Object.keys(RESOLUTION_LABELS)
+      .filter(Schema.is(Resolution))
+      .map((r, i) => ({
+        label: (
+          <span className="flex items-center gap-2">
+            <StatusIcon status="done" size={13} /> {RESOLUTION_LABELS[r]}
+          </span>
+        ),
+        // An archived task isn't in Done: picking its resolution brings it back.
+        checked: menuTask.status === "done" && menuTask.resolution === r && !isArchived(menuTask, now),
+        divider: i === 0,
+        onSelect: () => complete(menuTask, r),
+      })),
+  ]
   return (
     <ContextMenu
       x={menu.x}
       y={menu.y}
-      title={`Move ${keyPrefix(menuTask, projectOf(menuTask))}-${menuTask.number} to`}
+      title={menu.move ? `Move ${key} to` : key}
       items={[
-        ...moveItems(menuTask),
-        ...Object.keys(RESOLUTION_LABELS)
-          .filter(Schema.is(Resolution))
-          .map((r, i) => ({
-            label: (
-              <span className="flex items-center gap-2">
-                <StatusIcon status="done" size={13} /> {RESOLUTION_LABELS[r]}
-              </span>
-            ),
-            // An archived task isn't in Done: picking its resolution brings it back.
-            checked: menuTask.status === "done" && menuTask.resolution === r && !isArchived(menuTask, now),
-            divider: i === 0,
-            onSelect: () => complete(menuTask, r),
-          })),
+        ...(menu.move ? moves : [{ label: "Move to", items: moves }]),
         starItem(menuTask, setDropErr, true),
-        ...reminderItems(menuTask, () => setPicking(menuTask), setDropErr),
-        ...penItems(menuTask, picked, setDropErr, newPen),
+        reminderMenu(menuTask, () => setPicking(menuTask), setDropErr),
+        ...penMenu(menuTask, picked, setDropErr, newPen),
         titleItem(() => setRenaming(menuTask), true),
         ...(movable(menuTask) ? [moveItem(() => setMoving(menuTask))] : []),
-        ...(menuSiblings > 1 ? [{ label: `Compare all ${menuSiblings} from its prompt`, divider: true, onSelect: () => openCompare(menuTask.id) }] : []),
+        ...(menuSiblings > 1 ? [{ label: `Compare all ${menuSiblings} from its prompt`, onSelect: () => openCompare(menuTask.id) }] : []),
+        // The assistant lasts: it can't be deleted.
+        ...(isAssistant(menuTask) ? [] : [{ label: "Delete…", divider: true, danger: true, onSelect: () => setDeleting(menuTask) }]),
       ]}
       // A right-click on another task may already have opened its menu in place of this one.
       onClose={() => setMenu((m) => (m === menu ? null : m))}
@@ -87,7 +96,7 @@ export function PenMenu({
         return Object.assign(i, {
           divider: false,
           onSelect: () => {
-            select()
+            select?.()
             useSelection.getState().clear()
           },
         })

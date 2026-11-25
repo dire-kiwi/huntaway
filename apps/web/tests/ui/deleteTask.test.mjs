@@ -26,3 +26,25 @@ test("a deletion that fails says so and keeps the dialog open", async () => {
     assert.equal((await server.rpc("tasks.get", { id: task.id })).title, "Stays put")
   })
 })
+
+const card = (t) => `[data-task="${t.id}"]`
+
+// HE-109: a card's right-click menu deletes it, once asked, and the board stays where it is (closing the side panel only
+// where that showed it).
+test("a card's menu deletes the task, closing the panel that showed it", async () => {
+  const kept = await makeTask(server, board.project, { title: "Kept open" })
+  const gone = await makeTask(server, board.project, { title: "Deleted from its card" })
+  const open = await makeTask(server, board.project, { title: "Deleted while open" })
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    await ui.run([`goto /p/${board.project.id}?task=${kept.id}&side`, `wait ${card(gone)}`, `rclick ${card(gone)}`, "click role=menuitemradio[name='Delete…']"])
+    await ui.run(["wait This stops any running agent", "click role=dialog >> role=button[name='Delete']", "gone role=dialog", `gone ${card(gone)}`])
+    assert.match(new URL(page.url()).search, new RegExp(`task=${kept.id}`), "the panel on another task stays open")
+
+    await ui.run([`goto /p/${board.project.id}?task=${open.id}&side`, `wait ${card(open)}`, `rclick ${card(open)}`, "click role=menuitemradio[name='Delete…']"])
+    await ui.run(["click role=dialog >> role=button[name='Delete']", `gone ${card(open)}`])
+    assert.equal(new URL(page.url()).pathname, `/p/${board.project.id}`)
+    assert.doesNotMatch(new URL(page.url()).search, /task=/, "its panel closed")
+    await assert.rejects(server.rpc("tasks.get", { id: gone.id }))
+  })
+})

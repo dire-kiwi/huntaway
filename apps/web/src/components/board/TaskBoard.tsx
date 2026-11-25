@@ -12,6 +12,7 @@ import { useConfirmTodos } from "./ConfirmTodos"
 import { ReminderModal } from "../task/Reminders"
 import { MoveTaskModal } from "../layout/MoveTaskModal"
 import { TitleModal } from "../layout/TitleModal"
+import { DeleteTaskModal } from "../task/view/details/Modals"
 import { useSelection } from "../../selection"
 import { penItems } from "./Pens"
 import { LassoPath, SelectionBar, useClearSelection, useLasso } from "./Lasso"
@@ -278,6 +279,7 @@ export function TaskBoard({
       {editStack && <StackEditModal stack={editStack} onClose={() => stacks.setEditing(null)} />}
       {picking && <ReminderModal task={picking} onClose={() => setPicking(null)} />}
       {renaming && <TitleModal task={renaming} onClose={() => setRenaming(null)} />}
+      {menus.deleting && <DeleteTaskModal task={menus.deleting} mode="board" onClose={() => menus.setDeleting(null)} />}
       {moving && <MoveTaskModal task={moving} onClose={() => setMoving(null)} />}
       {doneDialog}
       {todosDialog}

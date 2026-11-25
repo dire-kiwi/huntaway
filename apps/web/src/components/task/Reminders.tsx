@@ -65,6 +65,21 @@ export function reminderItems(task: Task, onPick: () => void, onError: (msg: str
   ]
 }
 
+/** The reminder items in a submenu of their own, "Remind me", with the presets' labels as they are ("In 1 hour"). */
+export function reminderMenu(task: Task, onPick: () => void, onError: (msg: string) => void, divider = false): MenuItem {
+  const save = (patch: Parameters<typeof saveMarks>[1]) => saveMarks(task, patch).catch((e: unknown) => onError(errorText(e)))
+  return {
+    label: "Remind me",
+    divider,
+    checked: !!task.remind_at,
+    items: [
+      ...reminderPresets(nowMillis()).map((p) => ({ label: p.label, onSelect: () => save({ remind_at: isoOf(p.at) }) })),
+      { label: "At…", onSelect: onPick },
+      ...(task.remind_at ? [{ label: "Clear reminder", divider: true, onSelect: () => save({ remind_at: null }) }] : []),
+    ],
+  }
+}
+
 /** The star item for a task's menu. */
 export const starItem = (task: Task, onError: (msg: string) => void, divider = false): MenuItem => ({
   label: task.starred ? "Unstar" : "Star",

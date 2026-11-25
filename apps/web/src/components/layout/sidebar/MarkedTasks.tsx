@@ -8,7 +8,7 @@ import { type Route } from "../../../router"
 import { collapsedSectionsAtom } from "../../../state/prefs"
 import { openTask, usePanel } from "../../../state/route"
 
-import { ReminderModal, reminderItems, starItem, useReminderClock } from "../../task/Reminders"
+import { ReminderModal, reminderMenu, starItem, useReminderClock } from "../../task/Reminders"
 import { ContextMenu, IconButton, localeString } from "../../ui"
 import { titleItem, TitleModal } from "../TitleModal"
 import { Badge, NavItem } from "./NavItem"
@@ -126,7 +126,7 @@ export function MarkedTasks({ route }: { route: Route }) {
           title={`${taskKey(menu.task)}${menu.task.reminder ? ` · ${menu.task.reminder}` : ""}`}
           items={[
             starItem(menu.task, setErr),
-            ...reminderItems(menu.task, () => setPicking(menu.task), setErr, true),
+            reminderMenu(menu.task, () => setPicking(menu.task), setErr, true),
             titleItem(() => setRenaming(menu.task), true),
           ]}
           onClose={() => setMenu(null)}
