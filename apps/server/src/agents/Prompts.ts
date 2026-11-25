@@ -18,12 +18,16 @@ import { Projects } from "../projects/Projects.ts"
 import type { ProjectNotFound } from "../projects/Projects.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
 import { PenRepo } from "../tasks/PenRepo.ts"
+import { StackThreads, stackThreadOf } from "../tasks/StackThreads.ts"
+import { stackOf } from "../tasks/lanes.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import type { TaskNotFound } from "../tasks/Tasks.ts"
 import { WorkflowFacts } from "./WorkflowFacts.ts"
 import type { PromptContext, PromptProject, PromptTask } from "./prompts/context.ts"
 import { mentionKeys, mentionsNote } from "./prompts/mentions.ts"
+import { stackBriefOf, stackLevelOf } from "./prompts/stack.ts"
+import type { StackLevel } from "../prompts/codeTask.ts"
 import type { MentionTask } from "./prompts/mentions.ts"
 import { mentionsScanned, planRest, runPrompt } from "./prompts/start.ts"
 import { planCommand } from "../prompts/planCommand.ts"
@@ -145,6 +149,8 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
       const agentTools = yield* AgentTools
       // 6.6: the project's workflow's In progress text and whether it opens the pull request.
       const workflowFacts = yield* WorkflowFacts
+      // HE-105: a stack's own thread, which its levels are told of.
+      const stackThreads = yield* StackThreads
 
       const expand = (path: string) => (path === "~" ? config.home : path.startsWith("~/") ? `${config.home}${path.slice(1)}` : path)
 
@@ -182,8 +188,33 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
         })
       })
 
+      /** A project's tasks of `profile`, as the stacks read them. */
+      const stackRows = (task: Pick<Task, "project_id" | "profile_id">) =>
+        task.project_id === null
+          ? Effect.succeed([])
+          : Effect.map(taskRepo.projectTasks(task.project_id), (all) => all.filter((t) => t.kind === "task" && t.profile_id === task.profile_id))
+
+      /** HE-105: a stack thread's stack as it is now (`stackBrief`), from the level it's under. */
+      const stackBriefFor = Effect.fnUntraced(function* (task: ContextTask) {
+        const parent = task.parent_id === null ? null : yield* taskRepo.get(task.parent_id)
+        return stackBriefOf(yield* stackRows(task), parent)
+      })
+
+      /**
+       * HE-105: where a level of a stack is in it, with the stack's thread, which is made for it if there's none yet (so
+       * its agent can hand it stack work). Null for a task in no stack.
+       */
+      const stackLevelFor = Effect.fnUntraced(function* (task: Task) {
+        if (task.kind !== "task" || task.project_id === null) return null
+        const rows = yield* stackRows(task)
+        const st = stackOf(rows, task)
+        if (st === null) return null
+        const thread = stackThreadOf(rows, st.levels) ?? (yield* stackThreads.thread(task.id).pipe(Effect.orElseSucceed(() => null)))
+        return thread === null ? null : stackLevelOf(rows, task, thread.key)
+      })
+
       /** The facts every thread's prompts read. */
-      const contextOf = Effect.fnUntraced(function* (task: ContextTask, kind: ThreadKind, run: RunTold) {
+      const contextOf = Effect.fnUntraced(function* (task: ContextTask, kind: ThreadKind, run: RunTold, stackLevel: StackLevel | null = null) {
         const project = yield* projectOf(task.project_id)
         const profile = yield* profiles.get(task.profile_id).pipe(Effect.orDie)
         const parent = task.kind === "review" && task.parent_id !== null ? yield* taskRepo.get(task.parent_id) : null
@@ -227,6 +258,8 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           profiles: yield* profiles.list,
           githubAccount: set(project?.github_account) ?? set(profile.github_account),
           pen: kind._tag === "Pen" ? yield* penOf(task, kind) : "",
+          stackBrief: kind._tag === "Stack" ? yield* stackBriefFor(task) : "",
+          stackLevel,
           github: yield* githubOf(task, project),
           // The board serves gh (4.4), and docs when the docs plugin runs (HE-42), unless the project has its own server of
           // that name or turns it off (6.4).
@@ -252,9 +285,12 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
       })
 
       const system = Effect.fn("Prompts.system")(function* (id: TaskId, run: RunTold) {
-        const task = yield* asTold(yield* tasks.get(id))
+        const now = yield* tasks.get(id)
+        const task = yield* asTold(now)
         const kind = threadKindOf(task)
-        return systemPrompt(kind, yield* contextOf(task, kind, run))
+        // From the task as it is: one told it's no longer stacked (its level below merged) is still in the stack.
+        const stackLevel = kind._tag === "Code" ? yield* stackLevelFor(now) : null
+        return systemPrompt(kind, yield* contextOf(task, kind, run, stackLevel))
       })
 
       /** The projects and tasks the keys in `text` may name, for `mentionsNote`. */

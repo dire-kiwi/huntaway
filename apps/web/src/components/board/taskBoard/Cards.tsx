@@ -73,6 +73,7 @@ export function Cards({
                 meta={stacks.hasMeta(stack)}
                 anchor={t.id}
                 onSpread={() => stacks.spread(stack, false)}
+                onThread={() => stacks.openThread(stack, drops.setDropErr)}
                 onMenu={stacks.onMenu}
                 onDragStart={stacks.setDragStack}
                 onDragEnd={() => {

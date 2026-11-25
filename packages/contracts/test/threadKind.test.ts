@@ -133,6 +133,14 @@ const cases: ReadonlyArray<Case> = [
     key: "S",
   },
   {
+    name: "a stack's own thread, in its project under its bottom task (HE-105)",
+    fields: { task_type: "stack", parent_id: parent, use_worktree: false },
+    kind: { _tag: "Stack", of: parent },
+    onBoard: false,
+    status: true,
+    key: "HE",
+  },
+  {
     name: "a task in a pen is still a code task",
     fields: { pen_id: pen },
     kind: { _tag: "Code", project_id: project, worktree: true },

@@ -1,4 +1,13 @@
-import { isAssistant, isPenThread, isPensThread, ownWorkDir, type DocumentType, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
+import {
+  isAssistant,
+  isPenThread,
+  isPensThread,
+  isStackThread,
+  ownWorkDir,
+  type DocumentType,
+  type HostProject as Project,
+  type HostTask as Task,
+} from "@huntaway/client"
 import { Suspense, useEffect, type ReactNode } from "react"
 import { preloadable } from "../../ui/preloadable"
 import { Thread } from "../Thread"
@@ -37,6 +46,14 @@ const PEN_EMPTY = (
   <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">
     This is the pen's own thread: one conversation that lasts, about the tasks in this pen. Its agent can say how they're going, add tasks to the pen, start or
     chase them, and keep notes on what the pen is for.
+  </div>
+)
+
+// HE-105.
+const STACK_EMPTY = (
+  <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">
+    This is the stack's own thread: one conversation that lasts, about the stack as a whole. Ask it to restack the levels onto each other, push them or put
+    their pull requests right; the levels&apos; agents hand it that work too.
   </div>
 )
 
@@ -97,7 +114,17 @@ export function TabContent({
           key={`${task.host_id}:${task.id}`}
           task={task}
           cwd={task.worktree_path ?? ownWorkDir(task) ?? project?.repo_path}
-          empty={isAssistant(task) ? ASSISTANT_EMPTY : isPensThread(task) ? PENS_EMPTY : isPenThread(task) ? PEN_EMPTY : NOT_STARTED}
+          empty={
+            isAssistant(task)
+              ? ASSISTANT_EMPTY
+              : isPensThread(task)
+                ? PENS_EMPTY
+                : isPenThread(task)
+                  ? PEN_EMPTY
+                  : isStackThread(task)
+                    ? STACK_EMPTY
+                    : NOT_STARTED
+          }
           placeholder={placeholder}
           summaries={summaries}
         />

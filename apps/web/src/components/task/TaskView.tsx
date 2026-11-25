@@ -5,6 +5,7 @@ import {
   documentsOnly,
   isAssistant,
   isPenThreads,
+  isStackThread,
   isRoutine,
   isScratch,
   keyPrefix,
@@ -269,8 +270,9 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // its workspace, with no repository.
   const assistant = isAssistant(task)
   const routine = isRoutine(task)
-  // The profile's pens thread, and each pen's own: conversations in no repository, like the assistant.
-  const pensThread = isPenThreads(task)
+  // The profile's pens thread, and each pen's own: conversations in no repository, like the assistant. HE-105: a stack's
+  // own thread is a conversation too, with no changes of its own.
+  const pensThread = isPenThreads(task) || isStackThread(task)
   // One in no project is on its profile's board (a scratch task can be in a project).
   const profileScratch = scratch && !task.project_id
   const labels = taskLabels(task)

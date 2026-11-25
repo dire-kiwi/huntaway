@@ -56,10 +56,14 @@ export const todoReason = (items: ReadonlyArray<Todo>): string => cut(`Todo list
 /** Whether the last message the agent was sent is the board's nudge: it was asked to finish its list, and hasn't. */
 export const nudged = (last: { readonly text: string; readonly auto?: boolean } | null): boolean => last?.auto === true && last.text.startsWith(TODO_NUDGE)
 
-/** A thread that is the profile's own (the assistant, its routines, the pens threads): never held, never reviewed. */
-export type Lasting = "assistant" | "pens" | "routine" | null
+/**
+ * A thread that lasts (the profile's assistant, its routines, the pens threads; HE-105: a stack's own thread, in its
+ * project): never held, never reviewed.
+ */
+export type Lasting = "assistant" | "pens" | "routine" | "stack" | null
 
 export const lastingOf = (task: Pick<Task, "kind" | "task_type" | "project_id">): Lasting => {
+  if (task.kind === "task" && task.task_type === "stack") return "stack"
   if (task.kind !== "task" || task.project_id !== null) return null
   if (task.task_type === "assistant") return "assistant"
   if (task.task_type === "pens" || task.task_type === "pen") return "pens"
@@ -181,7 +185,7 @@ export const decideFinish = (f: FinishFacts): FinishDecision => {
       f.mergesToDone ? "The agent finished without saying the task is merged (with finish_work)" : "The agent finished without marking the task merged",
     ]
   } else if (f.task.remerge) column = ["ready_for_merge", null]
-  else if (lasting === "assistant" || lasting === "pens") column = ["todo", null]
+  else if (lasting === "assistant" || lasting === "pens" || lasting === "stack") column = ["todo", null]
   else if (lasting === "routine") column = ["done", null]
   else column = ["in_review", null]
   // The workflow column whose work this was takes the task on once it's done (HA-276): it stays in its column for it,

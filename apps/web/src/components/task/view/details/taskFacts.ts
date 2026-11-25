@@ -1,4 +1,4 @@
-import { documentsOnly, isAssistant, isPenThread, isPensThread, isScratch, type HostTask as Task } from "@huntaway/client"
+import { documentsOnly, isAssistant, isPenThread, isPensThread, isScratch, isStackThread, type HostTask as Task } from "@huntaway/client"
 import { isGroupTask } from "../../../boardHelpers"
 
 /** What kind of task it is, for which parts of its details it has: the sidebar's key items and the Details tab share it. */
@@ -14,12 +14,14 @@ export function taskFacts(task: Task) {
   const pensThread = isPensThread(task)
   const penThread = isPenThread(task)
   const assistant = isAssistant(task)
-  const lasting = assistant || pensThread || penThread
+  // HE-105: as does a stack's own thread, which restacks the stack's levels rather than working on code of its own.
+  const stackThread = isStackThread(task)
+  const lasting = assistant || pensThread || penThread || stackThread
   /** It works on code in its project's repository: it has a branch, a pull request and a worktree. */
   const code = !groupTask && !docsOnly && !scratch && !lasting
   // What its work merges into (API 128): a code task in a project, which merge as they did.
   const mergeable = task.kind === "task" && !!task.project_id && code && !task.parent_id
   // It needs a worktree; once it's done, only to show where it went.
   const showMergesInto = mergeable && (task.use_worktree || !!task.branch || !!task.merges_into) && (task.status !== "done" || !!task.merges_into)
-  return { groupTask, docsOnly, scratch, pensThread, penThread, assistant, lasting, code, showMergesInto }
+  return { groupTask, docsOnly, scratch, pensThread, penThread, stackThread, assistant, lasting, code, showMergesInto }
 }

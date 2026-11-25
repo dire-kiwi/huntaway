@@ -140,6 +140,12 @@ export class TaskRpcs extends RpcGroup.make(
     success: Task,
     error: Schema.Union([NotFound, Invalid]),
   }).annotate(RequiredScope, "operate"),
+  /**
+   * HE-105: the stack's own thread, which the user (and its levels' agents) message to restack it and the like: in the
+   * stack's project, under its bottom task, made the first time it's asked for. `id` is any level. `Invalid` for a task in
+   * no stack.
+   */
+  Rpc.make("tasks.stackThread", { payload: { id: TaskId }, success: Task, error: Schema.Union([NotFound, Invalid]) }).annotate(RequiredScope, "operate"),
   /** Whether moving the task to Done would leave work of its unmerged, for the board to ask first (the old `GET /tasks/{id}/unmerged`). */
   Rpc.make("tasks.unmerged", { payload: { id: TaskId }, success: Schema.Struct({ unmerged: Schema.Boolean }), error: NotFound }).annotate(
     RequiredScope,

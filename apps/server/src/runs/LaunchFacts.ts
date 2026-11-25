@@ -28,6 +28,7 @@ import type { AgentConfigRow } from "../profiles/AgentConfigRepo.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
+import { stackOf } from "../tasks/lanes.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
@@ -229,6 +230,19 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       })
 
       /**
+       * HE-105: the worktrees a stack's own thread restacks in (its stack's open levels' that are set up), besides the
+       * project's repository it works in; none for any other thread.
+       */
+      const stackDirs = Effect.fnUntraced(function* (task: Task) {
+        if (task.kind !== "task" || task.task_type !== "stack" || task.parent_id === null || task.project_id === null) return []
+        const parent = yield* tasks.get(task.parent_id)
+        if (parent === null) return []
+        const rows = (yield* tasks.projectTasks(task.project_id)).filter((t) => t.kind === "task" && t.profile_id === task.profile_id)
+        const levels = stackOf(rows, parent)?.levels ?? []
+        return levels.flatMap((l) => (l.status !== "done" && l.worktree_state === "ready" && l.worktree_path !== null ? [expand(l.worktree_path)] : []))
+      })
+
+      /**
        * What the agent works in, made ready (the old launch's, for both agents): its worktree set up (4.1), then a
        * checkpoint of it before the agent changes it (4.3). The task as it is after.
        */
@@ -332,7 +346,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           tools: yield* agentTools.forRun(task),
           served,
           githubAccount: nonBlank(project?.github_account) ?? nonBlank(profile?.github_account),
-          addDirs: [...group, ...(docs !== null && docs !== cwd ? [docs] : [])],
+          addDirs: [...group, ...(yield* stackDirs(task)), ...(docs !== null && docs !== cwd ? [docs] : [])],
           attachmentDirs: [],
           prompt,
           promptId: yield* random.uuidV4(),
@@ -468,6 +482,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           promptId: yield* random.uuidV4(),
           gitDir,
           cacheDirs: caches,
+          workDirs: yield* stackDirs(task),
           documentsDir: docs !== null && docs !== cwd ? docs : null,
           reviewFilesystem: reviewFs,
           sessionBoardTools: task.session_id === null ? false : yield* runs.sessionBoardTools(task.id, task.session_id),

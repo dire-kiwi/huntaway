@@ -1537,3 +1537,42 @@ board has its own, for a Claude task:
   queued (not forced): those already written from what their levels say cost nothing.
 - **Tests**: `agents/StackTitles.test.ts`, every case of the old `agent/stack_title.test.ts` on the test board with
   `TitleScript`, but the wire and MCP parts it names at its top.
+
+### Stack threads (HE-105)<a id="stack-threads"></a>
+
+A stack's levels each have their own agent, and restacking (rebasing a level onto the level below after that changed,
+force-pushing, putting pull requests' bases right) touches several of them at once: left to the levels' agents, they
+each tried to coordinate it (work:ODS-89). So a stack has **one lasting thread of its own** that manages the stack as a
+whole, which the user messages, and which the levels' agents are told to hand stack work to.
+
+- **The row** (`tasks/StackThreads.ts`): `task_type` `stack` (`ThreadKind` `Stack`), in the stack's project (numbered
+  and keyed as the project's tasks, e.g. `HE-12`), `parent_id` the stack's bottom, `use_worktree` off, titled
+  `Stack: <the stack's title>`. `thread(id)` (`tasks.stackThread`, any level) finds the one under any of the stack's
+  levels (`stackThreadOf`, the bottom's first) or makes it in the transaction that looked; `Invalid` for a task in no
+  stack, or a stack in no project. Off the board: the web board already leaves out a project's rows with a `parent_id`.
+- **Made when it's first needed**: from the Stack card (its thread button, or its menu's "Open the stack's thread"), or
+  when a level's run is launched (`Prompts.system`), so a level's agent always has a key to send to.
+- **What it's told** (`prompts/stackThread.ts`, then `prompts/stackBrief.ts` last, as a pen's thread is told its pen):
+  that it is where the stack is managed; how to restack (bottom up, in each level's own worktree, never under a running
+  agent, `git rebase --onto <below> refs/huntaway/start/<id>`, the start ref moved after, checks, `--force-with-lease`,
+  GitHub's stack keeping its bases); to leave a level whose `restack` is `due` to the board; to hand the levels' own
+  work to their tasks; not to merge, move or delete them. The brief lists the levels bottom first with key, state,
+  title, id, the level each lands after, branch and base, start ref, worktree (once set up), pull request and GitHub
+  stack, and restack state. Its first prompt is the message (a conversation, like the pens threads).
+- **What a level is told** (`codeTask`'s `stackNote`, from `agents/prompts/stack.ts` `stackLevelOf`): "This task is
+  level N of M of a stack (…), whose own thread, KEY, manages the stack as a whole. Refer any stack management to it…",
+  with `send_to_task`; a restack the board itself asks of it (`RestackAsk`) it still does.
+- **Where it works**: in the project's repository (`cwdOf` falls through to it), with the open levels' set-up worktrees
+  as `--add-dir`s (Claude) or writable roots (Codex, `workDirs`); its permissions are the project's, as a task's.
+- **A lasting thread**: its runs end in To do (`lastingOf` `stack`), never reviewed, never in a workflow
+  (`workflows/engine/start.ts` skips it), nothing to merge (`decide.ts` `ownFolderKinds`); it can't be moved to In
+  review, Ready for merge, Done or Backlog.
+- **Its bottom deleted**: it goes under the first level landing after it (`lanes.ts` `stackThreadHeir`, in
+  `decideDeleted`), which is the bottom then; with none, it goes with it (its row cascades; `Tasks.delete` emits its
+  `task_deleted`, `TaskDeletion` stops its run).
+- **The web**: the Stack card has a thread button (amber while the thread asks something), shows the thread's running
+  dot and attention, and its menu has "Open the stack's thread"; the thread opens on its conversation, without Changes,
+  Code or Review tabs, with a "Stack thread" section in Details.
+- **Tests**: `tasks/StackThreads.test.ts` (made once, from any level; refused for a task in no stack and for In review;
+  what a level and the thread are told; kept when its bottom is deleted, gone with the last), `system.test.ts`'s two
+  cases, `threadKind.test.ts`'s row.

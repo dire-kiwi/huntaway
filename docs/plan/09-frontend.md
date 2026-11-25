@@ -441,6 +441,14 @@ Superseded by HE-96 (above): kept as the record of what came over.
   and the phone layout puts the pane in the main area's place. The desktop app's <webview> path has its server side
   tested (`Browsers.test.ts`) but hasn't been run in Electron here.
 
+### As built in HE-105: a stack's own thread
+
+- The gathered Stack card (`board/StackCard.tsx`) has a thread button beside Spread, and its menu "Open the stack's
+  thread" (`useBoardStacks.tsx` `openThread`: `tasks.stackThread`, then `openTask`; a refusal shows as the board's
+  error). The card counts the thread's running and Needs attention with its levels', and the button turns amber while
+  the thread asks. The thread opens as a conversation (`openingTab`), with only its Thread tab and a "Stack thread"
+  section in Details (`taskFacts` `stackThread`, a lasting thread). See [07-agents.md](07-agents.md#stack-threads).
+
 ### As built in 4.8 (HE-5): web
 
 - **Wired** (the cuts M1/M2 left for merges and stacks), each through `@huntaway/client`'s mutations

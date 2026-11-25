@@ -267,8 +267,10 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
                   if (before === undefined) continue
                   changed.push({ before, after: yield* commit(before, deriveColumns(before, columns, at), at) })
                 }
+                // HE-105: its stack's thread, when no level is left to take it, goes with it (the row cascades).
+                const threads = siblings.filter((t) => t.task_type === "stack" && t.parent_id === id && !changed.some((c) => c.before?.id === t.id))
                 yield* repo.delete(id)
-                for (const r of [...reviews, gone]) yield* events.emit({ type: "task_deleted", id: r.id, project_id: r.project_id })
+                for (const r of [...reviews, ...threads, gone]) yield* events.emit({ type: "task_deleted", id: r.id, project_id: r.project_id })
                 changed.push({ before: gone, after: null })
                 return changed
               }),

@@ -7,6 +7,7 @@ import type { Actor } from "../platform/Changes.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound, Tasks } from "../tasks/Tasks.ts"
 import { Runs } from "./Runs.ts"
+import { stackThreadHeir } from "../tasks/lanes.ts"
 
 export interface TaskDeletionShape {
   /**
@@ -42,6 +43,11 @@ export class TaskDeletion extends Context.Service<TaskDeletion, TaskDeletionShap
         yield* runs.abort(id)
         const reviewThreads = yield* repo.reviewThreads(id)
         for (const r of reviewThreads) yield* runs.abort(r.id)
+        // HE-105: and its stack's thread's, when that goes with it (no level is left to take it).
+        if (task.project_id !== null) {
+          const siblings = yield* repo.projectTasks(task.project_id)
+          if (stackThreadHeir(siblings, id) === null) for (const t of siblings) if (t.task_type === "stack" && t.parent_id === id) yield* runs.abort(t.id)
+        }
         yield* worktrees.forDeletion(task, options.deleteBranch)
         // 6.4: its review and summary threads' own skills folders go with them.
         const skillFolders = Effect.forEach(reviewThreads, (r) => (r.project_id === null ? Effect.void : agentTools.removeThreadSkills(r.project_id, r.id)), {

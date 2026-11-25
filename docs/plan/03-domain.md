@@ -183,12 +183,17 @@ export type ThreadKind =
   | { _tag: "Routine"; assistant: TaskId }
   | { _tag: "PensRoot" }
   | { _tag: "Pen"; pen: PenId }
+  | { _tag: "Stack"; of: TaskId } // HE-105: a stack's own thread, in its project under the stack's bottom task
   | { _tag: "Review"; of: TaskId }
   | { _tag: "Summary"; of: TaskId }
   | { _tag: "WorkflowStep"; of: TaskId }
 
 export const threadKindOf: (task: Task) => ThreadKind
 ```
+
+A stack's own thread (HE-105) is a task row with `task_type` `stack`, in the stack's project (numbered and keyed as its
+tasks are), whose `parent_id` is the stack's bottom task; it lasts like a pen's thread (To do, In progress or Needs
+attention only) and is off the board's columns. See [07-agents.md](07-agents.md#stack-threads).
 
 `threadKindOf` is a pure function in `packages/contracts`, so the clients use it too. "Is on a board", "takes a
 status", "is reviewed", "has a merge", "which key letter" and "which system prompt" are all tables over `_tag`.
