@@ -1,6 +1,6 @@
 import { clsx } from "clsx"
 import { Check, ChevronRight } from "lucide-react"
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react"
+import { createContext, Fragment, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react"
 import { useNarrow } from "../../narrow"
 import { after } from "../../state/timers"
 
@@ -18,6 +18,12 @@ export type MenuItem = {
   onSelect?: (() => void) | undefined
 }
 
+/**
+ * Places the menu again for its size now, as a submenu opened in place under its item (on a phone) makes it taller: it
+ * moves up to stay on screen, then scrolls. Returns the menu, placed, or nothing.
+ */
+const Refit = createContext<() => HTMLElement | null>(() => null)
+
 /** A menu's own items, not those of a menu opened from one of them. */
 const ownItems = (menu: Element): HTMLElement[] =>
   Array.from(menu.querySelectorAll<HTMLElement>("[role^=menuitem]")).filter((el) => el.closest("[role=menu]") === menu)
@@ -31,14 +37,27 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
   const [pos, setPos] = useState({ left: x, top: y })
   // What it was opened on: the topmost element at (x, y) other than the menu, which is placed there first.
   const anchor = useRef<Element | undefined>(undefined)
-  useLayoutEffect(() => {
+  // At (x, y) where it fits, else as near as it does. Set on the element too, so what measures it next sees it there.
+  const place = useCallback((): HTMLElement | null => {
     const el = ref.current
-    if (!el) return
-    anchor.current = document.elementsFromPoint(x, y).find((e) => !el.contains(e))
+    if (!el) return null
     const r = el.getBoundingClientRect()
-    setPos({ left: Math.max(4, Math.min(x, window.innerWidth - r.width - 4)), top: Math.max(4, Math.min(y, window.innerHeight - r.height - 4)) })
-    ;(el.querySelector<HTMLElement>("[aria-checked=true]") ?? el.querySelector<HTMLElement>("[role^=menuitem]"))?.focus()
+    const at = { left: Math.max(4, Math.min(x, window.innerWidth - r.width - 4)), top: Math.max(4, Math.min(y, window.innerHeight - r.height - 4)) }
+    el.style.left = `${at.left}px`
+    el.style.top = `${at.top}px`
+    setPos((p) => (p.left === at.left && p.top === at.top ? p : at))
+    return el
   }, [x, y])
+  useLayoutEffect(() => {
+    const el = place()
+    if (!el) return undefined
+    anchor.current = document.elementsFromPoint(x, y).find((e) => !el.contains(e))
+    ;(el.querySelector<HTMLElement>("[aria-checked=true]") ?? el.querySelector<HTMLElement>("[role^=menuitem]"))?.focus()
+    // And again as its size changes (a submenu in place closing, say).
+    const watch = new ResizeObserver(() => place())
+    watch.observe(el)
+    return () => watch.disconnect()
+  }, [x, y, place])
   useEffect(() => {
     // Closed after the event, so whatever else handles it (the side panel closing on a click
     // outside it) still sees the menu, marked data-modal, and leaves it alone.
@@ -95,7 +114,9 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
       onContextMenu={(e) => e.preventDefault()}
     >
       {title && <div className="px-2 pt-1 pb-1.5 text-[11.5px] text-faint">{title}</div>}
-      <Items items={items} onClose={onClose} />
+      <Refit.Provider value={place}>
+        <Items items={items} onClose={onClose} />
+      </Refit.Provider>
     </div>
   )
 }
@@ -235,9 +256,9 @@ function SubMenu({
       </button>
       {open &&
         (inline ? (
-          <div role="group" className="ml-3 border-l border-line pl-1">
+          <InPlace trigger={button}>
             <Items items={sub} onClose={onClose} />
-          </div>
+          </InPlace>
         ) : (
           <Floating anchor={button} panel={panel} focusFirst={focusFirst} onStay={onStay}>
             <Items
@@ -251,6 +272,26 @@ function SubMenu({
           </Floating>
         ))}
     </>
+  )
+}
+
+/** A submenu opened under its item, `trigger`: the menu is placed again for it, and scrolls to show it (and its item). */
+function InPlace({ trigger, children }: { trigger: RefObject<HTMLElement | null>; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const refit = useContext(Refit)
+  useLayoutEffect(() => {
+    const menu = refit()
+    const group = ref.current?.getBoundingClientRect()
+    const item = trigger.current?.getBoundingClientRect()
+    if (!menu || !group || !item) return
+    const box = menu.getBoundingClientRect()
+    const below = group.bottom - (box.bottom - 4)
+    if (below > 0) menu.scrollTop += Math.min(below, item.top - (box.top + 4))
+  }, [refit, trigger])
+  return (
+    <div ref={ref} role="group" className="ml-3 border-l border-line pl-1">
+      {children}
+    </div>
   )
 }
 
