@@ -18,6 +18,17 @@ export const groupNames = (projects: ReadonlyArray<Project>, hostId: string) => 
   ...new Set(projects.flatMap((p) => (p.host_id === hostId && p.group_name ? [p.group_name] : []))),
 ]
 
+/**
+ * The group names a project can be put in: those of its own profile's projects, in sidebar order.
+ * Groups are per profile (a group task's group names a group of its profile's projects), so
+ * another profile's groups aren't offered.
+ */
+export const profileGroupNames = (projects: ReadonlyArray<Project>, of: Pick<Project, "host_id" | "profile_id">) =>
+  groupNames(
+    projects.filter((p) => p.profile_id === of.profile_id),
+    of.host_id,
+  )
+
 /** Whether a task is one of a host's group's group tasks. */
 const inGroup = (t: Task, hostId: string, name?: string) =>
   t.host_id === hostId && t.kind === "task" && !t.project_id && !!t.group_name && (name === undefined || t.group_name === name)

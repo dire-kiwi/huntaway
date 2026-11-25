@@ -1,6 +1,6 @@
 import { useState, type MouseEvent } from "react"
 import { type HostProject as Project } from "@huntaway/client"
-import { groupNames, hiddenKey } from "../../../projectGroups"
+import { hiddenKey, profileGroupNames } from "../../../projectGroups"
 import type { Route } from "../../../router"
 import type { MenuItem } from "../../ui"
 import { newWindowItems } from "./newWindow"
@@ -37,7 +37,7 @@ export function useProjectMenus({
       items: [
         ...(grouping
           ? [
-              ...groupNames(projects, p.host_id).map((name) => ({ label: name, checked: p.group_name === name, onSelect: () => trySetGroup([p], name) })),
+              ...profileGroupNames(projects, p).map((name) => ({ label: name, checked: p.group_name === name, onSelect: () => trySetGroup([p], name) })),
               { label: "New group…", onSelect: () => setNaming({ title: `New group for ${p.name}`, initial: "", projects: [p] }) },
               { label: "No group", checked: !p.group_name, onSelect: () => trySetGroup([p], null) },
             ]
