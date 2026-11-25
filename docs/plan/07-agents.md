@@ -99,7 +99,9 @@ export type Outgoing = { text: string; source: "user" | "agent" | "routine" | "a
 
 ### Starting
 
-`Runs.send` takes the task's lock and decides with a pure function (`decideSend`: steer, queue, wait, or start).
+`Runs.send` takes the task's lock and decides with a pure function (`decideSend`: steer, queue, wait, or start). A
+message sent with `queue` (HE-113) is queued rather than steered while the agent is in a turn, and the turn's end
+(`RunInput.turnEnded`) steers what is queued into the same run, which starts its next turn.
 Starting has two parts, as now:
 
 1. **Register** (one transaction): insert the run as `preparing`, take what is queued (ahead of this message, or as

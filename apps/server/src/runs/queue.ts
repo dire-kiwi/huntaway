@@ -24,6 +24,11 @@ export interface Outgoing {
    * of the sending agent's turn for a message an agent sent; 0 (left out) for the user's and the board's own.
    */
   readonly hops?: number | undefined
+  /**
+   * HE-113: it waits for the agent's turn to end rather than steering it: queued while the agent works, it is written
+   * to its input once the turn is over, which starts the next turn of the same run (`RunInput.turnEnded`).
+   */
+  readonly queue?: boolean | undefined
 }
 
 /** `/compact [instructions]`: Claude Code summarises the conversation so far. */
@@ -148,6 +153,8 @@ export interface LiveRun {
   readonly phase: RunPhase
   /** Its agent still reads input (`RunDir.acceptsInput`). */
   readonly acceptsInput: boolean
+  /** Its turn is over and it waits for input (kept going by its background work, say): a queued message goes in at once. */
+  readonly betweenTurns: boolean
   /** It may write the task's documents folder, so a `/plan` can be steered into it. */
   readonly writesDocuments: boolean
 }
@@ -192,7 +199,9 @@ export const decideSend = (f: SendFacts): SendDecision => {
     if (text === "") return { _tag: "Nothing" }
     const run = f.live
     // A run being prepared takes input once it starts; a `/plan` only goes to one that can write the plan.
-    const steer = !isCompact(text) && !(f.plan && !run.writesDocuments) && run.kind !== "compact" && (run.phase === "preparing" || run.acceptsInput)
+    const steerable = !isCompact(text) && !(f.plan && !run.writesDocuments) && run.kind !== "compact" && (run.phase === "preparing" || run.acceptsInput)
+    // HE-113: one to send once the agent's turn is over waits in the queue, unless its turn is over already.
+    const steer = steerable && (f.message?.queue !== true || (run.phase === "running" && run.betweenTurns))
     return { _tag: steer ? "Steer" : "Queue" }
   }
   if (!auto && !compact && kind === "prompt" && f.task.kind === "task" && !f.task.merging && f.agents && f.unmet.length > 0) {

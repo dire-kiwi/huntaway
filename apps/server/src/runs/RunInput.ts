@@ -4,6 +4,7 @@ import { SecureRandom } from "effect/crypto"
 import type { RunId, TaskId } from "@huntaway/contracts"
 import { interruptLine, userInput } from "../agents/claude/launch.ts"
 import { Prompts } from "../agents/Prompts.ts"
+import { planRest } from "../agents/prompts/start.ts"
 import { Changes } from "../platform/Changes.ts"
 import { nowTimestamp, toJson } from "../platform/columns.ts"
 import { Db } from "../platform/Db.ts"
@@ -14,6 +15,7 @@ import { detachable, kindOf, listed, notTakenIn } from "./background.ts"
 import { BackgroundWork } from "./BackgroundWork.ts"
 import { shellsListen, SUPPORTED } from "./DevServers.ts"
 import { lastingOf } from "./finish.ts"
+import { isCompact } from "./queue.ts"
 import type { Run } from "./Run.ts"
 import { RunDir } from "./RunDir.ts"
 import { RunRepo } from "./RunRepo.ts"
@@ -224,7 +226,42 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
           }),
         ).pipe(Effect.asVoid)
 
+      /**
+       * HE-113: what was queued for the task while the agent worked goes to it now that its turn is over, as steers of
+       * its run, in the order queued, so that it starts the agent's next turn rather than waiting for the run to end
+       * and a new one to start on it. Not into a run that is stopped, failed its turn, is a compaction or takes no input; and a
+       * `/compact` or `/plan` among it keeps the whole queue for the next run, as it would have been. Whether any went.
+       */
+      const steerQueued = Effect.fnUntraced(function* (run: Run) {
+        if (run.kind === "compact" || !(yield* dir.acceptsInput(run.id))) return false
+        const at = yield* nowTimestamp
+        const moved = yield* tx(
+          Effect.gen(function* () {
+            const row = yield* repo.get(run.id)
+            // A turn that failed (out of usage, say) leaves it for the run's end, which knows what to do with it.
+            if (Option.isNone(row) || !row.value.isLive || row.value.stop !== "none" || row.value.result_error !== null) return false
+            const queued = yield* tasks.queued(run.task_id)
+            if (queued.length === 0 || queued.some((q) => isCompact(q.text) || planRest(q.text) !== null)) return false
+            for (const q of yield* tasks.takeQueued(run.task_id)) {
+              if (q.text.trim() === "") continue
+              const id = yield* random.uuidV4()
+              yield* tasks.addSteer(
+                run.task_id,
+                { id, run_id: run.id, text: q.text, source: q.source, automation_run_id: q.automation_run_id, hops: q.hops ?? 0 },
+                at,
+              )
+            }
+            return true
+          }),
+        )
+        if (!moved) return false
+        // Shown as sent once written; as waiting to be, if it couldn't be.
+        if (!(yield* writeSteers(run.task_id))) yield* publish(run.task_id)
+        return true
+      })
+
       const turnEnded: (run: Run) => Effect.Effect<void> = Effect.fn("RunInput.turnEnded")(function* (run: Run) {
+        yield* steerQueued(run)
         const waiting = yield* tasks.steers(run.task_id, run.id)
         if (waiting.length > 0) {
           yield* closeUnlessTakenIn(

@@ -137,6 +137,9 @@ const result = (subtype: string, cost: number, more: Record<string, unknown> = {
   session_id: "s1",
   ...more,
 })
+/** The messages written to the agent's input (not the board's control requests, such as the context meter's). */
+const userLines = (agent: FakeAgent) =>
+  Effect.map(agent.input, (lines) => lines.filter((l) => typeof l === "object" && l !== null && "type" in l && l.type === "user"))
 const said = (text: string) => ({ type: "assistant", message: { content: [{ type: "text", text }] } })
 
 describe("Runs.send", () => {
@@ -203,6 +206,51 @@ describe("Runs.send", () => {
         yield* input.settled(agent.run.id, "steer")
         assert.isTrue(yield* agent.inputClosed)
         assert.strictEqual(STEER_GRACE, "30 seconds")
+      }),
+    ),
+  )
+
+  it.effect("a message queued for after the turn waits for its end, then starts the next turn of the same run (HE-113)", () =>
+    run(
+      Effect.gen(function* () {
+        const { task: id, agent } = yield* running()
+        let t = yield* send(id, "and then this", { queue: true })
+        assert.deepStrictEqual([t.queued_message, t.steering.length], ["and then this", 0])
+        assert.deepStrictEqual(yield* agent.input, [])
+
+        // The turn ends: it goes to the agent as a steer, and the input stays open for the turn it starts.
+        yield* output(agent, [result("success", 0.1)])
+        t = yield* task(id)
+        const steer = only(t.steering)
+        assert.deepStrictEqual([t.queued_message, steer.written], [null, true])
+        assert.deepStrictEqual(yield* userLines(agent), [{ type: "user", uuid: steer.id, message: { role: "user", content: "and then this" } }])
+        assert.isFalse(yield* agent.inputClosed)
+
+        yield* output(agent, [replay(steer.id, "and then this"), result("success", 0.2)])
+        assert.deepStrictEqual(yield* userMessages(id), [{ text: "and then this", steered: true }])
+        assert.isTrue(yield* agent.inputClosed)
+      }),
+    ),
+  )
+
+  it.effect("what is queued stays for the next run when the turn failed, or it holds a /compact (HE-113)", () =>
+    run(
+      Effect.gen(function* () {
+        {
+          const { task: id, agent } = yield* running()
+          yield* send(id, "and then this", { queue: true })
+          yield* output(agent, [result("error_during_execution", 0.1)])
+          const t = yield* task(id)
+          assert.deepStrictEqual([t.queued_message, t.steering.length], ["and then this", 0])
+          assert.isTrue(yield* agent.inputClosed)
+        }
+        const { task: id, agent } = yield* running()
+        yield* send(id, "and then this", { queue: true })
+        yield* send(id, "/compact")
+        yield* output(agent, [result("success", 0.1)])
+        const t = yield* task(id)
+        assert.deepStrictEqual([t.queued_message, t.steering.length], ["and then this\n\n/compact", 0])
+        assert.deepStrictEqual(yield* userLines(agent), [])
       }),
     ),
   )

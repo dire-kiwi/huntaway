@@ -28,9 +28,11 @@ export class TaskRpcs extends RpcGroup.make(
   /**
    * A message for the task's thread (the old `POST /tasks/{id}/messages`): steered into its live run, queued, held for
    * its dependencies or usage, or it starts a run. `/new`, `/compact`, `/plan` and `/output-style` are the board's. The task as it is after.
+   * HE-113: with `queue`, a message for an agent in the middle of a turn isn't steered into it: it is queued, and goes to
+   * the agent once the turn is over, as the next turn of the same run.
    */
   Rpc.make("tasks.send", {
-    payload: { id: TaskId, text: Schema.String },
+    payload: { id: TaskId, text: Schema.String, queue: Schema.optional(Schema.Boolean) },
     success: Task,
     error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]),
   }).annotate(RequiredScope, "operate"),

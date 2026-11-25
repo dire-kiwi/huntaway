@@ -17,7 +17,7 @@ const facts = (over: Partial<SendFacts> = {}): SendFacts => ({
   ...over,
 })
 
-const live = { kind: "prompt", phase: "running", acceptsInput: true, writesDocuments: false } as const
+const live = { kind: "prompt", phase: "running", acceptsInput: true, betweenTurns: false, writesDocuments: false } as const
 
 describe("decideSend", () => {
   it("doesn't start a conversation that has no message (HE-105)", () => {
@@ -67,6 +67,16 @@ describe("decideSend", () => {
       _tag: "Refuse",
       refusal: { _tag: "AlreadyRunning" },
     })
+  })
+
+  it("queues a message to send after the turn, unless the turn is over already (HE-113)", () => {
+    const later = { text: "and then this", source: "user", queue: true } as const
+    assert.deepStrictEqual(decideSend(facts({ live, message: later })), { _tag: "Queue" })
+    assert.deepStrictEqual(decideSend(facts({ live: { ...live, phase: "preparing", acceptsInput: false }, message: later })), { _tag: "Queue" })
+    // Between turns (kept going by its background work), the agent reads it at once.
+    assert.deepStrictEqual(decideSend(facts({ live: { ...live, betweenTurns: true }, message: later })), { _tag: "Steer" })
+    // With no run going it starts one, as any message does.
+    assert.deepStrictEqual(decideSend(facts({ message: later })), { _tag: "Start", kind: "prompt", take: "Ahead" })
   })
 
   it("waits for dependencies, but not for a compaction, a merging task, the board's own message or a host without agents", () => {

@@ -113,7 +113,8 @@ export const TaskHandlers = TaskRpcs.toLayer(
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound }),
         ),
       // The user's reply answers the questions the agent asked, and skips its permission prompts (`UserMessages`).
-      "tasks.send": ({ id, text }) => userMessages.send(id, text).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused })),
+      "tasks.send": ({ id, text, queue }) =>
+        userMessages.send(id, text, queue).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused })),
       // Its agent, and its review and summaries (4.6).
       "tasks.stop": ({ id }) =>
         Effect.gen(function* () {

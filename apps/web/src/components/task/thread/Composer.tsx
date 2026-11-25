@@ -17,7 +17,7 @@ import {
 } from "@huntaway/client"
 import { clsx } from "clsx"
 import { Cause } from "effect"
-import { ArrowUp, Clock, Loader2, MessageSquare, Square, X } from "lucide-react"
+import { ArrowUp, Clock, ListEnd, Loader2, MessageSquare, Square, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useTouch } from "../../../narrow"
 import { composerDraftAtom, composerDraftKey, composerUnsavedAtom } from "../../../state/drafts"
@@ -179,7 +179,8 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
     return () => ro.disconnect()
   }, [])
 
-  const send = () => {
+  /** `queue` (HE-113): the message waits for the agent's turn to end rather than steering it. */
+  const send = (queue = false) => {
     if (isRewindCommand(text)) return rewind()
     const files = attach.files
     const body = withAttachments(withComments(text, comments), files)
@@ -187,7 +188,7 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
     if (!body && (task.session_id || task.running)) return
     setErr(null)
     const ids = comments.map((c) => c.id)
-    send$({ body, sent: text, files, draft: draftAtom, onSent: () => removeComments(task.host_id, task.id, ids) })
+    send$({ body, sent: text, files, draft: draftAtom, onSent: () => removeComments(task.host_id, task.id, ids), queue })
     // The thread's composer shows the send under way, and the send takes what it sent off the draft once it's gone.
     onSend?.()
   }
@@ -237,7 +238,7 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
                 <QueuedMessage text={task.queued_message} hostId={task.host_id} />
                 <div className="mt-0.5 text-[11px] text-faint">
                   {task.running
-                    ? "Queued: sends when the agent finishes, or press Stop to send it now"
+                    ? "Queued: sends when the agent finishes its turn, or press Stop to send it now"
                     : dependencyQueued(task)
                       ? "Queued: sends when the agent starts, once the tasks it depends on are merged"
                       : limitQueued(task)
@@ -283,7 +284,8 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
               }
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && (!touch || e.ctrlKey || e.metaKey)) {
                 e.preventDefault()
-                send()
+                // Alt+Enter queues it for after the agent's turn (HE-113).
+                send(e.altKey && working && canSteer)
               }
             }}
             rows={1}
@@ -292,10 +294,10 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
                 ? `Add a message to the comment${comments.length === 1 ? "" : "s"}, or press Enter to send ${comments.length === 1 ? "it" : "them"}…`
                 : working
                   ? canQueue
-                    ? task.queued_message
+                    ? task.queued_message && !canSteer
                       ? "Add to the queued message…"
                       : canSteer
-                        ? "Message the agent: it reads it after its current step…"
+                        ? `Message the agent: it reads it after its current step${touch ? "" : ", or Alt+Enter to queue it for after its turn"}…`
                         : "Queue a message for when the agent finishes…"
                     : "Agent is working…"
                   : dependencyQueued(task) || limitQueued(task)
@@ -324,11 +326,21 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
                 }}
               />
               <AttachButton draft={attach} />
+              {working && canSteer && (text.trim() || attach.items.length > 0 || comments.length > 0) && (
+                <button
+                  onClick={() => send(true)}
+                  disabled={busy || attach.uploading}
+                  title={`Queue: send when the agent finishes its turn${touch ? "" : " (Alt+Enter)"}`}
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-fg hover:bg-white/15 disabled:text-faint narrow:h-9 narrow:w-9"
+                >
+                  <ListEnd size={14} />
+                </button>
+              )}
               {working && canQueue && (text.trim() || attach.items.length > 0 || comments.length > 0) && (
                 <button
-                  onClick={send}
+                  onClick={() => send()}
                   disabled={busy || attach.uploading}
-                  title={(canSteer && !task.queued_message ? "Send to the agent now" : "Queue") + enter}
+                  title={(canSteer ? "Send to the agent now" : "Queue") + enter}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
@@ -350,7 +362,7 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
                 </button>
               ) : (
                 <button
-                  onClick={send}
+                  onClick={() => send()}
                   disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !comments.length && !canStartEmpty)}
 
                   title={`Send${enter}`}

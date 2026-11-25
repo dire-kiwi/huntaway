@@ -433,6 +433,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
                   kind: live.kind,
                   phase: live.phase,
                   acceptsInput: yield* dir.acceptsInput(live.id),
+                  betweenTurns: live.between_turns,
                   writesDocuments: (yield* Ref.get(writesDocuments)).has(live.id),
                 },
           agents: !config.noAgents,

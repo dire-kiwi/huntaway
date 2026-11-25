@@ -1,5 +1,5 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react"
-import { mutate, optimisticMove, STATUSES, taskAtom, unreadInReview } from "@huntaway/client"
+import { backgroundIdle, mutate, optimisticMove, STATUSES, taskAtom, unreadInReview } from "@huntaway/client"
 import { TaskId } from "@huntaway/contracts"
 import { Stack, useLocalSearchParams } from "expo-router"
 import { useEffect, useState } from "react"
@@ -76,7 +76,7 @@ export default function TaskScreen() {
       <View style={{ flex: 1 }}>
         <ThreadView host={host} task={task} />
       </View>
-      <Composer host={host} taskId={id} />
+      <Composer host={host} taskId={id} queueable={task.running && task.steerable && !backgroundIdle(task)} />
       {moving && (
         <Modal visible transparent animationType="fade" onRequestClose={() => setMoving(false)}>
           <Pressable style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.5)" }} onPress={() => setMoving(false)}>

@@ -44,6 +44,12 @@ and the 5-hour-window restarter.
 ### Messages while a run is live (`runner/queue.ts`)
 - Steer: append a stream-json user message to `input.jsonl` at once; keep it on `tasks.steering` until echoed; add the thread message at the echo (`steer_or_queue`, `write_steers`, `steered`).
 - Queue (one concatenated message per task) when it can't be steered; send it when the run ends (`db.queue`, `send_queued`).
+- HE-113 (new): the user can queue a message on purpose rather than steer it (`tasks.send`'s `queue`; the composer's
+  Queue button, Alt+Enter). It waits in the queue while the agent is in a turn (steered at once if the run is between
+  turns); when the turn ends, `RunInput.turnEnded` moves the whole queue into steers of the same run and writes them,
+  so it starts the next turn rather than waiting for a new run. Not for a stopped run, a turn that failed, a compaction,
+  a run that takes no input, or a queue holding a `/compact` or `/plan` (those keep it for the next run, as before). A
+  queued message settles the agent's questions but leaves its permission prompts be.
 - Requeue never-taken-in steers ahead of anything queued later (`requeue_steers`, `requeue_ahead`).
 - Unqueue (give the text back to the user) (`unqueue`).
 - Close the input when a turn ends with nothing waiting; grace timers when something should start a turn but doesn't.
@@ -484,7 +490,8 @@ Consumed: agent output lines (above); task status changes (via `state.update_tas
 - A session the model never answered (`is_error`, `duration_api_ms == 0`, zero cost, first run of that session, not
   stopped, task kind `task`) is dropped (`session_id=null`) so the next run starts again from the description.
 - Queue vs steer: steer iff a run handle exists, text isn't `/compact`, a `/plan` targets a run that can write documents,
-  run kind isn't `compact`, and the run is `preparing` or `accepts_input`. Otherwise `db.queue`.
+  run kind isn't `compact`, and the run is `preparing` or `accepts_input`, and (HE-113) the message isn't one to queue
+  for after the turn, unless the run is between turns. Otherwise `db.queue`.
 - `finish` requeues un-taken steers *ahead of* anything queued since; a queued message is sent before the task's column is
   written (so the card stays put) unless the config is out of usage.
 
