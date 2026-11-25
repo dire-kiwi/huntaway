@@ -53,7 +53,8 @@ export type TaskColumns = { -readonly [K in TaskField]?: Task[K] }
 const conflict = (reason: ConflictReason, detail: string) => Result.fail(new Conflict({ reason, detail }))
 const changes = (columns: TaskColumns, ...fields: ReadonlyArray<TaskField>) => fields.some((f) => Object.hasOwn(columns, f))
 
-const sameStart = (a: StartFrom | null, b: StartFrom | null): boolean => {
+/** Whether two places to start from are the same one. */
+export const sameStart = (a: StartFrom | null, b: StartFrom | null): boolean => {
   if (a === null || b === null) return a === b
   if (a.type === "branch") return b.type === "branch" && a.branch === b.branch
   if (a.type === "task") return b.type === "task" && a.task_id === b.task_id

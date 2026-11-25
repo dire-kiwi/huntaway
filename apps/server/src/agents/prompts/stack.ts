@@ -1,6 +1,7 @@
 import type { Task } from "@huntaway/contracts"
 import type { StackLevel } from "../../prompts/codeTask.ts"
-import { stackBrief } from "../../prompts/stackBrief.ts"
+import { heldBrief, stackBrief } from "../../prompts/stackBrief.ts"
+import { heldLevel } from "../../tasks/StackThreads.ts"
 import { isMerged } from "../../tasks/checks.ts"
 import { stackedBelow, stackOf } from "../../tasks/lanes.ts"
 import type { Rows } from "../../tasks/lanes.ts"
@@ -22,6 +23,7 @@ export const stackLevelOf = (rows: Rows, task: Task, thread: string): StackLevel
 /** What a stack thread under `parent` (a level of its stack) is told of the stack; `parent` null once it's gone. */
 export const stackBriefOf = (rows: Rows, parent: Task | null): string => {
   const st = parent === null ? null : stackOf(rows, parent)
+  if (parent !== null && st === null && heldLevel(rows, parent)) return heldBrief(parent)
   if (st === null) return stackBrief(null)
   const ids = new Set(st.levels.map((l) => l.id))
   return stackBrief({

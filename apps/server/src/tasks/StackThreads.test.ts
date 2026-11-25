@@ -157,10 +157,60 @@ describe("StackThreads", () => {
         assert.strictEqual(yield* parentOf(made.id), b.id)
         assert.strictEqual((yield* threads.thread(c.id)).id, made.id)
         assert.strictEqual(yield* tag(threads.thread(a.id)), "Invalid")
-        // The two-level stack's bottom deleted: what's left is no stack, so its thread goes too.
+        // The two-level stack's bottom deleted (not merged): what's left waits for the user under the level held on it.
         yield* deleteTask(b.id)
         yield* settled
+        assert.strictEqual(yield* parentOf(made.id), c.id)
+        // Closed too, as the user may choose: no stack is left, and its thread goes.
+        yield* (yield* Tasks).change(c.id, () => ({ status: "done", resolution: "not_done" }), Actor.user).pipe(Effect.orDie)
+        yield* settled
         assert.strictEqual(yield* parentOf(made.id), "gone")
+      }),
+    ),
+  )
+
+  it.effect("stays with the stack when a middle level is deleted, held for the user, and once it's restacked", () =>
+    run(
+      Effect.gen(function* () {
+        const threads = yield* StackThreads
+        const { a, b, c } = yield* board
+        const made = yield* threads.thread(c.id)
+        yield* deleteTask(b.id)
+        yield* settled
+        // The level on the deleted one waits for the user, and the thread waits with it.
+        const held = yield* Effect.flatMap(TaskRepo, (r) => r.get(c.id))
+        assert.strictEqual(held?.status, "needs_attention")
+        assert.strictEqual(yield* parentOf(made.id), c.id)
+        const told = yield* (yield* Prompts).system(made.id, { codex: false, permission_mode: "default" })
+        assert.isTrue(told.includes(`the level below WEB-3 ("Word import", id ${c.id}) was deleted`), told)
+        // Restacked onto the bottom: one stack again, with the same thread under its bottom.
+        yield* startFrom(c, a)
+        yield* settled
+        assert.strictEqual(yield* parentOf(made.id), a.id)
+        assert.strictEqual((yield* threads.thread(c.id)).id, made.id)
+      }),
+    ),
+  )
+
+  it.effect("follows the levels on a deleted middle level that's still a stack, flagged or not", () =>
+    run(
+      Effect.gen(function* () {
+        const threads = yield* StackThreads
+        const tasks = yield* Tasks
+        const { a, b, c } = yield* board
+        const d = yield* startFrom(
+          yield* tasks.create({ project_id: a.project_id ?? assert.fail("no project"), title: "Export" }, Actor.user).pipe(Effect.orDie),
+          c,
+        )
+        const made = yield* threads.thread(d.id)
+        // Its agent running, the level on the deleted one isn't flagged, so the deletion is the only change.
+        yield* tasks.change(c.id, () => ({ running: true }), Actor.user).pipe(Effect.orDie)
+        yield* settled
+        yield* deleteTask(b.id)
+        yield* settled
+        assert.notStrictEqual((yield* Effect.flatMap(TaskRepo, (r) => r.get(c.id)))?.status, "needs_attention")
+        assert.strictEqual(yield* parentOf(made.id), c.id)
+        assert.strictEqual((yield* threads.thread(d.id)).id, made.id)
       }),
     ),
   )

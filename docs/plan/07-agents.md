@@ -1568,11 +1568,14 @@ whole, which the user messages, and which the levels' agents are told to hand st
   (`workflows/engine/start.ts` skips it), nothing to merge (`decide.ts` `ownFolderKinds`); it can't be moved to In
   review, Ready for merge, Done or Backlog.
 - **It stays with its stack** (`StackThreads.settle`, the reactor's step after the stack titles', for a task made,
-  deleted or changed in what it starts from or merges into; the plan is the pure `settleThreads`): under the stack's
-  bottom, which changes when a level is put below it. When its level is in no stack any more, it follows the part the
-  changed task took with it (a split), if that part has no thread; otherwise it has no stack left and is deleted
-  (`TaskDeletion`, which stops its run). Of two threads in one stack (two stacks joined), the older stays and the other
-  is deleted.
+  deleted, changed in what it starts from or merges into, or closed or reopened; the plan is the pure `settleThreads`).
+  A change touches only the threads of the stack the task was in before it (read from the rows with the task as the
+  change says it was, so a change the reactor comes to late, after later ones, decides as it would have) and of the one
+  it's in now. A thread stays under its stack's bottom (which changes when a level is put below it), or under a level
+  held on a deleted or closed level below (`heldLevel`: its merge waits for the user to say where it goes), with a brief
+  that says so (`heldBrief`). When its part of the old stack has neither, it follows another part that has one and no
+  thread (a split, a deleted middle level); with none, it's deleted (`TaskDeletion`, which stops its run). Of two
+  threads in one stack (two stacks joined), the older stays and the other is deleted.
 - **Its bottom deleted** (`TaskDeletion`): the level it goes under (`lanes.ts` `stackThreadHeir`, the first landing on
   the bottom) is read before `Worktrees.forDeletion`, which unstacks the levels on a merged bottom, and it's moved there
   after that, before the row goes; with no level to take it, its run is stopped first and it goes with the row
@@ -1587,5 +1590,7 @@ whole, which the user messages, and which the levels' agents are told to hand st
   Code or Review tabs, with a "Stack thread" section in Details.
 - **Tests**: `tasks/StackThreads.test.ts` (made once, from any level; refused for a task in no stack and for In review;
   what a level and the thread are told; kept when its bottom is deleted, a merged one through `TaskDeletion` too; moved
-  to a new bottom and with a split; gone once no stack is left; refused as a dependency, start or target),
+  to a new bottom and with a split; held with a level on a deleted middle level, then restacked; following the levels on a
+  deleted middle level that weren't flagged; gone once no stack is left; refused as a dependency, start or target),
+  `tasks/settleThreads.test.ts` (the plan, a change come to late among them),
   `system.test.ts`'s two cases, `queue.test.ts`'s empty start, `threadKind.test.ts`'s row.

@@ -29,6 +29,7 @@ import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
 import { stackOf } from "../tasks/lanes.ts"
+import { heldLevel } from "../tasks/StackThreads.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
@@ -238,7 +239,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const parent = yield* tasks.get(task.parent_id)
         if (parent === null) return []
         const rows = (yield* tasks.projectTasks(task.project_id)).filter((t) => t.kind === "task" && t.profile_id === task.profile_id)
-        const levels = stackOf(rows, parent)?.levels ?? []
+        // A level held on a deleted or closed one below is all that's left of its stack until the user says where it goes.
+        const levels = stackOf(rows, parent)?.levels ?? (heldLevel(rows, parent) ? [parent] : [])
         return levels.flatMap((l) => (l.status !== "done" && l.worktree_state === "ready" && l.worktree_path !== null ? [expand(l.worktree_path)] : []))
       })
 

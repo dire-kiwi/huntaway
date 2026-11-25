@@ -42,3 +42,13 @@ export const stackBrief = (
   })
   return out.trimEnd()
 }
+
+/**
+ * HE-105: what a stack thread is told while the level it's under is all that's left of its stack and is held: the level
+ * below it was deleted, or closed without being merged, and the user hasn't said where it goes yet.
+ */
+export const heldBrief = (level: { readonly key: string; readonly title: string; readonly id: string }): string =>
+  `\n\nYour stack, as it was when this run started: the level below ${level.key} ("${level.title}", id ${level.id}) was ` +
+  "deleted, or closed without being merged, so it's all that's left of the stack for now and its merge is held until " +
+  "the user says where it goes (on its task: where the level below was going, or another task to land after). Read " +
+  `it with \`get_task\`. Once the user has chosen, or asks you to restack ${level.key} somewhere, it's your stack again.`

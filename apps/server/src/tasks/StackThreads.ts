@@ -5,7 +5,8 @@ import type { Task } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { nowTimestamp } from "../platform/columns.ts"
-import { stackOf, stackThreadHeir } from "./lanes.ts"
+import { sameStart } from "./decide.ts"
+import { stackOf, stackState, stackThreadHeir } from "./lanes.ts"
 import type { Rows } from "./lanes.ts"
 import { TaskRepo } from "./TaskRepo.ts"
 import { Actor } from "../platform/Changes.ts"
@@ -41,49 +42,97 @@ export interface Settled {
 }
 
 /**
- * Where a project's stack threads go after a change of `changed` (the task as it is now; null once deleted), among
- * `rows` (its project's tasks of its profile, the threads too): each stays with the stack its level is in, under that
- * stack's bottom (which changes when a level is put below it). One whose level is in no stack any more follows the part
- * `changed` took with it (a split), if that part has no thread; else it has no stack and goes, as does a second thread
- * of one stack (two stacks joined: the older thread stays).
+ * Whether stack level `t` is held until the user says where it goes: the level below it was deleted, or closed without
+ * being merged (`stackState`), and it isn't done. Its stack's thread waits under it meanwhile.
  */
-export const settleThreads = (rows: Rows, changed: Task | null): Settled => {
+export const heldLevel = (rows: Rows, t: Task): boolean => {
+  if (t.status === "done") return false
+  const st = stackState(rows, t)
+  return st === "deleted" || st === "closed"
+}
+
+/** A level's group: its stack's levels, or just it while it's held (`heldLevel`); null for a task in neither. */
+const groupOf = (rows: Rows, t: Task): ReadonlyArray<Task> | null => stackOf(rows, t)?.levels ?? (heldLevel(rows, t) ? [t] : null)
+
+/** The stack threads under any of `levels`, the oldest first. */
+const threadsUnder = (rows: Rows, levels: ReadonlyArray<Pick<Task, "id">>): Array<Task> =>
+  rows.filter((t) => isStackThread(t) && levels.some((l) => l.id === t.parent_id)).toSorted(oldestFirst)
+
+/**
+ * Where the stack threads a change of a task touches go (`before` and `after` the change, null when it was made or
+ * deleted), among `rows` (its project's tasks of its profile as they are now, the threads too). Only the threads of the
+ * stack the task was in before the change (read from `rows` with the task as it was, so a change the reactor comes to
+ * late decides as it would have) and of the one it's in now are touched. Each stays with its stack, under its bottom
+ * (which changes when a level is put below it), or under a level held on a deleted or closed level below (`heldLevel`)
+ * until the user says where it goes. One whose part of the old stack has neither follows another part that has one and
+ * no thread (a split, a deleted middle level); with none, it goes. Two threads in one stack (two stacks joined): the
+ * older stays and the other goes.
+ */
+export const settleThreads = (rows: Rows, before: Task | null, after: Task | null): Settled => {
+  const changed = after ?? before
+  if (changed === null || isStackThread(changed)) return { moves: [], drops: [] }
+  const real = (id: string) => rows.find((r) => r.id === id && !isStackThread(r)) ?? null
+  /** Where a thread of `level`'s stack goes now: its stack's bottom, or the level itself while held; null for none. */
+  const homeOf = (id: string): TaskId | null => {
+    const level = real(id)
+    return level === null ? null : (stackOf(rows, level)?.bottom.id ?? (heldLevel(rows, level) ? level.id : null))
+  }
+  const parent = new Map<TaskId, TaskId | null>(rows.filter(isStackThread).map((t) => [t.id, t.parent_id]))
   const moves: Array<{ readonly id: TaskId; readonly to: TaskId }> = []
   const drops: Array<TaskId> = []
-  const claimed = new Set<string>()
-  const homeless: Array<Task> = []
-  const levelOf = (t: Task) => {
-    const parent = rows.find((x) => x.id === t.parent_id && !isStackThread(x))
-    return parent === undefined ? null : stackOf(rows, parent)
+  const move = (t: TaskId, to: TaskId) => {
+    if (parent.get(t) !== to) moves.push({ id: t, to })
+    parent.set(t, to)
   }
-  for (const t of rows.filter(isStackThread).toSorted(oldestFirst)) {
-    const st = levelOf(t)
-    if (st === null) homeless.push(t)
-    else if (claimed.has(st.bottom.id)) drops.push(t.id)
-    else {
-      claimed.add(st.bottom.id)
-      if (t.parent_id !== st.bottom.id) moves.push({ id: t.id, to: st.bottom.id })
+  /** The live threads (not dropped) whose level's home is `home`, as moved so far. */
+  const threadsAt = (home: TaskId) => [...parent].filter(([t, p]) => !drops.includes(t) && p !== null && homeOf(p) === home).map(([t]) => t)
+
+  // The stack it was in before the change, with the task as it was.
+  const then = [...rows.filter((r) => r.id !== changed.id), ...(before === null ? [] : [before])]
+  const old = before === null ? null : groupOf(then, before)
+  if (old !== null) {
+    const ours = threadsUnder(rows, old)
+    const homes = [...new Set(old.map((l) => homeOf(l.id)).filter((h): h is TaskId => h !== null))]
+    const claimed = new Set<TaskId>()
+    // Not claimed by one of these this round, nor home to a thread of another stack's.
+    const free = (h: TaskId) => !claimed.has(h) && threadsAt(h).every((o) => ours.some((x) => x.id === o))
+    for (const t of ours) {
+      const own = t.parent_id === null ? null : homeOf(t.parent_id)
+      const home = own !== null && free(own) ? own : homes.find(free)
+      if (home === undefined || home === null) drops.push(t.id)
+      else {
+        claimed.add(home)
+        move(t.id, home)
+      }
     }
   }
-  const split = changed === null || isStackThread(changed) ? null : stackOf(rows, changed)
-  for (const t of homeless) {
-    if (split !== null && !claimed.has(split.bottom.id)) {
-      claimed.add(split.bottom.id)
-      moves.push({ id: t.id, to: split.bottom.id })
-    } else drops.push(t.id)
+  // Two stacks joined: the stack it's in now keeps its older thread.
+  const now = after === null ? null : real(after.id)
+  const home = now === null ? null : homeOf(now.id)
+  if (home !== null) {
+    const threads = threadsAt(home)
+      .map((id) => rows.find((r) => r.id === id))
+      .filter((t): t is Task => t !== undefined)
+      .toSorted(oldestFirst)
+    for (const t of threads.slice(1)) drops.push(t.id)
+    if (threads[0] !== undefined) move(threads[0].id, home)
   }
   return { moves, drops }
 }
 
-/** Whether a change of a task can change which stack a thread's level is in (or where its bottom is). */
+/**
+ * Whether a change of a task can change which stack a thread's level is in, where its bottom is, or whether a level is
+ * held (done or not).
+ */
 const movesStacks = (before: Task | null, after: Task | null): boolean =>
   before === null ||
   after === null ||
-  before.start_from !== after.start_from ||
+  !sameStart(before.start_from, after.start_from) ||
   before.merges_into !== after.merges_into ||
   before.kind !== after.kind ||
   before.project_id !== after.project_id ||
-  before.profile_id !== after.profile_id
+  before.profile_id !== after.profile_id ||
+  (before.status === "done") !== (after.status === "done")
 
 export interface StackThreadsShape {
   /**
@@ -145,8 +194,8 @@ export class StackThreads extends Context.Service<StackThreads, StackThreadsShap
         for (const place of places.filter((p, i) => places.findIndex((q) => q.project_id === p.project_id && q.profile_id === p.profile_id) === i)) {
           const rows = yield* projectRows(place)
           if (!rows.some(isStackThread)) continue
-          const changed = after !== null && after.project_id === place.project_id && after.profile_id === place.profile_id ? after : null
-          const plan = settleThreads(rows, changed === null ? null : (rows.find((r) => r.id === changed.id) ?? null))
+          const here = (t: Task | null) => (t !== null && t.project_id === place.project_id && t.profile_id === place.profile_id ? t : null)
+          const plan = settleThreads(rows, here(before), here(after))
           for (const m of plan.moves) yield* moveUnder(m.id, m.to)
           drops.push(...plan.drops)
         }
