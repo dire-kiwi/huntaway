@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { Profile, Project } from "@huntaway/contracts"
 
 // HE-111: a host from before projects and profiles had output styles sends neither key; its board still decodes
@@ -71,16 +71,18 @@ const project = {
   group_name: null,
   archived_at: null,
   github_account: null,
-  watch_pull_requests: "off",
+  watch_pull_requests: "off" as const,
   pr_preview_url: null,
   created_at: AT,
 }
 
 describe("output styles from an older host", () => {
-  it("decodes a profile and a project without them, and with them", () => {
-    expect(Schema.decodeUnknownSync(Profile)(profile).default_output_style).toBeUndefined()
-    expect(Schema.decodeUnknownSync(Project)(project).output_style).toBeUndefined()
-    expect(Schema.decodeUnknownSync(Profile)({ ...profile, default_output_style: "Concise" }).default_output_style).toBe("Concise")
-    expect(Schema.decodeUnknownSync(Project)({ ...project, output_style: null }).output_style).toBeNull()
-  })
+  it.effect("decodes a profile and a project without them, and with them", () =>
+    Effect.gen(function* () {
+      expect((yield* Schema.decodeEffect(Profile)(profile)).default_output_style).toBeUndefined()
+      expect((yield* Schema.decodeEffect(Project)(project)).output_style).toBeUndefined()
+      expect((yield* Schema.decodeEffect(Profile)({ ...profile, default_output_style: "Concise" })).default_output_style).toBe("Concise")
+      expect((yield* Schema.decodeEffect(Project)({ ...project, output_style: null })).output_style).toBeNull()
+    }),
+  )
 })

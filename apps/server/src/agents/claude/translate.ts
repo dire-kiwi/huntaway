@@ -6,6 +6,7 @@ import {
   type ClaudeLine,
   type CompactBoundaryLine,
   ModelFallbackLine,
+  type NotificationLine,
   type ResultLine,
   type TaskLine,
   TextBlock,
@@ -52,8 +53,11 @@ export interface TurnFacts {
 
 /** What a line tells the run, for the caller to apply. */
 export type LineEffect =
-  /** `system/init`: the session the run is in (the task's and the run's `session_id`). */
-  | { readonly _tag: "SessionStarted"; readonly sessionId: string }
+  /**
+   * `system/init`: the session the run is in (the task's and the run's `session_id`), and whether it works in Code Mode
+   * (its tools have Claude Code's REPL, HE-107: `runs.code_mode`).
+   */
+  | { readonly _tag: "SessionStarted"; readonly sessionId: string; readonly codeMode: boolean }
   /**
    * A turn is going: Claude Code started (`init`, unless the turn is the one a steered message starts), the API started
    * a message (`message_start`), or the main conversation's assistant spoke (`assistant`).
@@ -104,6 +108,9 @@ const isThinking = Schema.is(ThinkingBlock)
 const isToolUse = Schema.is(ToolUseBlock)
 const isToolResult = Schema.is(ToolResultBlock)
 
+/** Claude Code's tool that runs a Code Mode script: an `init` that lists it is a Code Mode session's (HE-107). */
+export const REPL_TOOL = "REPL"
+
 /** How Claude Code's result for a call that was stopped starts (a denied call's is the denial's message). */
 const REJECTED = "The user doesn't want to proceed with this tool use."
 const INTERRUPTED = "[Request interrupted"
@@ -129,10 +136,14 @@ export const translate = (state: TranslatorState, line: ClaudeLine, ctx: LineCon
   switch (line.type) {
     case "system":
       if (line.subtype === "init") {
-        if (line.session_id !== undefined && line.session_id !== "") step.effects.push({ _tag: "SessionStarted", sessionId: line.session_id })
+        if (line.session_id !== undefined && line.session_id !== "") {
+          const codeMode = Array.isArray(line.tools) && line.tools.includes(REPL_TOOL)
+          step.effects.push({ _tag: "SessionStarted", sessionId: line.session_id, codeMode })
+        }
         step.effects.push({ _tag: "TurnStarted", from: "init" })
       } else if (line.subtype === "compact_boundary") compactBoundary(step, line)
       else if (isModelFallback(line)) modelFallback(step, line)
+      else if (line.subtype === "notification") notification(step, line)
       else if (line.subtype !== "background_tasks_changed") job(step, line)
       break
     case "stream_event":
@@ -183,6 +194,17 @@ const modelFallback = (step: Step, line: ModelFallbackLine): void => {
   }
   step.add(notice)
   if (!local) step.effects.push({ _tag: "ModelFallback", from: line.original_model, to: line.fallback_model, reason: refusal ? "refusal" : "error" })
+}
+
+/**
+ * Claude Code's notice about Code Mode (HE-107): a notice in the thread, a warning when Claude Code colours it one (it
+ * didn't start in Code Mode, and why). Its other notifications aren't shown.
+ */
+const notification = (step: Step, line: NotificationLine): void => {
+  const text = line.text ?? ""
+  if (!(line.key ?? "").startsWith("code-mode") || text === "") return
+  const level = line.color === "error" ? "error" : line.color === "warning" ? "warning" : "info"
+  step.add({ id: step.id(), type: "notice", level, text, created_at: step.ctx.at })
 }
 
 // ---------- what a line tells the run ----------

@@ -1523,6 +1523,42 @@ board has its own, for a Claude task:
   (`Project.output_style`, `Profile.default_output_style`), as a host from before HE-111 sends neither. Codex and ACP
   have no output styles: their launches never read either.
 
+### Code Mode (HE-107)<a id="code-mode"></a>
+
+Claude Code's Code Mode (its own experiment, `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`) has the agent work through a REPL
+tool, writing JavaScript scripts that call its tools, rather than one tool call at a time. The board's `code_mode`
+experiment (Settings → Experiments, [09-frontend.md](09-frontend.md#experiments-he-22)) asks for it in new Claude
+conversations.
+
+- **Asked for in `--settings`.** A `-p` run takes the variable only from `--settings` (Claude Code's `flagSettings`):
+  from the environment or the settings files it refuses it (`not_passed`). `hookSettings` adds
+  `env: { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: "1" }` beside the hooks and the output style when `claudeLaunch` asks.
+  Codex and ACP runs have no such thing.
+- **A conversation keeps the mode it started in.** Claude Code decides Code Mode when a session starts. It refuses to
+  resume a session that started in Code Mode in a run that isn't asked for it ("This session was started in Code Mode,
+  which is off in this run, so it can't be resumed"), and tells a session that didn't, on every run that asks, that it
+  goes on with the ordinary tools. So `claudeLaunch` asks for a new conversation (no `session_id`) as the experiment
+  says (`codeMode`, read from the host's `experiments` at each launch), and for one it resumes as its session started
+  (`sessionCodeMode`), whatever the experiment says now: switching it on or off applies to new conversations.
+- **Which sessions are in Code Mode.** A Code Mode session's `system`/`init` lists Claude Code's `REPL` tool (an
+  ordinary one doesn't), so the translator's `SessionStarted` says `codeMode`, and the line handler writes it to the
+  run's `runs.code_mode` (`2026-11-26-code-mode.ts`). `RunRepo.sessionCodeMode` reads the session's first run's, as
+  Codex's `sessionBoardTools` does. Runs imported from the old board have it off.
+- **Claude Code decides.** It refuses a new session Code Mode when it goes through a gateway or a cloud provider (a
+  config's proxy, `ANTHROPIC_BASE_URL` in the config folder's settings), on a model older than Opus 5.5 or Fable 5.2,
+  with tools that leave its REPL out, and for its other reasons; then it starts with the ordinary tools and writes
+  `system`/`notification` with `key: "code-mode-opt-in"` and why. The translator turns its `code-mode…` notifications
+  into thread notices (a warning when Claude Code colours it one) and drops its other notifications. Only a new
+  conversation asks when the session's own mode is ordinary, so the notice comes once per conversation, not every run.
+- **A Code Mode conversation that can't go on.** When a resumed Code Mode session can't have it any more (its model
+  or its config's gateway changed since), Claude Code refuses to resume it: the run ends with a `result`
+  (`error_during_execution`, no turns) whose `errors` starts "Failed to resume session: This session was started in
+  Code Mode". The line handler (`recordTurn`, `codeModeResumeRefused`) then clears the task's `session_id`, as for a
+  session that was never answered, and writes a warning notice: the next message starts a new conversation.
+- **Checks.** `launch.test.ts` (the setting with and without hooks, none when off; a resumed session asks as it
+  started), `translate.test.ts` (the notice; `init` with `REPL`), `RunRepo.test.ts` (`sessionCodeMode`),
+  `runs/claude/output.test.ts` (the run's `code_mode`; a refused resume clears the session and warns).
+
 ### As built in 4.8 (HE-5): stack titles
 
 - **`agents/StackTitles.ts`** (the old `agent/stack_title.ts`, HA-387) writes a stack's title and description with the

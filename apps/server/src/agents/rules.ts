@@ -277,6 +277,16 @@ export const needsPromptTool = (rules: Rules): boolean => hookRules(rules).some(
  */
 export const ghHook = (exe: string): ClaudeHook => ({ matcher: "Bash", hooks: [{ type: "command", command: `${quote(exe)} gh-hook`, timeout: 10 }] })
 
-/** `--settings` with a Claude run's PreToolUse hooks (`ghHook`, `claudeHook`), in the order given, and its output style (HE-102). */
-export const hookSettings = (hooks: ReadonlyArray<ClaudeHook>, outputStyle: string | null = null): Effect.Effect<string> =>
-  toJson({ ...(hooks.length > 0 ? { hooks: { PreToolUse: hooks } } : {}), ...(outputStyle === null ? {} : { outputStyle }) })
+/** The environment variable that asks Claude Code for its Code Mode (HE-107), which a `-p` run takes only from `--settings`. */
+export const CODE_MODE_ENV = "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE"
+
+/**
+ * `--settings` with a Claude run's PreToolUse hooks (`ghHook`, `claudeHook`), in the order given, its output style
+ * (HE-102), and Code Mode asked for (HE-107).
+ */
+export const hookSettings = (hooks: ReadonlyArray<ClaudeHook>, outputStyle: string | null = null, codeMode = false): Effect.Effect<string> =>
+  toJson({
+    ...(hooks.length > 0 ? { hooks: { PreToolUse: hooks } } : {}),
+    ...(outputStyle === null ? {} : { outputStyle }),
+    ...(codeMode ? { env: { [CODE_MODE_ENV]: "1" } } : {}),
+  })
