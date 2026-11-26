@@ -1670,16 +1670,25 @@ that covers several repositories, as in T3 Code, would make all of those per rep
 - **One branch**: the set's tasks share `ia/<lead's key>-<name>`, made free in every repository: no local or remote
   branch of that name, and none that nests with it (`a` beside `a/b`); else `-2` up to `-50`, as T3 Code's
   `freeBranchName`. Each worktree starts from its own project's base branch.
-- **One agent**: only the lead's agent starts. Setting up the lead's worktree sets up the others' (`Worktrees.setup`
-  on each; a failure is the lead's too). The lead's runs get the others' ready worktrees as `--add-dir`s (Claude) or
-  writable roots (Codex, `workDirs`), as a stack thread gets its levels' (`stackDirs`), and its system prompt lists them
-  (key, project, repository, worktree, branch, base): it works and commits in each, and opens each repository's pull
-  request on that repository. An ACP lead gets them only once its launch takes extra folders. The lead runs in its own
-  project's permission mode; that it can write in the others' worktrees is what making the set allowed, as T3 Code grants a
-  folder only after a person chooses it.
+- **One agent per worktree**: only the lead's agent starts. Setting up the lead's worktree sets up the others'
+  (`Worktrees.setup` on each; a failure is the lead's too). A lead's run gets the worktrees of the set's tasks that are
+  in To do with no run of their own (as the run starts) as `--add-dir`s (Claude) or writable roots (Codex, `workDirs`),
+  as a stack thread gets its levels' (`stackDirs`), and its system prompt lists the whole set (key, project, repository,
+  worktree, branch, base, column): it works and commits in the worktrees it was given, and opens each of those
+  repositories' pull requests on that repository. An ACP lead gets them only once its launch takes extra folders. The
+  lead runs in its own project's permission mode; that it can write in the others' worktrees is what making the set
+  allowed, as T3 Code grants a folder only after a person chooses it.
+- **Never two agents in one worktree**: once a task has left To do, its worktree is its own agent's alone. The lead's
+  runs no longer get it, and the lead hands that repository's work to the task with `send_to_task`, as a stack thread
+  hands the levels' own work to them (its prompt says so for each task past To do). A follower's runs get no other
+  worktree: the prompt lists the set and refers anything outside its own repository to the lead. While a lead's run
+  holds a follower's worktree, that follower's own run doesn't start (a message to it is held until the lead's run
+  ends, as one is held for dependencies) and it can't be moved out of To do (`Invalid`: "its lead is working in it").
+  So every commit in a follower's worktree after it left To do comes from its own runs, whose ends review it as any
+  task's, and its checkpoints and rewinds are of one agent's turns.
 - **The others** wait in To do, their worktrees ready, with a note that their lead works on them. Their own agents start
-  only for what is theirs: a review round's fixes, a merge conflict, a message the user sends them. Those runs get the
-  set's other worktrees too. Each is reviewed, approved and merged as any task is, once the lead's run has moved it.
+  only for what is theirs: a review round's fixes, a merge conflict, the lead's or the user's message. Each is
+  reviewed, approved and merged as any task is, once the lead's run has moved it.
 - **When the lead's run ends**: a column, a review and a pull request lookup follow only the task whose run ended
   (`decideFinish`; `ReviewDue` or the reactor's review on a move to In review; `PullRequests.findLater(run.task_id)`),
   so the lead's run end does it for the others too (`RunEnds`, after the lead's own move). The trigger is **the lead's
@@ -1696,8 +1705,8 @@ that covers several repositories, as in T3 Code, would make all of those per rep
 
   A lead run that ends any other way moves none of them: in Needs attention (a question, a plan only, an unfinished
   todo list asked about once, a failure), held in In progress to finish its todo list, back in the merge queue, or in
-  To do or wherever a lasting thread stays. A task already past To do, or with a run of its own, is left alone: its own
-  run's end moves it. Each later lead run that ends with its work finished (after review fixes, held again for the next
+  To do or wherever a lasting thread stays. A task already past To do is left alone: the lead couldn't write in it, and
+  its own run's end moves it. Each later lead run that ends with its work finished (after review fixes, held again for the next
   round, say) decides again for those still in To do. A pure function of the lead's decision, the set's rows and their
   branches, with table tests.
 - **Landing together**: a set's task in Ready for merge waits until every open task of its set is in Ready for merge,
