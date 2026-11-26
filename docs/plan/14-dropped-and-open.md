@@ -66,6 +66,7 @@ Each could have gone another way. They are listed so that a different answer is 
 | Wire field names stay, `claude_config_id` included                                         | Renaming while porting                                   | Every rename is a diff in a kept component. One mechanical rename can follow the port                      |
 | Server variables become `HUNTAWAY_*`                                                       | Keeping `IA_*`                                           | A new repository with new scripts is the cheap moment. Deploy scripts outside this repository change once  |
 | Lint: every enabled rule an error, warnings fail                                           | Recommended presets at their default levels              | Asked for; and the old repository's warning backlog shows where the other road goes                        |
+| Work across repositories is a set of tasks, one per repository, on one branch (HE-116)      | A project that covers several repositories, as T3 Code's (pingdotgg/t3code#35925) | Review, the merge queue, `merges_into`, stacks and pull request watching all assume one branch in one repository, and stay as they are |
 
 ## Settled on review
 

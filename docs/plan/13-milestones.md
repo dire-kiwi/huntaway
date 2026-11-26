@@ -189,6 +189,18 @@ it has yet to get back is a task each, listed in [09-frontend.md](09-frontend.md
 and an APK in releases, several boards, Expo push and lock-screen answers, sharing and attachments,
 and one thread model for both apps.
 
+## After the port: work across repositories
+
+One task per repository, made together as a set on one branch, with only the lead's agent working
+([07-agents.md](07-agents.md#work-across-repositories), HE-116). Four tasks, the last three after the first:
+
+| Task | Does                                                                                                              | Needs |
+| ---- | ----------------------------------------------------------------------------------------------------------------- | ----- |
+| HE-117 | Sets: `lead_id` and its migration, `also_in` on `tasks.create` and `create_task`, the pen, one free branch name    | —     |
+| HE-118 | The lead's runs: the others' worktrees set up with its own, granted (Claude and Codex) and listed in its prompt; the others held in To do | HE-117 |
+| HE-119 | Landing together: Ready for merge waits for the whole set; a lead deleted or closed hands the set on              | HE-117 |
+| HE-120 | The web: "Also in" in New task, "1 of N" on the card, the "Set" section in Details                                 | HE-117 |
+
 ## Order at a glance
 
 ```

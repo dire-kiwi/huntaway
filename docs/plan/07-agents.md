@@ -1652,3 +1652,39 @@ whole, which the user messages, and which the levels' agents are told to hand st
   joined stacks' threads kept; gone once no stack is left; refused as a dependency, start or target),
   `tasks/settleThreads.test.ts` (the plan, a change come to late among them),
   `system.test.ts`'s two cases, `queue.test.ts`'s empty start, `threadKind.test.ts`'s row.
+
+## Work across repositories (HE-116)<a id="work-across-repositories"></a>
+
+Planned, not built. One piece of work that changes several repositories (an API and its client, say) is **one task per
+repository, made together as a set**, with one branch name in all of them. This is the first of the three ways compared
+in HE-116's research on T3 Code's projects with several repositories (pingdotgg/t3code#35925): it leaves review, the merge queue,
+`merges_into`, stacks and pull request watching as they are, because each repository is still its own task. A project
+that covers several repositories, as in T3 Code, would make all of those per repository; it is not planned.
+
+- **Made together**: `tasks.create` and `create_task` take `also_in`, other projects of the task's profile (seven at
+  most, so eight repositories, T3 Code's default). The board makes one task in each, with the same title and
+  description; the first is the set's **lead**, and the others record it in a new `lead_id` column (a named migration;
+  null for the lead and for every other task). All of them go in one pen: the one given, else a new one named after the
+  title. `also_in` only at creation: a task that has a branch can't join a set. Not for scratch, group, review or
+  stack tasks, nor with `merges_into`, `start_from` or `use_worktree: false`.
+- **One branch**: the set's tasks share `ia/<lead's key>-<name>`, made free in every repository: no local or remote
+  branch of that name, and none that nests with it (`a` beside `a/b`); else `-2` up to `-50`, as T3 Code's
+  `freeBranchName`. Each worktree starts from its own project's base branch.
+- **One agent**: only the lead's agent starts. Setting up the lead's worktree sets up the others' (`Worktrees.setup`
+  on each; a failure is the lead's too). The lead's runs get the others' ready worktrees as `--add-dir`s (Claude) or
+  writable roots (Codex, `workDirs`), as a stack thread gets its levels' (`stackDirs`), and its system prompt lists them
+  (key, project, repository, worktree, branch, base): it works and commits in each, and opens each repository's pull
+  request on that repository. An ACP lead gets them only once its launch takes extra folders. The lead runs in its own
+  project's permission mode; that it can write in the others' worktrees is what making the set allowed, as T3 Code grants a
+  folder only after a person chooses it.
+- **The others** wait in To do, their worktrees ready, with a note that their lead works on them. Their own agents start
+  only for what is theirs: a review round's fixes, a merge conflict, a message the user sends them. Those runs get the
+  set's other worktrees too. Each is reviewed, approved and merged as any task is.
+- **Landing together**: a set's task in Ready for merge waits until every open task of its set is in Ready for merge,
+  then each merges through its own project's queue. A task closed as not done or won't fix leaves the set's count. A
+  merge that fails once others have merged is the lead's to settle, and the board tells the lead's thread.
+- **Leaving the set**: the lead deleted or closed hands the set to the next open task by creation (its `lead_id`
+  cleared, the others' moved to it). A set down to one task is an ordinary task.
+- **The web**: the New task dialog's "Also in" picker (projects of the profile); a set's card shows "1 of 3" and opens
+  a "Set" section in Details listing the others; the lead's Changes tab stays its own repository's.
+- **Tasks**: in [13-milestones.md](13-milestones.md#after-the-port-work-across-repositories).
