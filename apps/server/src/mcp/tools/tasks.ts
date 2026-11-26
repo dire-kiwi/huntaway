@@ -173,6 +173,12 @@ export const CreateTask = Tool.make("create_task", {
     remind_at: Schema.optionalKey(remindAt),
     reminder: Schema.optionalKey(reminder),
     pen: Schema.optionalKey(pen),
+    also_in: Schema.optionalKey(
+      Schema.Array(Schema.String).annotate({
+        description:
+          "For work that changes several repositories at once (an API and its client, say): other projects of the same profile (keys or ids, seven at most), each given a task with the same title and description. This task is the set's lead; all of them get one branch name, free in every repository, and go in one pen (pen, else one named after the title). Only for a task in a project with a worktree, and not with type scratch, merges_into, start_from or use_worktree false.",
+      }),
+    ),
   }),
   success: Json,
 })
@@ -372,9 +378,8 @@ export const taskTools = Effect.gen(function* () {
     { keepNulls: true },
   )
 
-  /** Task `t`, just made, in pen `name`, or (none given) in the caller's own pen if it's on the same board. */
-  const intoPen = Effect.fnUntraced(function* (caller: McpCaller, t: Task, name: string | null, givenPen: string | undefined, profile: string | null) {
-    if (name !== null) return yield* tasks.update(t.id, { pen: name }, agent(caller))
+  /** Task `t`, just made and given no pen, in the caller's own pen if it's on the same board. */
+  const intoPen = Effect.fnUntraced(function* (caller: McpCaller, t: Task, givenPen: string | undefined, profile: string | null) {
     const own = yield* ownPen(caller, profile)
     if (givenPen !== undefined || own === null || own.profile_id !== t.profile_id) return t
     return yield* tasks.update(t.id, { pen_id: own.id }, agent(caller))
@@ -400,6 +405,8 @@ export const taskTools = Effect.gen(function* () {
         model: given(params.model),
         effort: params.effort ?? null,
         ...(params.labels === undefined ? {} : { labels: params.labels }),
+        // Made in the pen it's given; else in the caller's own, after (a set is in one of its own, made with it).
+        ...(penName === null ? {} : { pen: penName.success }),
       }
       const sp = given(params.subproject)
       let input: NewTask
@@ -422,11 +429,12 @@ export const taskTools = Effect.gen(function* () {
           ...(dependsOn === undefined ? {} : { depends_on: dependsOn }),
           ...(params.start_from === undefined ? {} : { start_from: params.start_from }),
           ...(into === undefined ? {} : { merges_into: into }),
+          ...(params.also_in === undefined ? {} : { also_in: params.also_in }),
         }
       }
       let t = yield* tasks.create(input, agent(caller))
       if (Object.keys(marks).length > 0) t = yield* tasks.update(t.id, marks, agent(caller))
-      t = yield* intoPen(caller, t, penName === null ? null : penName.success, params.pen, profile)
+      if (penName === null && params.also_in === undefined) t = yield* intoPen(caller, t, params.pen, profile)
       // Its agent starts (or it's queued for what it depends on). Refused, the task is made all the same and the agent
       // told why it didn't start, rather than given an error it might make the task again for.
       let note: string | null = null

@@ -585,6 +585,9 @@ extra prompt), `parent_id` (an existing legacy subproject in the same project), 
 - Scratch task (`POST /profiles/{id}/tasks`): no project, no worktree/deps/subproject; default title "New scratch task".
 - Group task (`POST /profiles/{id}/group-tasks`): `group` must name a group of the profile's projects; no worktree.
 - Task keys: project key + number; `G-n` group, `S-n` scratch, `A-n` assistant (so project keys G/S/A are reserved).
+- New (HE-117): `pen` (into the profile's pen by that name, made if missing) and `also_in` (other projects of the
+  profile, ≤7): a set across repositories, one task in each on one branch name, all made in one transaction or none
+  ([07-agents.md](../07-agents.md#sets-as-built-in-he-117) has the rules and refusals).
 
 ### 7.9 Projects and profiles (rules worth keeping)
 - Project key: 1–10 letters/digits, uppercased, unique per profile including every project's `former_keys` (old task keys keep resolving); derived from the name (initials of first 3 words or first 3 letters; `T` fallback; suffix numbers on clash).

@@ -1,5 +1,5 @@
 import type { Project, Task } from "@huntaway/contracts"
-import { slugify } from "../paths.ts"
+import { slugify } from "../../platform/slug.ts"
 
 /**
  * The name of a task's worktree folder in the project's worktrees folder. A task that had a worktree before (removed once

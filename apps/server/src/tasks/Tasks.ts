@@ -1,7 +1,7 @@
 import { Context, DateTime, Effect, Layer, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Conflict, Invalid, NotFound, PenId, TaskId, Timestamp } from "@huntaway/contracts"
-import type { NewTask, Task, TaskFilter, TaskPatch } from "@huntaway/contracts"
+import type { NewTask, ProjectId, Task, TaskFilter, TaskPatch } from "@huntaway/contracts"
 import { Changes } from "../platform/Changes.ts"
 import type { Actor, ChangeNote } from "../platform/Changes.ts"
 import { Db } from "../platform/Db.ts"
@@ -11,9 +11,11 @@ import { decideCreate, decideDeleted, decideUpdate, deriveColumns } from "./deci
 import { MergeFacts, needsGitFacts } from "./MergeFacts.ts"
 import type { GitFacts } from "./MergeFacts.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
-import { nextPenColor, penWanted } from "./penChecks.ts"
+import { canBeInPen, checkPenName, nextPenColor, penWanted } from "./penChecks.ts"
 import { PenRepo } from "./PenRepo.ts"
-import type { CreateFacts, TaskColumns, UpdateFacts } from "./decide.ts"
+import { RepoBranches } from "./RepoBranches.ts"
+import { checkSet, freeBranchName, setBranchBase, setPenName } from "./sets.ts"
+import type { CreateFacts, NewRow, TaskColumns, UpdateFacts } from "./decide.ts"
 import { TaskRepo } from "./TaskRepo.ts"
 import type { ProjectRef } from "./TaskRepo.ts"
 import { ProfileNotFound } from "../profiles/Profiles.ts"
@@ -25,7 +27,11 @@ export interface TasksShape {
   readonly get: (id: TaskId) => Effect.Effect<Task, TaskNotFound>
   /** A project's tasks (`ProjectNotFound` for a project that isn't there), a profile's, or its tasks in no project. */
   readonly list: (filter: TaskFilter) => Effect.Effect<ReadonlyArray<Task>, ProjectNotFound>
-  /** A task in a project, a scratch task in none, or a group task (`NewTask` says which). */
+  /**
+   * A task in a project, a scratch task in none, or a group task (`NewTask` says which), in the pen `pen` names. With
+   * `also_in`, a set across repositories (HE-117): a task in each project too, all of them or none, on one branch name
+   * free in every repository and in one pen; the lead (this one) is returned.
+   */
   readonly create: (input: NewTask, by: Actor) => Effect.Effect<Task, ProjectNotFound | ProfileNotFound | Invalid | Conflict>
   /**
    * `pen` puts it in the profile's pen by that name (made, with a `pens` event, if there's none) and `pen_id` in a pen
@@ -51,6 +57,34 @@ const namedBy = (fields: Pick<TaskPatch, "depends_on" | "merges_into" | "start_f
   ...(typeof fields.start_from === "object" && fields.start_from?.type === "task" ? [fields.start_from.task_id] : []),
   ...(typeof fields.merges_into === "string" && fields.merges_into.trim() !== "" ? [fields.merges_into.trim()] : []),
 ]
+
+/** The pen a new task asks for by name (null: none), checked against what it is. */
+const newTaskPen = (task: Task, name: string | null | undefined): Effect.Effect<string | null, Invalid> => {
+  if (name === undefined || name === null || name.trim() === "") return Effect.succeed(null)
+  if (!canBeInPen(task)) return Effect.fail(new Invalid({ field: "pen", reason: "only a task on the board can be in a pen" }))
+  return Effect.fromResult(checkPenName(name))
+}
+
+const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+
+/**
+ * What a set's task in project `project` is made from, beside its lead made from `input`: the same title, description,
+ * labels and links, model and effort, but its project's default config, no dependencies, and To do for In progress (only
+ * the lead's agent starts). Branch, lead and pen are written with it.
+ */
+const followerInput = (input: NewTask, project: ProjectId): NewTask => ({
+  project_id: project,
+  title: input.title,
+  description: input.description,
+  status: input.status === "in_progress" ? "todo" : input.status,
+  resolution: input.resolution,
+  use_worktree: input.use_worktree,
+  model: input.model,
+  effort: input.effort,
+  labels: input.labels,
+  external_links: input.external_links,
+  fanout_id: input.fanout_id,
+})
 
 /** Whether `now` isn't the task `read` was, as far as what was read of git and GitHub for it goes. */
 const movedOn = (read: Task, now: Task) =>
@@ -79,6 +113,7 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
       const pens = yield* PenRepo
       const mergeFacts = yield* MergeFacts
       const config = yield* ServerConfig
+      const branches = yield* RepoBranches
 
       const now = Effect.map(DateTime.now, (t) => Timestamp.make(DateTime.formatIso(t)))
       const load = Effect.fnUntraced(function* (id: string) {
@@ -120,12 +155,16 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
           if (pen === null || pen.profile_id !== before.profile_id) return yield* new NotFound({ what: "pen", id: wanted.id })
           return pen.id
         }
-        const found = yield* pens.byName(before.profile_id, wanted.name)
+        return yield* penNamed(before.profile_id, wanted.name, at)
+      })
+      /** The profile's pen called `name` (a checked name), made (with a `pens` event) if it has none. */
+      const penNamed = Effect.fnUntraced(function* (profile: Task["profile_id"], name: string, at: Timestamp) {
+        const found = yield* pens.byName(profile, name)
         if (found !== null) return found.id
         const id = PenId.make(yield* random.uuidV4())
-        const color = nextPenColor((yield* pens.list(before.profile_id)).map((p) => p.color))
-        yield* pens.insert({ id, profile_id: before.profile_id, name: wanted.name, active: true, color, now: at })
-        yield* events.emit({ type: "pens", profile_id: before.profile_id, pens: yield* pens.list(before.profile_id) })
+        const color = nextPenColor((yield* pens.list(profile)).map((p) => p.color))
+        yield* pens.insert({ id, profile_id: profile, name, active: true, color, now: at })
+        yield* events.emit({ type: "pens", profile_id: profile, pens: yield* pens.list(profile) })
         return id
       })
 
@@ -173,6 +212,7 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
       })
 
       const create = Effect.fn("Tasks.create")(function* (input: NewTask, by: Actor) {
+        if (input.also_in !== undefined && input.also_in.length > 0) return yield* createSet(input, input.also_in, by)
         const at = yield* now
         const id = TaskId.make(yield* random.uuidV4())
         const task = yield* db.tx(
@@ -181,13 +221,94 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
             const createdBy = by._tag === "Agent" && by.task_id !== null ? { created_by: by.task_id } : {}
             yield* repo.insert(id, { ...row, columns: { ...row.columns, ...createdBy } }, at)
             // Just inserted, in this transaction.
-            const created = yield* load(id).pipe(Effect.orDie)
+            let created = yield* load(id).pipe(Effect.orDie)
+            const pen = yield* newTaskPen(created, input.pen)
+            if (pen !== null) {
+              yield* repo.write(id, { pen_id: yield* penNamed(created.profile_id, pen, at) }, at)
+              created = yield* load(id).pipe(Effect.orDie)
+            }
             yield* events.emit({ type: "task", task: created })
             return created
           }),
         )
         yield* offer(by, [{ before: null, after: task }])
         return task
+      })
+
+      /** The projects `refs` (ids or keys) name in `lead`'s profile, each once and none of them `lead`. */
+      const setProjects = Effect.fnUntraced(function* (lead: ProjectRef, refs: ReadonlyArray<string>) {
+        const mine = (yield* repo.projects).filter((p) => p.profile_id === lead.profile_id)
+        const out: Array<ProjectRef> = []
+        for (const ref of refs.map((r) => r.trim())) {
+          const p = mine.find((x) => x.id === ref) ?? mine.find((x) => same(x.key, ref)) ?? mine.find((x) => x.former_keys.some((k) => same(k, ref)))
+          if (p === undefined) return yield* new Invalid({ field: "also_in", reason: `no project "${ref}" on this board` })
+          if (p.id === lead.id) return yield* new Invalid({ field: "also_in", reason: `${p.name} is the set's own project: name only the others` })
+          if (out.some((x) => x.id === p.id)) return yield* new Invalid({ field: "also_in", reason: `${p.name} is named twice` })
+          out.push(p)
+        }
+        return out
+      })
+
+      /**
+       * A set across repositories (HE-117): the lead in `input`'s project, a task in each of `also`'s with the same title
+       * and description recording the lead in `lead_id`, all on one branch name and in one pen, in one transaction. What
+       * the repositories' branches are is read first (git is never run in a transaction); the name is picked once the
+       * lead's number is known.
+       */
+      const createSet = Effect.fnUntraced(function* (input: NewTask, also: ReadonlyArray<string>, by: Actor) {
+        yield* Effect.fromResult(checkSet(input, also))
+        const leadProject = input.project_id === undefined ? null : yield* repo.project(input.project_id)
+        if (leadProject === null) return yield* new ProjectNotFound({ id: input.project_id ?? "" })
+        const projects = [leadProject, ...(yield* setProjects(leadProject, also))]
+        const fromGit = (yield* Effect.forEach(projects, (p) => branches.taken(p.id), { concurrency: 1 })).flat()
+        const at = yield* now
+        const createdBy = by._tag === "Agent" && by.task_id !== null ? { created_by: by.task_id } : {}
+        const made = yield* db.tx(
+          Effect.gen(function* () {
+            // Every task is decided before any is inserted. The others start nothing of their own: they wait in To do.
+            const planned: Array<{ readonly id: TaskId; readonly row: NewRow }> = []
+            for (const p of projects) {
+              const lead = p.id === leadProject.id
+              const own = lead ? input : followerInput(input, p.id)
+              const facts: CreateFacts = lead
+                ? yield* createFacts(own)
+                : { place: { _tag: "Project", project: p }, configs: yield* repo.configs(p.profile_id, p), tasks: [] }
+              const row = yield* Effect.fromResult(decideCreate(own, facts, at))
+              if (row.columns.use_worktree !== true) {
+                return yield* new Invalid({
+                  field: "also_in",
+                  reason: `${p.name} doesn't use worktrees (it has no git repository, or they're off), so it can't be in a set`,
+                })
+              }
+              planned.push({ id: TaskId.make(yield* random.uuidV4()), row: { ...row, columns: { ...row.columns, ...createdBy } } })
+            }
+            const [first, ...rest] = planned
+            if (first === undefined) return yield* Effect.die("a set with no lead")
+            yield* repo.insert(first.id, first.row, at)
+            const lead = yield* load(first.id).pipe(Effect.orDie)
+            // Free in every repository, and of the branches the board has given these projects' tasks and not made yet.
+            const given = (yield* Effect.forEach(projects, (p) => repo.projectTasks(p.id), { concurrency: 1 }))
+              .flat()
+              .flatMap((t) => (t.branch === null ? [] : [t.branch]))
+            const base = setBranchBase(lead.key, lead.title)
+            const branch = freeBranchName(base, [...fromGit, ...given])
+            if (branch === null) {
+              return yield* new Conflict({ reason: "duplicate_name", detail: `${base} and its -2 to -50 are all taken in the set's repositories` })
+            }
+            const penName = (yield* newTaskPen(lead, input.pen)) ?? (yield* Effect.fromResult(checkPenName(setPenName(lead.title))))
+            const pen_id = yield* penNamed(lead.profile_id, penName, at)
+            yield* repo.write(lead.id, { branch, pen_id }, at)
+            for (const { id, row } of rest) yield* repo.insert(id, { ...row, columns: { ...row.columns, lead_id: lead.id, branch, pen_id } }, at)
+            const all = yield* Effect.forEach(planned, ({ id }) => load(id).pipe(Effect.orDie), { concurrency: 1 })
+            for (const task of all) yield* events.emit({ type: "task", task })
+            return { lead: yield* load(lead.id).pipe(Effect.orDie), all }
+          }),
+        )
+        yield* offer(
+          by,
+          made.all.map((after) => ({ before: null, after })),
+        )
+        return made.lead
       })
 
       const update = Effect.fn("Tasks.update")(function* (id: TaskId, patch: TaskPatch, by: Actor) {

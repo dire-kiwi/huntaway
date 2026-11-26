@@ -152,6 +152,7 @@ import { ChangesTab } from "./git/ChangesTab.ts"
 import { FilesTab } from "./git/FilesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
+import { branchReader } from "./git/branchNames.ts"
 import { Git } from "./git/Git.ts"
 import { Gh } from "./github/Gh.ts"
 import { GhStacks } from "./github/GhStacks.ts"
@@ -299,6 +300,7 @@ import { Attachments } from "./tasks/Attachments.ts"
 import { Dependencies } from "./tasks/Dependencies.ts"
 import { Leftovers } from "./tasks/Leftovers.ts"
 import { MergeFacts } from "./tasks/MergeFacts.ts"
+import { RepoBranches } from "./tasks/RepoBranches.ts"
 import { PenRepo } from "./tasks/PenRepo.ts"
 import { Pens } from "./tasks/Pens.ts"
 import { StackThreads } from "./tasks/StackThreads.ts"
@@ -391,7 +393,7 @@ const ProfilesLive = Layer.mergeAll(Profiles.ensureFromConfig, Profiles.folders)
 const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
 const TasksLive = Layer.mergeAll(Pens.layer, StackThreads.layer, Attachments.pruner, TaskTmp.sweeper).pipe(
   Layer.provideMerge(Layer.mergeAll(Tasks.layer, TaskRefs.layer, Attachments.layer, TaskTmp.layer)),
-  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer, MergeFacts.layer)),
+  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer, MergeFacts.layer, RepoBranches.layer)),
   Layer.provideMerge(ProjectsLive),
 )
 const ThreadsLive = Threads.pruner.pipe(
@@ -406,7 +408,8 @@ const ThreadsLive = Threads.pruner.pipe(
  */
 const GitLive = Restack.layer.pipe(
   // 4.8: restacking stack levels, over their worktrees.
-  Layer.provideMerge(Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer, FilesTab.layer)),
+  // HE-117: a set's branch name, kept clear of every repository's branches (`RepoBranches`).
+  Layer.provideMerge(Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer, FilesTab.layer, branchReader)),
   // 6.11: a project's folder moved or followed, which a worktree setup holds where it is.
   Layer.provideMerge(Relocation.layer.pipe(Layer.provideMerge(RelocationRepo.layer))),
   Layer.provideMerge(Layer.mergeAll(TaskBase.layer, Checkpoints.layer)),

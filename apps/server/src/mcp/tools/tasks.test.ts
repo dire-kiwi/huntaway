@@ -391,6 +391,28 @@ describe("task tools", () => {
     }).pipe(Effect.provide(TestMcp())),
   )
 
+  it.effect("create_task makes a set of tasks across repositories, on one branch and in one pen (HE-117)", () =>
+    Effect.gen(function* () {
+      const p = yield* profile("personal")
+      for (const key of ["API", "WEB"]) {
+        yield* (yield* Projects).create({ profile_id: p.id, name: key.toLowerCase(), key, repo_path: yield* gitRepo }).pipe(Effect.orDie)
+      }
+      const me = yield* agentOf(p)
+      const lead = ok(yield* call(me, "create_task", { title: "Rename the field", project_id: "API", also_in: ["web"], start: false }))
+      const other = ok(yield* call(me, "get_task", { task_id: "WEB-1" }))
+      const set = [
+        { key: "API-1", title: "Rename the field", status: "todo", merged: false, project_id: lead["project_id"], lead: true },
+        { key: "WEB-1", title: "Rename the field", status: "todo", merged: false, project_id: other["project_id"], lead: false },
+      ]
+      for (const t of [lead, other]) assert.deepStrictEqual([t["branch"], t["pen"], t["set"]], ["ia/api-1-rename-the-field", "Rename the field", set])
+      // What can't be a set is refused, and says why.
+      assert.include(err(yield* call(me, "create_task", { title: "Notes", project_id: "API", type: "scratch", also_in: ["WEB"] })), "a scratch task can't be")
+      assert.include(err(yield* call(me, "create_task", { title: "Part", project_id: "API", merges_into: "API-1", also_in: ["WEB"] })), "can't merge into")
+      assert.include(err(yield* call(me, "create_task", { title: "Here", project_id: "API", use_worktree: false, also_in: ["WEB"] })), "leave use_worktree on")
+      assert.strictEqual(list(yield* call(me, "list_tasks", { project_id: "WEB" })).length, 1)
+    }).pipe(Effect.provide(TestMcp())),
+  )
+
   it.effect("update_task doesn't move a task its todo list holds", () =>
     Effect.gen(function* () {
       const p = yield* profile("personal")
@@ -551,7 +573,9 @@ describe("task tools", () => {
       ])
       // As the agent is shown it: names, descriptions and argument names as before.
       const create = (yield* servers.tools("huntaway", false)).find((t) => t.name === "create_task")
+      // HE-117 adds also_in.
       assert.deepStrictEqual(Object.keys(Object(at(create?.inputSchema, "properties"))).toSorted(byText), [
+        "also_in",
         "depends_on",
         "description",
         "effort",

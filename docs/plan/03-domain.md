@@ -109,6 +109,7 @@ export const Task = Schema.Struct({
   base_branch: Schema.NullOr(Schema.String),
   start_from: Schema.NullOr(StartFrom),
   merges_into: Schema.NullOr(TaskId),
+  lead_id: Schema.optional(Schema.NullOr(TaskId)), // HE-117: a set across repositories' lead; null for the lead and every other task
   carries: Schema.NullOr(Carries),
   restack: Schema.NullOr(Schema.Literals(["due", "conflict"])),
   github_stack: Schema.NullOr(Schema.Int),
