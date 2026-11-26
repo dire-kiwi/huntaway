@@ -137,6 +137,9 @@ const result = (subtype: string, cost: number, more: Record<string, unknown> = {
   session_id: "s1",
   ...more,
 })
+/** The messages written to the agent's input (not the board's control requests, such as the context meter's). */
+const userLines = (agent: FakeAgent) =>
+  Effect.map(agent.input, (lines) => lines.filter((l) => typeof l === "object" && l !== null && "type" in l && l.type === "user"))
 const said = (text: string) => ({ type: "assistant", message: { content: [{ type: "text", text }] } })
 
 describe("Runs.send", () => {
@@ -203,6 +206,107 @@ describe("Runs.send", () => {
         yield* input.settled(agent.run.id, "steer")
         assert.isTrue(yield* agent.inputClosed)
         assert.strictEqual(STEER_GRACE, "30 seconds")
+      }),
+    ),
+  )
+
+  it.effect("a message queued for after the turn waits for its end, then starts the next turn of the same run (HE-113)", () =>
+    run(
+      Effect.gen(function* () {
+        const { task: id, agent } = yield* running()
+        let t = yield* send(id, "and then this", { queue: true })
+        assert.deepStrictEqual([t.queued_message, t.steering.length], ["and then this", 0])
+        assert.deepStrictEqual(yield* agent.input, [])
+
+        // The turn ends: it goes to the agent as a steer, and the input stays open for the turn it starts.
+        yield* output(agent, [result("success", 0.1)])
+        t = yield* task(id)
+        const steer = only(t.steering)
+        assert.deepStrictEqual([t.queued_message, steer.written], [null, true])
+        assert.deepStrictEqual(yield* userLines(agent), [{ type: "user", uuid: steer.id, message: { role: "user", content: "and then this" } }])
+        assert.isFalse(yield* agent.inputClosed)
+
+        yield* output(agent, [replay(steer.id, "and then this"), result("success", 0.2)])
+        assert.deepStrictEqual(yield* userMessages(id), [{ text: "and then this", steered: true }])
+        assert.isTrue(yield* agent.inputClosed)
+      }),
+    ),
+  )
+
+  it.effect("what is queued stays for the next run when the turn failed; a /compact keeps what follows it (HE-113)", () =>
+    run(
+      Effect.gen(function* () {
+        const { task: id, agent } = yield* running()
+        yield* send(id, "and then this", { queue: true })
+        yield* output(agent, [result("error_during_execution", 0.1)])
+        const t = yield* task(id)
+        assert.deepStrictEqual([t.queued_message, t.steering.length], ["and then this", 0])
+        assert.isTrue(yield* agent.inputClosed)
+
+        // The messages ahead of a `/compact` start the next turn; it, and what follows it, wait for the run's end.
+        const second = yield* running()
+        yield* send(second.task, "first", { queue: true })
+        yield* send(second.task, "/compact")
+        yield* send(second.task, "then", { queue: true })
+        yield* output(second.agent, [result("success", 0.1)])
+        const u = yield* task(second.task)
+        assert.deepStrictEqual([u.queued_message, u.steering.map((s) => s.text)], ["/compact\n\nthen", ["first"]])
+        assert.deepStrictEqual(yield* userLines(second.agent), [{ type: "user", uuid: u.steering[0]?.id, message: { role: "user", content: "first" } }])
+      }),
+    ),
+  )
+
+  it.effect("as a run ends, a queued /compact goes alone, and the messages around it in runs of their own (HE-113)", () =>
+    run(
+      Effect.gen(function* () {
+        const runs = yield* Runs
+        const repo = yield* RunRepo
+        const queue = yield* TaskRepo
+        /** The task's run ends, and what is queued is sent as `RunEnds` sends it: the run it starts, and what is left. */
+        const next = Effect.fnUntraced(function* (id: TaskId) {
+          const live = some(yield* repo.latest(id))
+          yield* repo.setPhase(live.id, "exited")
+          const after = yield* runs.sendQueued(id)
+          const started = some(yield* repo.latest(id))
+          return [started.kind, after.queued_message] as const
+        })
+        const queued = (id: TaskId, texts: ReadonlyArray<string>) =>
+          Effect.forEach(texts, (text) => queue.enqueue(id, { text, source: "user", automation_run_id: null }, AT), { discard: true })
+
+        // A message, then `/compact`: the message is sent, then the conversation compacted.
+        const a = (yield* running()).task
+        yield* queued(a, ["and then this", "/compact"])
+        assert.deepStrictEqual(yield* next(a), ["prompt", "/compact"])
+        assert.deepStrictEqual(yield* userMessages(a), [{ text: "and then this", steered: false }])
+
+        // `/compact`, then a message: it compacts with no instructions, and the message is left for after it.
+        const b = (yield* running()).task
+        yield* queued(b, ["/compact", "A"])
+        assert.deepStrictEqual(yield* next(b), ["compact", "A"])
+      }),
+    ),
+  )
+
+  it.effect("a blank Start left queued is sent nothing at the turn's end, and doesn't hold a /plan behind it (HE-113)", () =>
+    run(
+      Effect.gen(function* () {
+        const runs = yield* Runs
+        const queue = yield* TaskRepo
+        const blank = { text: "", source: "user", automation_run_id: null } as const
+        // A task started behind its dependencies keeps its blank Start queued; its run starts with the board's message.
+        const { task: id, agent } = yield* running()
+        yield* queue.enqueue(id, blank, AT)
+        yield* output(agent, [result("success", 0.1)])
+        assert.deepStrictEqual(yield* userLines(agent), [])
+        assert.deepStrictEqual((yield* task(id)).steering, [])
+        assert.isTrue(yield* agent.inputClosed)
+
+        // A blank Start and a `/plan` queued behind dependencies: once they're merged, the run starts on the `/plan`.
+        const waiting = yield* newTask({ status: "todo" })
+        yield* queue.enqueue(waiting, blank, AT)
+        yield* queue.enqueue(waiting, { text: "/plan do it", source: "user", automation_run_id: null }, AT)
+        const t = yield* runs.sendQueued(waiting)
+        assert.deepStrictEqual([t.running, t.queued_message], [true, null])
       }),
     ),
   )

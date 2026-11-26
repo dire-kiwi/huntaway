@@ -28,6 +28,8 @@ export interface SendMessage {
   readonly draft: Atom.Writable<ComposerDraft | null>
   /** Called once it has gone: what went with it (the Changes tab's line comments) comes off where it's kept. */
   readonly onSent?: (() => void) | undefined
+  /** HE-113: it waits for the agent's turn to end rather than steering it (`tasks.send`'s `queue`). */
+  readonly queue?: boolean | undefined
 }
 
 const refKey = (ref: ThreadRef): string => `${ref.host_id}\u0000${ref.task_id}`
@@ -64,9 +66,11 @@ const sendByKey = Atom.family((key: string) => {
       // Through the registry, not the function's context: reading the draft there would make it run again as it changes.
       const registry = yield* AtomRegistry.AtomRegistry
       registry.update(count, (n) => n + 1)
-      const task = yield* callRpc(ref.host_id, "tasks.send", { id: TaskId.make(ref.task_id), text: message.body }).pipe(
-        Effect.ensuring(Effect.sync(() => registry.update(count, (n) => Math.max(0, n - 1)))),
-      )
+      const task = yield* callRpc(ref.host_id, "tasks.send", {
+        id: TaskId.make(ref.task_id),
+        text: message.body,
+        ...(message.queue === true ? { queue: true } : {}),
+      }).pipe(Effect.ensuring(Effect.sync(() => registry.update(count, (n) => Math.max(0, n - 1)))))
       const draft = registry.get(message.draft)
       if (draft !== null) registry.set(message.draft, draftAfterSend(draft, message.sent, message.files))
       message.onSent?.()

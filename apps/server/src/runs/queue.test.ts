@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { combine, decideSend, isCompact, newCommand, outputStyleCommand, reachesAgent } from "./queue.ts"
+import { combine, decideSend, isCompact, newCommand, outputStyleCommand, plainAhead, reachesAgent, takenAtStart } from "./queue.ts"
 import type { SendFacts } from "./queue.ts"
 
 // What happens to a message (huntaway's runner/send.ts and queue.ts), as plain functions: the decisions the service
@@ -17,7 +17,10 @@ const facts = (over: Partial<SendFacts> = {}): SendFacts => ({
   ...over,
 })
 
-const live = { kind: "prompt", phase: "running", acceptsInput: true, writesDocuments: false } as const
+const live = { kind: "prompt", phase: "running", acceptsInput: true, betweenTurns: false, writesDocuments: false } as const
+
+/** Queued messages with these texts. */
+const rows = (...texts: ReadonlyArray<string>) => texts.map((text) => ({ text }))
 
 describe("decideSend", () => {
   it("doesn't start a conversation that has no message (HE-105)", () => {
@@ -67,6 +70,32 @@ describe("decideSend", () => {
       _tag: "Refuse",
       refusal: { _tag: "AlreadyRunning" },
     })
+  })
+
+  it("queues a message to send after the turn, unless the turn is over already (HE-113)", () => {
+    const later = { text: "and then this", source: "user", queue: true } as const
+    assert.deepStrictEqual(decideSend(facts({ live, message: later })), { _tag: "Queue" })
+    assert.deepStrictEqual(decideSend(facts({ live: { ...live, phase: "preparing", acceptsInput: false }, message: later })), { _tag: "Queue" })
+    // Between turns (kept going by its background work), the agent reads it at once.
+    assert.deepStrictEqual(decideSend(facts({ live: { ...live, betweenTurns: true }, message: later })), { _tag: "Steer" })
+    // With no run going it starts one, as any message does.
+    assert.deepStrictEqual(decideSend(facts({ message: later })), { _tag: "Start", kind: "prompt", take: "Ahead" })
+  })
+
+  it("splits the queue at a /compact or /plan, which goes alone (HE-113)", () => {
+    assert.strictEqual(plainAhead(rows("a", "b")), 2)
+    assert.strictEqual(plainAhead(rows("a", "/compact", "b")), 1)
+    assert.strictEqual(plainAhead(rows("/plan it", "b")), 0)
+    // A run for what is queued takes the messages ahead of it, or it alone; one for a message of its own, only the messages.
+    assert.strictEqual(takenAtStart(rows("a", "/compact", "b"), "Only"), 1)
+    assert.strictEqual(takenAtStart(rows("/compact", "b"), "Only"), 1)
+    assert.strictEqual(takenAtStart(rows("/compact", "b"), "Ahead"), 0)
+    assert.strictEqual(takenAtStart(rows("a", "b"), "Ahead"), 2)
+    assert.strictEqual(takenAtStart([], "Only"), 0)
+    // A blank one (a Start queued behind dependencies) says nothing: the command goes with it.
+    assert.strictEqual(takenAtStart(rows("", "/plan it"), "Only"), 2)
+    assert.strictEqual(takenAtStart(rows("", "/compact", "b"), "Only"), 2)
+    assert.strictEqual(takenAtStart(rows("", "/plan it"), "Ahead"), 1)
   })
 
   it("waits for dependencies, but not for a compaction, a merging task, the board's own message or a host without agents", () => {

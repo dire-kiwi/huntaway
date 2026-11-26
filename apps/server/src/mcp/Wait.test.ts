@@ -221,6 +221,31 @@ describe("Wait", () => {
     }).pipe(Effect.scoped, Effect.provide(WaitBoard())),
   )
 
+  it.effect("a message queued for after the turn leaves the wait going, and a new one too (HE-113)", () =>
+    Effect.gen(function* () {
+      const { planner, me } = yield* running()
+      const runs = yield* Runs
+      const waiting = yield* waitingOn(planner.id)
+      const f = yield* Effect.forkChild(call(me, "wait", { reason: "r", seconds: 30 }))
+      yield* waiting
+      const sent = yield* runs.send(planner.id, { text: "and then this", source: "user", queue: true })
+      assert.strictEqual(sent.queued_message, "and then this")
+      yield* TestClock.adjust("29 seconds")
+      assert.isUndefined(f.pollUnsafe(), "not ended by the queued message")
+      yield* TestClock.adjust("1 second")
+      assert.strictEqual(endedOf(ok(yield* Fiber.join(f))), "timeout")
+      // A new wait in the same turn doesn't return at once either.
+      const again = yield* waitingOn(planner.id)
+      const g = yield* Effect.forkChild(call(me, "wait", { reason: "r", seconds: 5 }))
+      yield* again
+      yield* TestClock.adjust("4 seconds")
+      assert.isUndefined(g.pollUnsafe(), "not ended by the queued message")
+      // A `/compact` waits for the run's end, so it ends the wait, as before.
+      yield* runs.send(planner.id, { text: "/compact", source: "user" })
+      assert.strictEqual(endedOf(ok(yield* Fiber.join(g))), "message")
+    }).pipe(Effect.scoped, Effect.provide(WaitBoard())),
+  )
+
   it.effect("ends when the run is stopped or ends, or the task is moved", () =>
     Effect.gen(function* () {
       const { kiw, planner, me } = yield* running()
