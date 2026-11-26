@@ -1695,13 +1695,15 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   run ending with its work finished**, wherever it would have gone to In review before HE-66's hold: `decideFinish`
   gives In review, or holds it in In progress for its review (`decision.review`, HE-66; the default, as `auto_review`
   is on by default), or hands it to its workflow column (`decision.workDone`). Then each other open task of the set in
-  To do, with no run of its own going, is decided on its branch:
-  - with commits of its own (its branch ahead of its base) it moves to In review, a board move from To do, so its own
+  To do, with no run of its own going, is decided on its work, as the board counts work everywhere else
+  (`TaskBase.hasWorkToMerge`, HE-51: commits its base doesn't have, or uncommitted changes in its worktree, ignored
+  files left out; when it can't tell, yes). An agent often leaves its edits uncommitted, and they are the set's work too:
+  - with work (commits, uncommitted changes, or both) it moves to In review, a board move from To do, so its own
     reviews start as for any such move (the reactor's `reviews.reconcile`; a project that reviews holds it in In
     progress while it's reviewed, `Reviews`), and its pull request is looked up on its own repository (`findLater` for
     that task);
-  - with none, it is closed as not done ("no changes in this repository"), which takes it out of the set's count; the
-    lead's thread says so. Reopened, it is in the set again.
+  - with neither, it is closed as not done ("no changes in this repository"), which takes it out of the set's count;
+    the lead's thread says so. Reopened, it is in the set again.
 
   A lead run that ends any other way moves none of them: in Needs attention (a question, a plan only, an unfinished
   todo list asked about once, a failure), held in In progress to finish its todo list, back in the merge queue, or in
