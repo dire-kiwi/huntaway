@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest"
 import { Effect, FileSystem } from "effect"
 import { About } from "huntaway-server/src/settings/About.ts"
 import { git, gitRepo } from "../src/git.ts"
-import { TestBoard } from "../src/TestBoard.ts"
+import { tempDir, TestBoard } from "../src/TestBoard.ts"
 
 describe("TestBoard", () => {
   it.effect("builds the whole server on an in-memory database and a temp data folder", () =>
@@ -24,6 +24,24 @@ describe("TestBoard", () => {
           assert.strictEqual(yield* git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]), "main")
           return repo
         }),
+      )
+      assert.isFalse(yield* fs.exists(dir))
+    }).pipe(Effect.provide(NodeServices.layer)),
+  )
+
+  // HE-121: a test's scope closes before the board it runs on, whose fibers (a run's launch adding its worktree) may
+  // still run git in a repository the test made.
+  it.effect("a temp folder made on a test board outlives the test's scope and goes with the board", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const dir = yield* Effect.gen(function* () {
+        const made = yield* tempDir
+        yield* fs.writeFileString(`${made}/file`, "x")
+        return made
+      }).pipe(
+        Effect.scoped,
+        Effect.tap((made) => Effect.flatMap(fs.exists(made), (there) => Effect.sync(() => assert.isTrue(there, "kept past the test's scope")))),
+        Effect.provide(TestBoard()),
       )
       assert.isFalse(yield* fs.exists(dir))
     }).pipe(Effect.provide(NodeServices.layer)),
