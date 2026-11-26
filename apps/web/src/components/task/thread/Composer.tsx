@@ -4,6 +4,7 @@ import {
   dependencyQueued,
   isAssistant,
   isPenThreads,
+  isStackThread,
   limitQueued,
   runningAgentSteers,
   sendingAtom,
@@ -16,18 +17,17 @@ import {
 } from "@huntaway/client"
 import { clsx } from "clsx"
 import { Cause } from "effect"
-import { ArrowUp, Clock, Loader2, MessageSquare, Square, X } from "lucide-react"
+import { ArrowUp, Clock, ListEnd, Loader2, MessageSquare, Square, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useTouch } from "../../../narrow"
-import type { RewindResult } from "@huntaway/contracts"
 import { composerDraftAtom, composerDraftKey, composerUnsavedAtom } from "../../../state/drafts"
-import { registry } from "../../../state/registry"
 import { exitError, useMutation } from "../../../state/mutation"
 import { errorText } from "../../ui"
 import { lineRange, removeComments, useReview, withComments, type LineComment } from "../../changes/lineComments"
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "../Attachments"
 import { Dictation } from "../Dictation"
-import { RewindNote } from "../Rewind"
+import { RewindCommand, RewindNote } from "../Rewind"
+import { isRewindCommand } from "../rewindCommand"
 import { RefChips, RefMenu, useRefCompletion, useRefMentions } from "../RefCompletion"
 import { SkillHint, SkillMenu, useSkillMenu } from "../SkillMenu"
 import { ModeSelect, useModeControl } from "./ModeSelect"
@@ -94,18 +94,6 @@ function failureOf(result: { readonly _tag: string; readonly cause?: Cause.Cause
   return result._tag === "Failure" && result.cause ? errorText(Cause.squash(result.cause)) : null
 }
 
-/**
- * After a rewind that took the conversation back: the message rewound to goes into the task's composer (ahead of what's
- * there), to edit and send again. Not the board's own messages (a review's issues, say).
- */
-export function rewound(task: Task, r: RewindResult, conversation: boolean) {
-  if (!conversation || r.message.auto || !r.message.text?.trim()) return
-  const { text, files } = splitAttachments(r.message.text.trim())
-  const atom = composerDraftAtom(composerDraftKey(task))
-  const d = registry.get(atom)
-  registry.set(atom, { text: d?.text.trim() ? `${text}\n\n${d.text}` : text, files: [...files, ...(d?.files ?? [])] })
-}
-
 /** `onSend` is called as a message starts to send: a tab other than the thread goes to the thread with it (HA-334). */
 export function Composer({ task, placeholder, onSend }: { task: Task; placeholder?: string | undefined; onSend?: (() => void) | undefined }) {
   const draftKey = composerDraftKey(task)
@@ -139,7 +127,13 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
   // above has the background work's Stop, so the composer is as it is between runs.
   const working = task.running && !backgroundIdle(task)
   const attach = useAttachmentDraft(task.host_id, draftAtom)
-  const skills = useSkillMenu(task, text, setText)
+  // `/rewind` (HE-101): the list of messages to go back to before, open.
+  const [rewinding, setRewinding] = useState(false)
+  const rewind = () => {
+    setText("")
+    setRewinding(true)
+  }
+  const skills = useSkillMenu(task, text, setText, rewind)
   // `@` lists projects and tasks to put the key of (HA-303). The caret is null while the field isn't focused.
   const [caret, setCaret] = useState<number | null>(null)
   const caretTo = useRef<number | null>(null)
@@ -185,14 +179,16 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
     return () => ro.disconnect()
   }, [])
 
-  const send = () => {
+  /** `queue` (HE-113): the message waits for the agent's turn to end rather than steering it. */
+  const send = (queue = false) => {
+    if (isRewindCommand(text)) return rewind()
     const files = attach.files
     const body = withAttachments(withComments(text, comments), files)
     if (blocked || busy || attach.uploading) return
     if (!body && (task.session_id || task.running)) return
     setErr(null)
     const ids = comments.map((c) => c.id)
-    send$({ body, sent: text, files, draft: draftAtom, onSent: () => removeComments(task.host_id, task.id, ids) })
+    send$({ body, sent: text, files, draft: draftAtom, onSent: () => removeComments(task.host_id, task.id, ids), queue })
     // The thread's composer shows the send under way, and the send takes what it sent off the draft once it's gone.
     onSend?.()
   }
@@ -205,12 +201,13 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
   }
 
   const shownErr = err ?? sendErr ?? unqueueErr ?? modeControl.err
-  // The assistant has nothing to start on but the user's message.
-  const canStartEmpty = task.kind === "task" && !task.session_id && !task.running && !isAssistant(task) && !isPenThreads(task)
+  // The assistant has nothing to start on but the user's message; nor have the pens threads and a stack's (HE-105).
+  const canStartEmpty = task.kind === "task" && !task.session_id && !task.running && !isAssistant(task) && !isPenThreads(task) && !isStackThread(task)
   return (
     <div className="shrink-0 px-5 pb-4 narrow:px-2 narrow:pb-2">
       <div className="mx-auto w-full max-w-3xl">
         <RewindNote task={task} />
+        {rewinding && <RewindCommand task={task} onClose={() => setRewinding(false)} />}
         {shownErr && <div className="mb-2 text-xs text-red-400">{shownErr}</div>}
         {unsaved && (
           <div className="mb-2 text-xs text-amber-400">
@@ -241,7 +238,7 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
                 <QueuedMessage text={task.queued_message} hostId={task.host_id} />
                 <div className="mt-0.5 text-[11px] text-faint">
                   {task.running
-                    ? "Queued: sends when the agent finishes, or press Stop to send it now"
+                    ? "Queued: sends when the agent finishes its turn, or press Stop to send it now"
                     : dependencyQueued(task)
                       ? "Queued: sends when the agent starts, once the tasks it depends on are merged"
                       : limitQueued(task)
@@ -287,7 +284,8 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
               }
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && (!touch || e.ctrlKey || e.metaKey)) {
                 e.preventDefault()
-                send()
+                // Alt+Enter queues it for after the agent's turn (HE-113).
+                send(e.altKey && working && canSteer)
               }
             }}
             rows={1}
@@ -296,10 +294,10 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
                 ? `Add a message to the comment${comments.length === 1 ? "" : "s"}, or press Enter to send ${comments.length === 1 ? "it" : "them"}…`
                 : working
                   ? canQueue
-                    ? task.queued_message
+                    ? task.queued_message && !canSteer
                       ? "Add to the queued message…"
                       : canSteer
-                        ? "Message the agent: it reads it after its current step…"
+                        ? `Message the agent: it reads it after its current step${touch ? "" : ", or Alt+Enter to queue it for after its turn"}…`
                         : "Queue a message for when the agent finishes…"
                     : "Agent is working…"
                   : dependencyQueued(task) || limitQueued(task)
@@ -328,11 +326,21 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
                 }}
               />
               <AttachButton draft={attach} />
+              {working && canSteer && (text.trim() || attach.items.length > 0 || comments.length > 0) && (
+                <button
+                  onClick={() => send(true)}
+                  disabled={busy || attach.uploading}
+                  title={`Queue: send when the agent finishes its turn${touch ? "" : " (Alt+Enter)"}`}
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-fg hover:bg-white/15 disabled:text-faint narrow:h-9 narrow:w-9"
+                >
+                  <ListEnd size={14} />
+                </button>
+              )}
               {working && canQueue && (text.trim() || attach.items.length > 0 || comments.length > 0) && (
                 <button
-                  onClick={send}
+                  onClick={() => send()}
                   disabled={busy || attach.uploading}
-                  title={(canSteer && !task.queued_message ? "Send to the agent now" : "Queue") + enter}
+                  title={(canSteer ? "Send to the agent now" : "Queue") + enter}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
@@ -354,7 +362,7 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
                 </button>
               ) : (
                 <button
-                  onClick={send}
+                  onClick={() => send()}
                   disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !comments.length && !canStartEmpty)}
 
                   title={`Send${enter}`}

@@ -13,7 +13,7 @@ import { Button, Field, Input, ModalFooter, Toggle, ToggleField } from "../../ui
 import { Group } from "../parts"
 import { TintField } from "./TintField"
 import { AsanaAccount } from "../../task/ExternalLinks"
-import { AccessPicker, AssistantHostSelect, GithubAccountSelect, HostSelect, ThreadConfigSelect } from "./profileFields"
+import { AccessPicker, AssistantHostSelect, GithubAccountSelect, HostSelect, OutputStyleInput, ThreadConfigSelect } from "./profileFields"
 
 // Every host takes every field (docs/plan/09-frontend.md), so the old API gates are gone, and a profile's
 // summarizers are always a list. A profile has agent configs, never a folder of its own: with none on the host yet, the
@@ -43,6 +43,7 @@ export function ProfileForm({
   const [dir, setDir] = useState("~/.claude")
   const [configIds, setConfigIds] = useState<ReadonlyArray<string>>(initial?.claude_config_ids ?? [])
   const [model, setModel] = useState(initial?.default_model ?? "")
+  const [outputStyle, setOutputStyle] = useState(initial?.default_output_style ?? "")
   const [access, setAccess] = useState<ReadonlyArray<string>>(initial?.agent_access ?? [])
   const [github, setGithub] = useState(initial?.github_account ?? "")
   const [cloneDir, setCloneDir] = useState(initial?.clone_dir ?? "")
@@ -83,6 +84,7 @@ export function ProfileForm({
         : [(yield* mutate("configs.create", host, { config: { name: name.trim(), config_dir: dir.trim() } })).id]
       const fields = {
         default_model: model || null,
+        default_output_style: outputStyle.trim() || null,
         claude_config_ids: ids,
         agent_access: access,
         github_account: github || null,
@@ -149,6 +151,18 @@ export function ProfileForm({
         )}
         <Field label="Default model" help="The model its agents run, unless a project or a thread has its own. Blank follows the host's agent defaults.">
           <Input value={model} placeholder="claude default" onChange={(e) => setModel(e.target.value)} />
+        </Field>
+        <Field
+          label="Output style"
+          help={
+            <>
+              How its Claude agents write their replies (Claude Code&apos;s <code>/output-style</code>: Explanatory, Learning, or a style of yours), unless a
+              project has its own or a task picks one with <code>/output-style</code>. Review threads keep Claude Code&apos;s. Blank follows Claude Code&apos;s
+              settings. Codex has no output styles.
+            </>
+          }
+        >
+          <OutputStyleInput value={outputStyle} placeholder="Claude Code's settings" onChange={setOutputStyle} />
         </Field>
         {pick && ownConfigs.length > 0 && (
           <div className="grid grid-cols-2 gap-3">

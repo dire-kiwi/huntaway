@@ -39,7 +39,13 @@ test("stars tasks and sets reminders, and lists them in the sidebar", async () =
     await ui.run([`rclick ${card}`, "click [role=menu] >> text=Star", "wait css=aside >> text=Starred", "wait css=aside >> text=Try dragging"])
     await eventually(async () => assert.equal((await taskNamed(card)).starred, true))
 
-    await ui.run([`rclick ${other}`, "click [role=menu] >> text=Remind me in 3 hours", "wait css=aside >> text=Reminders", "wait css=aside >> text=in 3h"])
+    await ui.run([
+      `rclick ${other}`,
+      "click role=menuitem[name='Remind me']",
+      "click [role=menu] >> text=In 3 hours",
+      "wait css=aside >> text=Reminders",
+      "wait css=aside >> text=in 3h",
+    ])
     const at = await eventually(async () => Date.parse((await taskNamed(other)).remind_at))
     assert.ok(Math.abs(at - (Date.now() + 3 * 3600_000)) < 60_000, `reminder at ${new Date(at).toISOString()}`)
 
@@ -54,7 +60,12 @@ test("stars tasks and sets reminders, and lists them in the sidebar", async () =
     // The task opened in a dialog over the page: closed again to get at the sidebar.
     await ui.run(["press Escape", "gone Close (Esc)"])
 
-    await ui.run(["rclick css=aside >> text=A task waiting", "click [role=menu] >> text=Clear reminder", "gone css=aside >> text=Reminders"])
+    await ui.run([
+      "rclick css=aside >> text=A task waiting",
+      "click role=menuitem[name='Remind me']",
+      "click [role=menu] >> text=Clear reminder",
+      "gone css=aside >> text=Reminders",
+    ])
     await eventually(async () => {
       const cleared = await taskNamed(other)
       assert.deepEqual([cleared.remind_at, cleared.reminder], [null, null])
@@ -142,8 +153,8 @@ test("a failed snooze doesn't bring back a reminder cleared meanwhile", async ()
     const saves = await holdSaves(page)
     await ui.run([`goto /p/${board.project.id}`, "wait css=aside >> text=An idea for later"])
     const row = "css=aside >> text=An idea for later"
-    await ui.run([`rclick ${row}`, "click [role=menu] >> text=Remind me in 1 hour", "wait css=aside >> text=in 1h"])
-    await ui.run([`rclick ${row}`, "click [role=menu] >> text=Clear reminder", "gone css=aside >> text=Reminders"])
+    await ui.run([`rclick ${row}`, "click role=menuitem[name='Remind me']", "click [role=menu] >> text=In 1 hour", "wait css=aside >> text=in 1h"])
+    await ui.run([`rclick ${row}`, "click role=menuitem[name='Remind me']", "click [role=menu] >> text=Clear reminder", "gone css=aside >> text=Reminders"])
     await eventually(() => assert.equal(saves.held(), 2))
     saves.release(failed("snooze failed"))
     await ui.run(["wait snooze failed", "gone css=aside >> text=Reminders"])

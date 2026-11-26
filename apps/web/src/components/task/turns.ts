@@ -14,9 +14,6 @@ export function useTurns(task: Task, enabled = true): { data: TurnsView["data"];
   return { data: view.data, error: view.failed }
 }
 
-/** A turn's label: its number, and what it was asked. */
-export const turnLabel = (t: Turn) => (t.review_round ? `Fix round ${t.review_round}` : t.text.split("\n")[0] || "(no message)")
-
 /** A turn's changes, short: `3 files +12 −4`. */
 export function turnStat(t: Turn): string {
   const s = t.stats

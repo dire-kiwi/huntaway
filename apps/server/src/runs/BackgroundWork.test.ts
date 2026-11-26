@@ -10,7 +10,7 @@ import { fakeAgent, TestBoard } from "@huntaway/testing"
 import type { FakeAgent } from "@huntaway/testing"
 import { Prompts } from "../agents/Prompts.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
-import { detachable, labelOf, looksLikeServer, parseBackground } from "./background.ts"
+import { detachable, labelOf, mayOutliveTurn, parseBackground } from "./background.ts"
 import type { BackgroundTask } from "./background.ts"
 import { BackgroundWork } from "./BackgroundWork.ts"
 import { TASK_ENV } from "./devServers/proc.ts"
@@ -344,7 +344,7 @@ describe("background work", () => {
     ),
   )
 
-  it.effect("only shells the Bash tool started that look like servers, and that the agent doesn't wait on, can be left running (HA-409)", () =>
+  it.effect("only Bash shells that aren't tests, builds or waits, and that the agent doesn't wait on, can be left running (HA-409)", () =>
     Effect.sync(() => {
       for (const c of [
         "astro dev --port 4331",
@@ -369,7 +369,33 @@ describe("background work", () => {
         "./node_modules/.bin/react-native start",
         "next start -p 3001",
       ]) {
-        assert.isTrue(looksLikeServer(c), c)
+        assert.isTrue(mayOutliveTurn(c), c)
+      }
+      // HE-106: commands that say neither may be left too, as a server once they listen on a port (`RunInput` looks).
+      for (const c of [
+        "node apps/server/dist/main.js",
+        "tail -f /var/log/dev.log",
+        "tail -f logs/api-server",
+        "astro dev --config test.config.mjs",
+        "scripts/test-server.sh --seed",
+        // Arguments naming a waited-on file or folder don't make a server's command waited on.
+        "npx serve ./build",
+        "npx http-server ./test-fixtures",
+        "python3 -m http.server 8000 -d ./build",
+        "python3 -m http.server --directory ./build 8000",
+        "pnpm -C /home/me/worktrees/120-fix-flaky-tests dev",
+        "pnpm -C packages/test-app dev",
+        "vite --config ./vite.test.config.ts",
+        "vite --root /x/worktrees/12-fix-build",
+        "astro dev --config ./test.config.mjs",
+        "pnpm --filter web-test dev",
+        "pnpm --filter test-app dev",
+        "pnpm --filter ci-dashboard dev",
+        "pnpm --filter ./apps/web-e2e dev",
+        "pnpm dev 2>&1 | tee $TMPDIR/dev-build.log",
+        null,
+      ]) {
+        assert.isTrue(mayOutliveTurn(c), String(c))
       }
       for (const c of [
         "timeout 1200 pnpm test > $TMPDIR/test.log 2>&1",
@@ -386,17 +412,16 @@ describe("background work", () => {
         "for i in 1 2 3; do pnpm exec vp test --project browser 2>/dev/null; done",
         "cd /home/me/worktrees/405-background-work-and-dev-servers && pnpm install",
         "node scripts/build.mjs",
-        "tail -f /var/log/dev.log",
+        "node scripts/ui-check.mjs --env $TMPDIR/server-env",
+        "./run-tests.sh",
+        "tsx src/foo.test.ts",
         ". $TMPDIR/ia330-env; scripts/ia-api start TES-1 >/dev/null; scripts/ia-api wait-idle TES-1 --timeout 400 --approve",
         "cd /var/tmp/mobile/server-ts && (npm ci > $TMPDIR/ci-server.log 2>&1; echo server $?)",
         "cargo build --release -p kiwipass-server",
         "nohup timeout 900 pnpm test",
-        "node apps/server/dist/main.js",
-        "tail -f logs/api-server",
         "cd mobile/android && ./gradlew assembleDebug --no-daemon -q > build-log.txt 2>&1",
-        null,
       ]) {
-        assert.isFalse(looksLikeServer(c), String(c))
+        assert.isFalse(mayOutliveTurn(c), c)
       }
       assert.isTrue(detachable([shell("b1", "pnpm dev")], []))
       assert.isFalse(detachable([], []))
@@ -406,6 +431,17 @@ describe("background work", () => {
       assert.isFalse(detachable([shell("b1", "pnpm dev"), shell("m1", "tail -f server.log", "Monitor")], []))
       assert.isFalse(detachable([shell("b1", "pnpm dev"), { id: "a1", type: "local_agent", description: "Explore", since: null }], []))
       assert.isFalse(detachable([{ id: "b1", type: null, description: "pnpm dev", since: null, command: "pnpm dev", tool: "Bash" }], []))
+      // HE-106: ODS-92's preview server, fed its script on stdin, held its task in In progress. A command that says
+      // neither is read by its call's description; one that says what it is isn't.
+      const described = (command: string, description: string): BackgroundTask => ({ ...shell("b1", command), description })
+      const emailDev = "node --input-type=module < $TMPDIR/email-dev.mjs > $TMPDIR/email-dev.log 2>&1"
+      assert.isTrue(detachable([described(emailDev, "Restart the email template preview server")], []))
+      assert.isTrue(mayOutliveTurn(emailDev, "Run the email script"))
+      assert.isFalse(mayOutliveTurn(emailDev, "Run the e2e tests"))
+      assert.isFalse(mayOutliveTurn(emailDev, "Wait for the deploy to finish"))
+      assert.isFalse(detachable([described("node scripts/probe.mjs", "Check the subscription emails arrive")], []))
+      assert.isFalse(mayOutliveTurn("pnpm test", "Start the dev server"))
+      assert.isTrue(mayOutliveTurn("pnpm dev", "Run the tests"))
     }),
   )
 

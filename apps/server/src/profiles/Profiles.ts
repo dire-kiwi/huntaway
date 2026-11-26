@@ -111,6 +111,7 @@ export class Profiles extends Context.Service<Profiles, ProfilesShape>()("huntaw
               name,
               claude_config_ids: ids,
               default_model: blank(input.default_model),
+              default_output_style: blank(input.default_output_style),
               agent_access: checkAgentAccess(name, input.agent_access ?? []),
               github_account: githubAccount,
               clone_dir: cloneDir,
@@ -170,6 +171,7 @@ export class Profiles extends Context.Service<Profiles, ProfilesShape>()("huntaw
             const columns: ProfileColumns = {
               name,
               default_model: patch.default_model === undefined ? undefined : blank(patch.default_model),
+              default_output_style: patch.default_output_style === undefined ? undefined : blank(patch.default_output_style),
               agent_access: patch.agent_access === undefined ? undefined : checkAgentAccess(name ?? current.name, patch.agent_access),
               github_account: githubAccount,
               clone_dir: cloneDir,

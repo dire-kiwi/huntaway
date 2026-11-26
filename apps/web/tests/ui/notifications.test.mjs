@@ -121,11 +121,8 @@ test("tasks that need you notify once, with their key, title and reason, and the
     })
     await other.locator(`[data-task="${moved.id}"]`).click({ button: "right" })
     await other.getByRole("menu").waitFor()
-    await other
-      .getByRole("menuitemradio", { name: "Done" })
-      .or(other.getByRole("menuitem", { name: "Done" }))
-      .first()
-      .click()
+    await other.getByRole("menuitem", { name: "Move to" }).click()
+    await other.getByRole("menuitemradio", { name: "Done", exact: true }).click()
     for (let i = 0; i < 50 && (await server.rpc("tasks.get", { id: moved.id })).status !== "done"; i++) await sleep(100)
     await settle(1000)
     assert.equal((await server.rpc("tasks.get", { id: moved.id })).status, "done")

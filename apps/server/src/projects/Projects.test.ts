@@ -225,14 +225,14 @@ describe("Projects", () => {
   )
 
   // a_projects_scripts_and_models_are_checked_for_type_before_theyre_stored (the values; the types are the contract's)
-  it.live("stores scripts as given, null as none, and a blank model as the default", () =>
+  it.live("stores scripts as given, null as none, and a blank model or output style as the default", () =>
     Effect.gen(function* () {
       const { projects, make } = yield* setup
       const p = yield* make("x")
-      let back = yield* projects.update(p.id, { setup_script: "make", model: " haiku " })
-      assert.deepStrictEqual([back.setup_script, back.model], ["make", "haiku"])
-      back = yield* projects.update(p.id, { setup_script: null, status_script: null, model: "" })
-      assert.deepStrictEqual([back.setup_script, back.status_script, back.model], ["", "", null])
+      let back = yield* projects.update(p.id, { setup_script: "make", model: " haiku ", output_style: " Explanatory " })
+      assert.deepStrictEqual([back.setup_script, back.model, back.output_style], ["make", "haiku", "Explanatory"])
+      back = yield* projects.update(p.id, { setup_script: null, status_script: null, model: "", output_style: " " })
+      assert.deepStrictEqual([back.setup_script, back.status_script, back.model, back.output_style], ["", "", null, null])
       back = yield* projects.update(p.id, { start_prompt: "  Go.  ", review_prompt: " " })
       assert.deepStrictEqual([back.start_prompt, back.review_prompt], ["Go.", null])
     }).pipe(Effect.scoped, Effect.provide(TestBoard())),

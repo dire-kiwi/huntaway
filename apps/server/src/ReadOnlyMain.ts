@@ -3,7 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Layer } from "effect"
 import { Aead, Digest, Kdf, KeyAgreement, Mac, SecureRandom, Signature } from "effect/crypto"
 import { HttpRouter } from "effect/http"
-import { RpcSerialization, RpcServer } from "effect/rpc"
+import { RpcServer } from "effect/rpc"
 import { createServer } from "node:http"
 import {
   AdminRpcs,
@@ -101,7 +101,7 @@ import { PrWatch } from "./github/PrWatch.ts"
 import { PrWatchRepo } from "./github/PrWatchRepo.ts"
 import { PullRequests } from "./github/PullRequests.ts"
 import { LinkRepo } from "./hosts/LinkRepo.ts"
-import { websocketOptions } from "./http/websocket.ts"
+import { RpcNdjsonServer, websocketOptions } from "./http/websocket.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { MergeGate } from "./merge/MergeGate.ts"
 import { Merges } from "./merge/Merges.ts"
@@ -195,6 +195,7 @@ import { Leftovers } from "./tasks/Leftovers.ts"
 import { MergeFacts } from "./tasks/MergeFacts.ts"
 import { PenRepo } from "./tasks/PenRepo.ts"
 import { Pens } from "./tasks/Pens.ts"
+import { StackThreads } from "./tasks/StackThreads.ts"
 import { TaskRefs } from "./tasks/TaskRefs.ts"
 import { TaskRepo } from "./tasks/TaskRepo.ts"
 import { Tasks } from "./tasks/Tasks.ts"
@@ -250,7 +251,7 @@ const ProfilesArea = Layer.mergeAll(Profiles.layer, Usage.layer).pipe(
   Layer.provideMerge(Layer.mergeAll(ProfileRepo.layer, AgentConfigRepo.layer, Asana.layer)),
   Layer.provideMerge(SettingsArea),
 )
-const TasksArea = Pens.layer.pipe(
+const TasksArea = Layer.merge(Pens.layer, StackThreads.layer).pipe(
   Layer.provideMerge(Layer.mergeAll(Tasks.layer, TaskRefs.layer, Attachments.layer, TaskTmp.layer)),
   Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer, MergeFacts.layer)),
   Layer.provideMerge(Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesArea))),
@@ -414,7 +415,7 @@ export const ReadOnlyHandlers = ReadOnlyRpcHandlers.pipe(Layer.provideMerge(Auth
 export const ReadOnlyRpc = Layer.mergeAll(
   RpcServer.layerHttp({ group: ReadOnlyServed, path: "/api/rpc", protocol: "websocket" }),
   RpcServer.layerHttp({ group: ReadOnlyServed, path: "/api/rpc", protocol: "http" }),
-).pipe(Layer.provide(ReadOnlyHandlers), Layer.provide(RpcSerialization.layerNdjson))
+).pipe(Layer.provide(ReadOnlyHandlers), Layer.provide(RpcNdjsonServer))
 
 /** The routes: the RPC, the health and the UI. No webhook, MCP, hook, OTLP, relay, link-stream or terminal path. */
 export const ReadOnlyRoutes = Layer.mergeAll(ReadOnlyRpc, HealthRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)

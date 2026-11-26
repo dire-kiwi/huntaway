@@ -1,4 +1,13 @@
-import { isAssistant, isPenThread, isPensThread, ownWorkDir, type DocumentType, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
+import {
+  isAssistant,
+  isPenThread,
+  isPensThread,
+  isStackThread,
+  ownWorkDir,
+  type DocumentType,
+  type HostProject as Project,
+  type HostTask as Task,
+} from "@huntaway/client"
 import { Suspense, useEffect, type ReactNode } from "react"
 import { preloadable } from "../../ui/preloadable"
 import { Thread } from "../Thread"
@@ -40,6 +49,14 @@ const PEN_EMPTY = (
   </div>
 )
 
+// HE-105.
+const STACK_EMPTY = (
+  <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">
+    This is the stack's own thread: one conversation that lasts, about the stack as a whole. Ask it to restack the levels onto each other, push them or put
+    their pull requests right; the levels&apos; agents hand it that work too.
+  </div>
+)
+
 // The tabs kept in chunks of their own (4.2: Changes; 6.7: Memory, Brief, Routines; the review's patch comes with its
 // milestone), loaded once the task view is open so the first open of the tab doesn't wait for them.
 const ChangesView = preloadable(() => import("../../changes/Changes").then((m) => m.ChangesView))
@@ -66,6 +83,7 @@ export function TabContent({
   wide,
   summaries,
   onShowThread,
+  onShowCode,
 }: {
   task: Task
   project: Project | undefined
@@ -78,6 +96,8 @@ export function TabContent({
   /** The summaries of its changes show folded at the bottom of the thread (HE-55). */
   summaries: boolean
   onShowThread: () => void
+  /** To the Code tab (a file opened from the Changes tab, HE-96). */
+  onShowCode: () => void
 }) {
   useEffect(preloadTabs, [])
   const placeholder = isAssistant(task)
@@ -94,7 +114,17 @@ export function TabContent({
           key={`${task.host_id}:${task.id}`}
           task={task}
           cwd={task.worktree_path ?? ownWorkDir(task) ?? project?.repo_path}
-          empty={isAssistant(task) ? ASSISTANT_EMPTY : isPensThread(task) ? PENS_EMPTY : isPenThread(task) ? PEN_EMPTY : NOT_STARTED}
+          empty={
+            isAssistant(task)
+              ? ASSISTANT_EMPTY
+              : isPensThread(task)
+                ? PENS_EMPTY
+                : isPenThread(task)
+                  ? PEN_EMPTY
+                  : isStackThread(task)
+                    ? STACK_EMPTY
+                    : NOT_STARTED
+          }
           placeholder={placeholder}
           summaries={summaries}
         />
@@ -102,7 +132,7 @@ export function TabContent({
     )
   // A document has a composer of its own, for asking for changes to it (6.2).
   if (docShown) return <DocumentView key={`${task.id}:${docShown}`} task={task} label={docShown} onShowThread={onShowThread} />
-  const content = tabView(task, mode, tab, shown, wide, onShowThread)
+  const content = tabView(task, mode, tab, shown, wide, onShowThread, onShowCode)
   if (!content) return null
   // Every other tab keeps the thread's composer under it, and a message sent from it shows the thread (HA-334).
   return (
@@ -121,14 +151,14 @@ export function TabContent({
  * review (task/Review.tsx), a workflow's tabs (task/Workflows.tsx, 6.6), the assistant's memory,
  * brief, routines and action log (6.7), and the task's details (HE-31).
  */
-function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, wide: boolean, onShowThread: () => void): ReactNode {
+function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, wide: boolean, onShowThread: () => void, onShowCode: () => void): ReactNode {
   return shown === "memory" ? (
     <Suspense fallback={null}>
       <MemoryView key={`${task.host_id}:${task.id}`} task={task} onShowThread={onShowThread} />
     </Suspense>
   ) : tab === "changes" ? (
     <Suspense fallback={null}>
-      <ChangesView task={task} />
+      <ChangesView task={task} onShowCode={onShowCode} />
     </Suspense>
   ) : tab === "code" ? (
     <Suspense fallback={null}>

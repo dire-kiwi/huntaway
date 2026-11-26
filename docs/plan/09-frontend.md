@@ -93,7 +93,11 @@ export interface HostBoard {
 `hostBoardAtom(host)` is `hostRuntime(host).atom(stream)` where the stream is `board.watch` folded with
 `applyBoardEvent`, a pure reducer that keeps every unchanged object identical. On a reconnect it resubscribes with
 the last `{ boot, seq }` and continues, or receives a fresh snapshot. A host that goes offline keeps showing what it
-had, marked stale, which is the old "a failed request must not empty a host's board".
+had, marked stale, which is the old "a failed request must not empty a host's board". A subscription that ends before
+anything after `hello` (and wasn't a resume with nothing owed: `hello` at the board's own boot and seq) waits 1 s
+before the next, twice as long each time up to 30 s (HE-104): a client that couldn't
+read a snapshot (it was over RPC's then 16 MiB limit) asked again at once, for ever, and the host built and sent the
+whole board each time until it ran out of memory.
 
 `boardAtom` merges the hosts into the shape the components read today:
 
@@ -249,7 +253,8 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   approval rules in Details (3.6, 6.12); worktree set-up and tear-down (4.1); "Stacked on" and "Landing after" in
   Details (4.8); fix-checks buttons (4.5, 4.6); the context breakdown's lists and "carry on" (2.8); Codex config models
   (M5); a review thread's own view (M4); the Agents pill (`layout/AgentsPill`, HE-40), in the task view's and a review
-  thread's header. Subprojects are a legacy branch, deleted.
+  thread's header where the column beside the thread isn't shown; where it is, its list is a Subagents section there
+  (HE-112). Subprojects are a legacy branch, deleted.
 - **Smaller changes the lint asked for**: the thread notes its top row as it is scrolled and after each change (not
   while it draws) to keep the place when older items come in; its source of rows is filled by an effect; tool groups'
   stable keys are kept per thread for the page's life. A host's tagged errors have no message, so `errorText` reads
@@ -327,7 +332,36 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 - **Checks.** `tests/ui/code.test.mjs`: the README first, `t` to a file, a name clicked and its use in another file
   followed, back, Escape.
 
+### The Changes tab as a tree of changes (HE-96)
+
+The lazygit-style view that step 1 brought over (below) is replaced: the Changes tab is laid out as the Code tab is.
+
+- **What it shows.** The task's own work against where it started, uncommitted and untracked files too
+  (`git.taskDiff`, as the old Status panel's diff), read again every 4 s while the page is shown. On the left the Code
+  tab's `FileTree` of the files in that diff alone (every folder open until closed, each file marked A, D, R or M, the
+  finder on `t`); on the right the diff of the file picked, or all of them, with the branch's commits, until one is
+  (Esc goes back to all). Every new file is in the tree (`untracked`), though the diff reads only the first 50 new
+  files' contents: picking one of the others says so and opens it in the Code tab. A diff cut at 2 MB says so above the
+  tree, and the count says `n+`. The file picked and the folders closed are kept for the page's life, by host and task
+  (`changesState`), as the Code tab's place is. `j`/`k` go to the next or previous file in the tree's order, `|` switches unified and split.
+- **Into the Code tab.** The file's title bar, and each file's header in the diffs, have *Open in the Code tab* (not
+  for a deleted file): it sets the Code tab's place (`codeState`, `goTo`) to the file at its first changed line and
+  switches the task view's tab (`onShowCode`, from `TaskView` through `TabContent`). Narrow, the Code tab opens on the
+  file when it has a place to go to, rather than on its tree.
+- **Comments for the agent** stay: lines picked by their numbers (`n`, or a line's comment button) on the branch's
+  diff (`branchSource`), the review bar at the bottom, and a comment in it going to its file.
+- **Gone.** Staging and unstaging files and lines, discarding, committing, amending and rewording, stashes, resetting,
+  the commits and the agent's turns as panels, and the keys and dialogs for them (`git/{MainPanel,SidePanels,Panels,
+  Dialogs,useGit*,useStaging,useFileDiffs,useShownDiffs}`, `diffs.ts`'s `linesPatch` and `fileRows`, `DiffLines`'s
+  cursor and hunk buttons). A turn is still rewound from the thread. The server's `git.*` writes stay, for a later
+  view or a client that wants them.
+- **Checks.** `tests/ui/changes.test.mjs`: only the changed files listed, a file's diff alone, `j`/`k`, Esc, a folder
+  folding, the finder, *Open in the Code tab* to the file's first changed line and back, new changes coming, the page's keys left
+  alone. `tests/ui/lineComments.test.mjs`: comments on the branch's diff.
+
 ### Step 1 as done for `changes/` (4.2, HE-5)
+
+Superseded by HE-96 (above): kept as the record of what came over.
 
 - **What came over.** All of the old `components/changes/` but `Compare.tsx`: `Changes.tsx`, `DiffLines.tsx`,
   `diffs.ts`, `lineComments.ts`, `highlight.ts` with its worker, and `git/*`. The task view's Changes tab mounts it as the
@@ -407,6 +441,14 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   an address typed loads, clicks and keys reach the page, a link and Back work, a second task's page streams beside it,
   and the phone layout puts the pane in the main area's place. The desktop app's <webview> path has its server side
   tested (`Browsers.test.ts`) but hasn't been run in Electron here.
+
+### As built in HE-105: a stack's own thread
+
+- The gathered Stack card (`board/StackCard.tsx`) has a thread button beside Spread, and its menu "Open the stack's
+  thread" (`useBoardStacks.tsx` `openThread`: `tasks.stackThread`, then `openTask`; a refusal shows as the board's
+  error). The card counts the thread's running and Needs attention with its levels', and the button turns amber while
+  the thread asks. The thread opens as a conversation (`openingTab`), with only its Thread tab and a "Stack thread"
+  section in Details (`taskFacts` `stackThread`, a lasting thread). See [07-agents.md](07-agents.md#stack-threads).
 
 ### As built in 4.8 (HE-5): web
 
@@ -491,7 +533,8 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   `Section`, `OtherList`, `describe` and McpSection's `serverSummary`, apart so the files don't import each other);
   `settings/AgentTools.tsx` exports `ProjectAgentTools`, which 6.12's project settings mount under their Skills and MCP
   tab; `settings/AgentStepTools.tsx` (with `stepToolChoices`) for 6.6's workflow inspector; `task/SkillMenu.tsx` works
-  (`tasks.skills`, kept a minute per task and config as before; `/compact`, `/plan` for a task, `/new`). Calls are
+  (`tasks.skills`, kept a minute per task and config as before; `/compact`, `/plan` for a task, `/new`; HE-102: a
+  Claude task's `/output-style` and its styles, [07-agents.md](07-agents.md#output-styles)). Calls are
   `rpc(host, "agentTools.…")`, read again after a change, as the old ones were. The project settings' Agents tab had no
   agent-tools part.
 - **Changed.** Every host has sources, subfolders, `/plan` and `/new`, so the API checks are gone; the host picker waited
@@ -898,6 +941,9 @@ its name, and what it does behind the ? beside that (HE-39). All are off at firs
     test clock, a run skipped because the user has just written, a quiet one, and one that reports);
     `Automations.test.ts` and `schedule.test.ts` (several times, `{{last_run}}`, `{{quiet_runs}}`);
     `tests/ui/checkIns.test.mjs` (nothing while off; Add check-ins; the editor's times).
+- **Claude Code's Code Mode** (`code_mode`, HE-107): new Claude conversations ask Claude Code for its Code Mode; a
+  conversation keeps the mode it started in, so switching it on or off applies to new conversations. Claude Code
+  decides whether a conversation gets it, and the thread says when it doesn't. See [07-agents.md](07-agents.md#code-mode).
 
 ### Interactive replies (HE-77)<a id="interactive-replies"></a>
 
@@ -992,6 +1038,20 @@ server can't transcribe, greyed out where the page can't use a microphone (not h
 installed it opens Settings → Voice input (`settings/Voice.tsx`: the models, Download with its progress, Cancel, Use,
 Remove). The desktop app's macOS build gives the reason macOS asks for (`NSMicrophoneUsageDescription`).
 
+### As built in HE-101: `/rewind`
+
+The composer's `/rewind`, as Claude Code has it, to reword a prompt that left something out. It is the composer's own
+command (`task/rewindCommand.ts`), never sent: the `/` menu lists it for a task with a worktree of its own (the only
+threads with checkpoints), and picking it, or sending `/rewind` on its own, empties the field and opens `RewindCommand`
+(`task/Rewind.tsx`). That lists the user's messages a rewind can go back to before, newest first (each message's first
+turn from `checkpoints.turns`, without those already rewound past; Up and Down move between them, and one that can't be
+rewound to says why), and picking one opens the thread mark's `RewindDialog`, whose Cancel goes back to the list. With
+the conversation taken back (ticked by default), the message goes into the composer (`rewound`, moved here from
+`Composer.tsx`) to change and send again; the next run resumes the session from before it. Elsewhere (the assistant, a
+task in its project's repository) `/rewind` says there are no checkpoints rather than reaching the agent. The phone app
+has no `/` menu and is unchanged. Checks: `tests/unit/rewindCommand.test.ts`, `tests/ui/rewindCommand.test.mjs` (the
+fake claude: two turns, the list, Cancel, the rewind, and the reworded message's run resuming at the rewind).
+
 ### Logic that must not be lost on the way
 
 These live in components or module-level state today, outside the store, and are easy to drop when "the store and
@@ -1045,7 +1105,8 @@ and 100 ms (on localhost, under 0.1 s either way). Three changes:
   browser), except the relay's piped ones (`hosts/pipe.ts`): `ws` queues a frame for zlib before it reaches the
   connection, out of sight of the pipe's wait for a drain, so a fast sender would be read into memory. `accept` takes
   the extension out of the upgrade request and `dial` doesn't offer it; `pipe.test.ts` runs its hub with these options.
-  A message is at most 16 MiB inflated (`maxPayload`, RPC's own limit; 1009 past it): `/api/rpc` upgrades before any
+  A message is at most 16 MiB inflated (`maxPayload`, the limit the server's RPC reads a request with,
+  `RpcNdjsonServer`; 1009 past it; clients take answers up to 512 MiB, `RpcNdjson`): `/api/rpc` upgrades before any
   token, and `ws`'s default of 100 MiB let a few kilobytes deflated make the server allocate that much
   (`http/websocket.test.ts`). The desktop pane's DevTools answers can be bigger (a long diff's accessibility tree is
   tens of MiB), so the pane sends a message over 1 MiB as `{"parts":n}` and `n` binary parts of 1 MiB, up to 100
@@ -1197,7 +1258,9 @@ shape and its state modules are gone: `serverUrlAtom` and `tokenAtom` are set fr
   back to the latest; its requests' cards (`permissions.answer`; a board question's `threads.answerQuestion`); and the
   composer (`sendMessage`), whose one button sends what is typed and, with nothing typed, stops the running agent
   (`tasks.stop`), with the queued message above it. The button does nothing while a message is on its way and stays
-  Send for a second after, so a second tap meant for Send neither sends twice nor stops the agent just messaged. Behind ⋯: Start (an empty `tasks.send`) or Stop, Move, Details (the
+  Send for a second after, so a second tap meant for Send neither sends twice nor stops the agent just messaged.
+  While the agent is in a turn a message would steer, a clock button beside it queues what is typed for the turn's end
+  instead (HE-113's `queue`). Behind ⋯: Start (an empty `tasks.send`) or Stop, Move, Details (the
   description, the branch, the todo list, and the task's section of each plugin: the documents it published), the pull
   request and the task on the web. A link in the description that opens a document or a task closes Details, which
   would otherwise stay over the screen it opened.
@@ -1307,6 +1370,11 @@ What is left, a task each:
 - **A profile's assistant on another host (7.4, HE-8).** `assistantHome`'s offline and no-profile notes, the settings
   card's uplink note, `assistant.get` with `here: true` on the host it found, and the Routines tab's "left behind"
   routines (`task/RoutinesLeftBehind.tsx`, the old `LeftBehind`, one line in `Routines.tsx`) are back.
+- **Which host's assistant, on its page (HE-103).** `task/AssistantHostPicker.tsx` is a dropdown of where the
+  assistant runs (the profile form's `AssistantHostSelect`: this host or a linked one, an offline one marked), in the
+  assistant's header and on the page shown while it can't be opened. Picking one saves the board's host's profile's
+  `assistant_host` at once (`profiles.update`), and the page follows it there. It's shown when the profile form shows
+  the field: a linked host is connected, or one is picked. `assistantHost.test.mjs` moves it there and back.
 - **Checks.** `tests/ui/assistant.test.mjs` (every old case; the held save is `assistant.writeMemoryFile` held with
   `routeRpc`, and "Ctrl+S on today's empty log saves nothing" counts the page's calls), `brief.test.mjs` (every old
   case; the brief and the ratings answered with `routeRpc`) and `routines.test.mjs` (both old cases, on
@@ -1321,7 +1389,8 @@ task, most of it rarely used (the status list, the title, the description, label
 - **Key items** (`task/view/details/KeyItems.tsx`) are what that column shows now, beside every tab that leaves it room
   (not a document, the changes, the terminals, the desktop, the memory or the brief): the status with when it last
   moved and what it has cost, and what it waits for (`StatusNotes`, out of `StatusSection.tsx`); the agent's todo list
-  in full (`TodosSection.tsx`: the card has only its start); the assistant's tracked work; the pull request with its
+  in full (`TodosSection.tsx`: the card has only its start); the thread's subagents, each opening its own thread
+  (`SubagentsSection.tsx`, HE-112); the assistant's tracked work; the pull request with its
   checks and _Fix broken checks_; the preview; the workflows; the plugins' panels (HE-34); the tasks from the same prompt and the ones it created;
   what it depends on, merges into, is merged into by and is stacked with; its branch, and a worktree that failed. Each
   only when there is one, so a task with none of them has just its status. A pens thread has no column.
@@ -1338,3 +1407,15 @@ task, most of it rarely used (the status list, the title, the description, label
   `StatusSection` asks before a move to Done itself (`useConfirmDone`), no longer through `Details`.
 - Checks: `tests/ui/taskDetails.test.mjs` (the key items beside the thread, the Details tab's two columns, and an edit
   kept as the panel expands); the checks that reach a section through the Details tab are as they were.
+
+### Moving a task to another project (HE-110)
+
+A task can't change project (its key, branch and worktree are its project's), so _Move to project…_ (in a card's menu,
+and beside _Delete task_ in Details) makes a new task in the project picked with the task's title, description and
+labels (a scratch task stays scratch), in To do (Backlog, from there) with its agent not started, and then asks: _Delete
+original_ (a move) or _Keep original_ (a copy). Either way the new task opens. It's done in the browser
+(`layout/MoveTaskModal.tsx`): `tasks.create` on the target's host, then `tasks.delete` on the task's, so it works across
+profiles and hosts. Files attached to the prompt are paths on the task's host, so to another host they're copied
+(`attachments.get`, then `attachments.upload` there) and the description lists the copies. If the delete fails, trying
+again only deletes. Not for the threads that last. Checks:
+`tests/ui/moveTaskProject.test.mjs`.

@@ -1,14 +1,12 @@
-// Diffs as the Changes tab shows them: several files' (a commit's, the branch's, a turn's), each folded under its
-// header, with lines picked by their numbers to comment on.
+// Diffs as the Changes tab shows them: several files' (the branch's, a review round's), each folded under its header,
+// with lines picked by their numbers to comment on.
 import { clsx } from "clsx"
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import type { DiffResult, GitShown, Turn, TurnDiff } from "@huntaway/contracts"
+import { FileCode } from "lucide-react"
+import type { DiffResult } from "@huntaway/contracts"
 import { parseDiff, type FileDiff } from "../diffs"
 import { commentLines, type CommentSource } from "../lineComments"
-import { turnLabel } from "../../task/turns"
 import { CommentsContext, DiffLines, diffRows, type Layout, type PickHow } from "../DiffLines"
-import { localeString } from "../../ui"
-import { Note } from "./Panels"
 
 /** Each of a list's items with its place in it: for lines, which have no other identity, to key them by. */
 const numbered = <T,>(items: ReadonlyArray<T>) => items.map((item, n) => ({ item, n }))
@@ -47,12 +45,15 @@ export function PatchView({
   empty,
   layout,
   source,
+  onOpenFile,
 }: {
   files: FileDiff[]
   head?: ReactNode
   empty: string
   layout: Layout
   source?: CommentSource | undefined
+  /** A button on each file's header (but a deleted one's) that opens it in the Code tab. */
+  onOpenFile?: ((f: FileDiff) => void) | undefined
 }) {
   const [folded, setFolded] = useState<Record<string, boolean>>({})
   const isFolded = (f: FileDiff, i: number) => folded[`${i}:${f.path}`] ?? big(f)
@@ -148,6 +149,20 @@ export function PatchView({
               <span className="min-w-0 flex-1 truncate text-fg">{fileLabel(f)}</span>
               <span className="shrink-0 text-emerald-400">+{f.adds}</span>
               <span className="shrink-0 text-red-400">−{f.dels}</span>
+              {onOpenFile && f.newPath !== null && (
+                <button
+                  tabIndex={-1}
+                  title="Open in the Code tab"
+                  aria-label={`Open ${f.path} in the Code tab`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onOpenFile(f)
+                  }}
+                  className="shrink-0 text-faint hover:text-fg"
+                >
+                  <FileCode size={12} />
+                </button>
+              )}
             </div>
             {!fold && (
               <div className={clsx("py-0.5", layout === "split" ? "w-full" : "w-max min-w-full")}>
@@ -184,18 +199,6 @@ const fileLabel = (f: FileDiff) =>
         ? `${f.path} (deleted)`
         : f.path
 
-export function CommitHead({ c }: { c: GitShown }) {
-  return (
-    <div className="mb-2 px-1.5">
-      <div className="text-amber-300">commit {c.sha}</div>
-      <div className="text-muted">
-        {c.author} &lt;{c.email}&gt; · {localeString((c.time ?? 0) * 1000)}
-      </div>
-      <div className="mt-1 font-sans text-[13px] whitespace-pre-wrap text-fg">{c.message}</div>
-    </div>
-  )
-}
-
 /** A patch shown as the Changes tab shows one, for elsewhere (the review tab's rounds of fixes). */
 export function PatchBox({ patch, empty }: { patch: string; empty: string }) {
   const files = useMemo(() => parseDiff(patch), [patch])
@@ -206,88 +209,36 @@ export function PatchBox({ patch, empty }: { patch: string; empty: string }) {
   )
 }
 
-/** What one of the agent's turns changed: from the checkpoint before it to its own, without what git brought in. */
-export function TurnView({ turn, shown, layout }: { turn: Turn; shown: { diff?: TurnDiff; error?: string } | null; layout: Layout }) {
-  const files = useMemo(() => parseDiff(shown?.diff?.patch ?? ""), [shown])
-  const label = turnLabel(turn)
-  const source = useMemo<CommentSource>(
-    () => ({
-      key: `turn:${turn.before_n}:${turn.n}`,
-      label: `what the agent changed in turn ${turn.turn}, "${label.length > 60 ? `${label.slice(0, 60)}…` : label}"`,
-    }),
-    [turn.before_n, turn.n, turn.turn, label],
-  )
-  const excluded = shown?.diff?.excluded ?? turn.stats?.excluded ?? []
-  const head = (
+/** What comments on the branch's changes are on. */
+export const branchSource = (base: string | null | undefined): CommentSource => ({
+  key: "branch",
+  label: base ? `the branch's changes against ${base}, uncommitted ones too` : "the branch's changes",
+})
+
+/** Where the branch's changes are from, and its commits. */
+export function BranchHead({ diff }: { diff: DiffResult }) {
+  return (
     <div className="mb-2 px-1.5">
-      <div className="line-clamp-6 font-sans text-[13px] whitespace-pre-wrap text-fg">{turn.text || "(no message)"}</div>
-      <div className="text-faint">
-        {turn.review_round ? `Review fixes, round ${turn.review_round} · ` : ""}
-        {turn.status === "stopped" ? "Stopped" : turn.status === "failed" ? "Failed" : "Ended"} {localeString(turn.at)}
-      </div>
-      {turn.stale && <div className="text-amber-300">A rewind went back to before this turn.</div>}
-      {excluded.length > 0 && (
-        <div className="text-faint" title={excluded.join("\n")}>
-          Left out: {excluded.length} file{excluded.length === 1 ? "" : "s"} git brought in (a merge, pull or rebase) that the turn didn't change itself:{" "}
-          {excluded.slice(0, 5).join(", ")}
-          {excluded.length > 5 && "…"}
+      {diff.merge_base && (
+        <div className="text-faint">
+          From {diff.merge_base.slice(0, 8)} on {diff.base}
+          {diff.branch ? `: the commits on ${diff.branch} (the task has no worktree)` : ", with uncommitted changes"}
         </div>
       )}
-      {shown?.diff?.too_large && <div className="text-amber-300">The diff is too big to show.</div>}
+      {diff.commits?.trim() && <div className="mt-1 whitespace-pre-wrap text-muted">{diff.commits.trim()}</div>}
+      {diff.patch?.includes("\n… [truncated") && <div className="mt-1 text-amber-300">The diff is too big to show all of it.</div>}
     </div>
   )
-  if (!turn.diff)
-    return (
-      <>
-        {head}
-        <Note>
-          {turn.before_n === null
-            ? "There's no checkpoint from before this turn (it started before checkpoints were taken), so what it changed can't be shown."
-            : "This turn's checkpoints are gone from the repository."}
-        </Note>
-      </>
-    )
-  if (!shown) return head
-  if (shown.error)
-    return (
-      <>
-        {head}
-        <Note error>{shown.error}</Note>
-      </>
-    )
-  return <PatchView files={files} head={head} empty="No changes in this turn" layout={layout} source={source} />
 }
 
 /** The branch's changes against its base: its commits, and everything changed (uncommitted work too). */
 export function BranchView({ diff, layout }: { diff: DiffResult | null; layout: Layout }) {
   const files = useMemo(() => parseDiff(diff?.patch ?? ""), [diff])
   const base = diff?.base
-  const source = useMemo<CommentSource>(
-    () => ({ key: "branch", label: base ? `the branch's changes against ${base}, uncommitted ones too` : "the branch's changes" }),
-    [base],
-  )
+  const source = useMemo(() => branchSource(base), [base])
   if (!diff) return null
   if (!diff.available) return <Note error>Diff unavailable: {diff.reason}</Note>
-  return (
-    <PatchView
-      files={files}
-      layout={layout}
-      source={source}
-      empty="No changes yet."
-      head={
-        <div className="mb-2 px-1.5">
-          {diff.merge_base && (
-            <div className="text-faint">
-              From {diff.merge_base.slice(0, 8)} on {diff.base}
-              {diff.branch ? `: the commits on ${diff.branch} (the task has no worktree)` : ", with uncommitted changes"}
-            </div>
-          )}
-          {diff.commits?.trim() && <div className="mt-1 whitespace-pre-wrap text-muted">{diff.commits.trim()}</div>}
-          {diff.patch?.includes("\n… [truncated") && <div className="mt-1 text-amber-300">The diff is too big to show all of it.</div>}
-        </div>
-      }
-    />
-  )
+  return <PatchView files={files} layout={layout} source={source} empty="No changes yet." head={<BranchHead diff={diff} />} />
 }
 
 /** Unified or side-by-side diffs (`|`). */
@@ -307,4 +258,8 @@ export function LayoutToggle({ layout, onToggle }: { layout: Layout; onToggle: (
       ))}
     </span>
   )
+}
+
+export function Note({ children, error }: { children: ReactNode; error?: boolean }) {
+  return <div className={clsx("px-1.5 text-[12px]", error ? "text-red-400" : "text-muted")}>{children}</div>
 }

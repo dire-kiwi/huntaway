@@ -1,88 +1,140 @@
-// The Changes tab: a lazygit-style view of a task's repository. Panels down the left list the
-// branch (Status), the changed files, the commits and the stashes; the main panel on the right shows
-// what's selected in them. Files and folders are staged, discarded and committed from the files
-// panel, and a file's lines from the main panel (Enter goes into it): space stages or unstages the
-// line under the cursor, `v` selects a range of lines and `a` the whole hunk. `?` lists the keys,
-// and the bar at the bottom shows (and does) the ones for where you are.
+// HE-96: the Changes tab, laid out as the Code tab is: the tree of the files the task changed on the left (the Code
+// tab's, with its finder, `t`), and on the right the diff of the file picked, or all of them until one is. The changes
+// are the task's own work against where it started, uncommitted and untracked files too (`git.taskDiff`), read again
+// every few seconds as the agent may be making them. Each file opens in the Code tab, at its first change.
 //
-// Diffs are highlighted, unified or side by side (`|`), and lines in them can be commented on for the agent (`n`,
-// or a line's comment button): the comments wait in a review at the bottom, and in the thread's composer, until
-// they're sent (see lineComments.ts).
-import { useAtom } from "@effect/atom-react"
+// Diffs are highlighted, unified or side by side (`|`), and lines in them can be commented on for the agent (pick them
+// by their numbers, then `n` or a line's comment button): the comments wait in a review at the bottom, and in the
+// thread's composer, until they're sent (see lineComments.ts).
+import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react"
+import { Atom } from "effect/reactivity"
 import { clsx } from "clsx"
-import { Loader2 } from "lucide-react"
-import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { Copy, FileCode, FolderTree } from "lucide-react"
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react"
 
-import { invalidateGroups, type HostTask as Task } from "@huntaway/client"
-import type { Turn } from "@huntaway/contracts"
-import { runExit } from "../../state/mutation"
+import { query, type HostTask as Task } from "@huntaway/client"
+import { TaskId, type DiffResult, type GitFile, type GitTree } from "@huntaway/contracts"
 import { after } from "../../state/timers"
-import { untracked } from "./diffs"
-import { clearReview, commentLines, editComment, openDraft, useReview, type CommentLines, type CommentSource } from "./lineComments"
-import { hasTurns, useTurns } from "../task/turns"
+import { FileTree } from "../code/FileTree"
+import { codeState, goTo } from "../code/state"
+import { ancestors, buildTree, rows } from "../code/tree"
+import { copyText, IconButton, Loading, resultValue, useConfirm } from "../ui"
 import { CommentsContext, type CommentsApi } from "./DiffLines"
-import { RewindDialog } from "../task/Rewind"
-import { rewound } from "../task/thread/Composer"
-import { ContextMenu, type MenuItem } from "../ui"
-import { DialogView, OptionsBar } from "./git/Dialogs"
-import { MainPanel } from "./git/MainPanel"
-
+import { parseDiff, type FileDiff } from "./diffs"
+import { clearReview, editComment, openDraft, useReview, type CommentLines } from "./lineComments"
+import { layoutAtom } from "./git/model"
+import { BranchHead, branchSource, LayoutToggle, Note, PatchView } from "./git/Patches"
 import { ReviewBar } from "./git/ReviewBar"
-import { SidePanels } from "./git/SidePanels"
-import { useFileDiffs } from "./git/useFileDiffs"
-import { useGitActions } from "./git/useGitActions"
-import { useGitKeys } from "./git/useGitKeys"
-import { useGitSelection } from "./git/useGitSelection"
-import { useGitReads, useGitStatus } from "./git/useGitStatus"
-import { useShownDiffs } from "./git/useShownDiffs"
-import { useStaging } from "./git/useStaging"
-import { layoutAtom, NOT_UTF8, SIDES, stageRows, STAGED, toggled, UNSTAGED, type Dialog, type Option, type Pane, type Side } from "./git/model"
+import { useGitReads, useKept } from "./git/useGitStatus"
 
-// Step 1 (docs/plan/09-frontend.md, "Step 1 as done for changes/"): every host on this server has the Changes tab's git
-// methods, so the old view of a host from before them (the branch's whole diff alone) is gone.
+/** Below this width the tree and the diff take turns, as the Code tab's tree and file do. */
+const NARROW = 760
 
-export function ChangesView({ task }: { task: Task }) {
-  return <GitView key={task.id} task={task} />
+/** The line of the file as it is now that its first change is at (a removal: the line after it). */
+function firstChange(f: FileDiff): number | null {
+  const h = f.hunks[0]
+  if (!h) return null
+  const i = h.lines.findIndex((l) => l.kind !== " ")
+  const at = h.lines.slice(Math.max(0, i)).find((l) => l.new !== undefined)
+  return at?.new ?? Math.max(1, h.newStart)
 }
 
-/**
- * The view: its state is in hooks (the repository's status, where you are and what's selected, the selected file's
- * diffs and the lines picked in them, what the main panel shows, the actions and the keys), drawn by SidePanels and
- * MainPanel.
- */
-function GitView({ task }: { task: Task }) {
+/** Where the tab is, by host and task, kept for the page's life as the Code tab's is: the file picked, the folders closed. */
+interface ChangesPlace {
+  readonly at: string | null
+  readonly closed: ReadonlySet<string>
+}
+const START: ChangesPlace = { at: null, closed: new Set() }
+const changesState = Atom.family((_key: string) => Atom.make(START).pipe(Atom.keepAlive))
+
+/** A changed file as the Code tab's tree marks it: added, deleted, renamed or changed. */
+const asChanged = (f: FileDiff): GitFile => ({
+  path: f.path,
+  orig_path: f.oldPath !== f.newPath ? f.oldPath : null,
+  x: f.oldPath === null ? "A" : f.newPath === null ? "D" : f.oldPath !== f.newPath ? "R" : "M",
+  y: " ",
+})
+
+export function ChangesView({ task, onShowCode }: { task: Task; onShowCode: () => void }) {
+  return <ChangesTree key={`${task.host_id}:${task.id}`} task={task} onShowCode={onShowCode} />
+}
+
+function ChangesTree({ task, onShowCode }: { task: Task; onShowCode: () => void }) {
   const [h, id] = [task.host_id, task.id]
-  // The agent's turns, from their checkpoints (API 70): a fifth panel.
-  const turns = useTurns(task)
-  const sides: Side[] = hasTurns(task) ? [...SIDES, "turns"] : SIDES
-  const [rewinding, setRewinding] = useState<Turn | null>(null)
-  const busyRef = useRef(false)
-  const queuedRef = useRef<[string, boolean][]>([])
-  const [flash, setFlash] = useState<{ text: string; error?: boolean } | null>(null)
-  const [dialog, setDialog] = useState<Dialog | null>(null)
-  const [menu, setMenu] = useState<{ x: number; y: number; title: string; items: MenuItem[] } | null>(null)
-  const root = useRef<HTMLDivElement>(null)
-  const [focused, setFocused] = useState(false)
-  const [narrow, setNarrow] = useState(false)
+  const reads = useGitReads(false)
+  const result = useAtomValue(query("git.taskDiff", h, { id: TaskId.make(id) }, reads))
+  // The same diff (most reads): the same object, so what's picked in it stays.
+  const diff = useKept(resultValue(result))
+  const files = useMemo(() => parseDiff(diff?.patch ?? ""), [diff])
+  const byPath = useMemo(() => new Map(files.map((f) => [f.path, f])), [files])
+  // New files whose contents the diff hasn't (only the first 50's are read), listed all the same.
+  const unread = useMemo(() => new Set((diff?.untracked ?? []).filter((p) => !byPath.has(p))), [diff, byPath])
+  const paths = useMemo(() => [...files.map((f) => f.path), ...unread], [files, unread])
+  const tree = useMemo<GitTree>(() => ({ available: true, files: paths, folder: null, truncated: false }), [paths])
+  const changed = useMemo(() => [...files.map(asChanged), ...[...unread].map((path) => ({ path, orig_path: null, x: "A", y: " " }))], [files, unread])
+  // The diff was cut (at 2 MB): the files after the cut aren't in it, nor in the tree.
+  const cut = diff?.patch?.includes("\n… [truncated") ?? false
+  const [{ at, closed }, setPlace] = useAtom(changesState(`${h}:${id}`))
+  const setAt = (path: string | null) => setPlace((p) => ({ ...p, at: path }))
+  // Every folder open, but those closed.
+  const open = useMemo(() => new Set(paths.flatMap(ancestors).filter((f) => !closed.has(f))), [paths, closed])
+  // The files in the tree's order, for `j`/`k`.
+  const order = useMemo(
+    () =>
+      rows(buildTree(paths, null), new Set(paths.flatMap(ancestors)))
+        .filter((r) => r.kind === "file")
+        .map((r) => r.path),
+    [paths],
+  )
+  const file = at === null ? undefined : byPath.get(at)
+  // A new file picked whose contents the diff hasn't.
+  const unreadAt = at !== null && unread.has(at) ? at : null
+  const pickedPath = file?.path ?? unreadAt
+  const shownFiles = useMemo(() => (file ? [file] : files), [file, files])
   const [layout, setLayout] = useAtom(layoutAtom)
-  const focusRoot = useCallback(() => root.current?.focus({ preventScroll: true }), [])
-  // What's being done (a change), while the polls wait.
-  const [busy, setBusy] = useState<string | null>(null)
-  const reads = useGitReads(busy !== null)
-  // Everything the tab reads, again (`R`): the host's `git.*` queries.
-  const refresh = () => void runExit(invalidateGroups(h, ["git"]))
+  const toggleLayout = () => setLayout(layout === "split" ? "unified" : "split")
+  const source = useMemo(() => branchSource(diff?.base), [diff?.base])
+  const setCode = useAtomSet(codeState(`${h}:${id}`))
+  const openPath = (path: string, line: number | null) => {
+    setCode((s) => goTo(s, { path, line }))
+    onShowCode()
+  }
+  const openInCode = (f: FileDiff) => openPath(f.path, firstChange(f))
 
-  const { status, loadErr } = useGitStatus(task, reads)
-  const sel = useGitSelection(status, turns.data?.turns)
-  const { side, setSide, inMain, setInMain, fileRow, setCollapsed, setFileKey, setCommitSha, setStashSha, setTurnN } = sel
-  const target = side === "files" ? fileRow : undefined
-  const d = useFileDiffs(h, id, target, reads)
-  const staging = useStaging(target, d, sel, focusRoot)
-  const { paneFile, hasPane, activePane, cur, anchor, setAnchor, hunkMode, setHunkMode } = staging
-  const shown = useShownDiffs(h, id, sel, reads)
-  const actions = useGitActions({ h, id, status, busy, setBusy, busyRef, sel, target, staging, setDialog, setFlash, setRewinding })
+  const root = useRef<HTMLDivElement>(null)
+  const filterRef = useRef<HTMLInputElement>(null)
+  const scroller = useRef<HTMLDivElement>(null)
+  const [narrow, setNarrow] = useState(false)
+  const [treeShown, setTreeShown] = useState(true)
+  const [findAsked, setFindAsked] = useState(0)
+  const [flash, setFlash] = useState<string | null>(null)
+  useLayoutEffect(() => {
+    if (findAsked > 0) filterRef.current?.focus()
+  }, [findAsked])
+  useLayoutEffect(() => {
+    const el = root.current
+    if (!el) return undefined
+    const ro = new ResizeObserver(([e]) => {
+      if (e) setNarrow(e.contentRect.width < NARROW)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  useEffect(() => {
+    if (!flash) return undefined
+    return after("4 seconds", () => setFlash(null))
+  }, [flash])
+  const focusView = useCallback(() => root.current?.focus({ preventScroll: true }), [])
+  useEffect(focusView, [focusView])
+  const pickFile = (path: string | null) => {
+    setAt(path)
+    // The button clicked for it may be gone now ("All changes"), which would leave the focus nowhere.
+    focusView()
+    if (path !== null) setTreeShown(false)
+    scroller.current?.scrollTo({ top: 0 })
+  }
 
-  // Comments for the agent: the task's review, the draft to focus, and the lines picked in a patch (see PatchView).
+  // Comments for the agent: the task's review, the draft to focus, and the lines picked in a diff (see PatchView).
   const review = useReview(h, id)
   const [focusDraft, setFocusDraft] = useState<{ id: string } | null>(null)
   const picked = useRef<{ owner: object; comment: () => void } | null>(null)
@@ -100,10 +152,7 @@ function GitView({ task }: { task: Task }) {
       review,
       focus: focusDraft,
       open: (lines) => {
-        if (!lines) return
-        // What was typed after the key that opened it is the note's, not keys for the view.
-        queuedRef.current = []
-        setFocusDraft({ id: openDraft(h, id, lines) })
+        if (lines) setFocusDraft({ id: openDraft(h, id, lines) })
       },
       edit: (c) => {
         const draftId = editComment(h, id, c)
@@ -118,111 +167,12 @@ function GitView({ task }: { task: Task }) {
     }),
     [h, id, review, focusDraft, pickOwner, pickLines],
   )
-
-  useEffect(() => root.current?.focus({ preventScroll: true }), [])
-  // Back to the view when a dialog closes (one opened from another, as a menu's can be, has nowhere to go back to).
-  const dialogOpen = !!dialog || !!menu || !!rewinding
-  const wasOpen = useRef(false)
-  // Before the next key comes in, rather than once painted.
-  useLayoutEffect(() => {
-    if (wasOpen.current && !dialogOpen) root.current?.focus({ preventScroll: true })
-    wasOpen.current = dialogOpen
-  }, [dialogOpen])
-  useLayoutEffect(() => {
-    const el = root.current
-    if (!el) return undefined
-    const ro = new ResizeObserver(([e]) => {
-      if (e) setNarrow(e.contentRect.width < 720)
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-  useEffect(() => {
-    if (!flash || flash.error) return undefined
-    return after("4 seconds", () => setFlash(null))
-  }, [flash])
-
-  const focusSide = (s: Side) => {
-    setSide(s)
-    setInMain(false)
-    root.current?.focus({ preventScroll: true })
-  }
-  const enterMain = () => {
-    if (side === "files") {
-      if (!fileRow) return
-      if (!fileRow.file) return setCollapsed((c) => toggled(c, fileRow.key))
-      // Still loading, it goes in, and comes out again if there's nothing to stage.
-      if (d.diffs && !hasPane("unstaged") && !hasPane("staged"))
-        return setFlash({ text: d.diffs.tooLarge ? "The diff is too big to stage by line" : d.diffs.notUtf8 ? NOT_UTF8 : "No lines to stage in this file" })
-    }
-    setInMain(true)
-  }
-  const toggleLayout = () => {
-    setLayout(layout === "split" ? "unified" : "split")
-  }
-  const layoutOption: Option = { key: "|", label: layout === "split" ? "Unified" : "Split", run: toggleLayout }
-
-  // A comment on lines of a file's diff being staged: the range (or hunk) picked, or the cursor's line, or with
-  // `at` (a line's comment button), that line unless it's in what's picked.
-  const isUntracked = !!target?.file && untracked(target.file)
-  const stagingSources = useMemo<Record<Pane, CommentSource>>(
-    () => ({ unstaged: isUntracked ? { key: "unstaged", label: "an untracked file" } : UNSTAGED, staged: STAGED }),
-    [isUntracked],
-  )
-  const stagingSource = (p: Pane) => stagingSources[p]
-  const commentStaging = (p: Pane = activePane, at?: number) => {
-    const f = paneFile(p)
-    if (!f) return
-    const rs = stageRows(f)
-    let [from, to] = [cur, cur]
-    if (hunkMode && cur >= 0) {
-      const hunk = rs[cur]?.hunk
-      from = rs.findIndex((r) => r.hunk === hunk)
-      to = rs.findLastIndex((r) => r.hunk === hunk)
-    } else if (anchor !== null && cur >= 0) [from, to] = [Math.min(anchor, cur), Math.max(anchor, cur)]
-    if (at !== undefined && !(inMain && p === activePane && cur >= 0 && at >= from && at <= to)) [from, to] = [at, at]
-    if (from < 0) return
-    comments.open(
-      commentLines(
-        f,
-        stagingSource(p),
-        rs.slice(from, to + 1).filter((r) => r.line >= 0),
-      ),
-    )
-    setAnchor(null)
-    setHunkMode(false)
-  }
-  const commentKey = () => {
-    if (staging.active) return commentStaging()
-    if (picked.current) return picked.current.comment()
-    setFlash({
-      text: inMain
-        ? "Pick lines by their numbers first (drag or shift-click for more), or use a line's comment button"
-        : "Go into a diff (Enter) to pick lines to comment on",
-    })
-  }
-  // A comment in the review: to its diff, and scrolled to.
+  // A comment in the review: to its file's diff, and scrolled to once it's drawn.
   const [jump, setJump] = useState<string | null>(null)
   const jumpTo = (c: CommentLines, anchorId: string) => {
-    if (c.where === "unstaged" || c.where === "staged") {
-      setCollapsed((cs) => new Set([...cs].filter((k) => !c.path.startsWith(k))))
-      setSide("files")
-      setFileKey(c.path)
-    } else if (c.where === "branch") setSide("status")
-    else if (c.where.startsWith("commit:")) {
-      setSide("commits")
-      setCommitSha(c.where.slice("commit:".length))
-    } else if (c.where.startsWith("stash:")) {
-      setSide("stash")
-      setStashSha(c.where.slice("stash:".length))
-    } else if (c.where.startsWith("turn:")) {
-      setSide("turns")
-      setTurnN(Number(c.where.split(":")[2]))
-    }
-    setInMain(false)
+    pickFile(byPath.has(c.path) ? c.path : null)
     setJump(anchorId)
   }
-  // To the comment once it's drawn: after each render while there's one to go to.
   const jumpNow = useEffectEvent(() => {
     if (!jump) return
     const el = root.current?.querySelector(`[data-comment="${CSS.escape(jump)}"]`)
@@ -231,131 +181,196 @@ function GitView({ task }: { task: Task }) {
     setJump(null)
   })
   useEffect(() => jumpNow())
-  // Off the jump once the diffs it's in have come and it isn't there (outdated, or folded away).
+  // Off the jump once the diff it's in has come and it isn't there (outdated, or on lines not shown).
   useEffect(() => {
     if (!jump) return undefined
     return after("3 seconds", () => setJump(null))
   }, [jump])
+  const { ask, dialog } = useConfirm()
   const discardReview = () =>
-    setDialog({
-      kind: "confirm",
+    ask({
       title: "Discard the comments",
       body: `Throw away ${review.comments.length + review.drafts.length === 1 ? "the comment for the agent, which hasn't" : "all the comments for the agent that haven't"} been sent?`,
-      yes: "Discard",
+      action: "Discard",
       danger: true,
-      onYes: () => clearReview(h, id),
+      onConfirm: () => clearReview(h, id),
     })
 
-  const { options, onKey, mainScroll } = useGitKeys({
-    sides,
-    sel,
-    staging,
-    actions,
-    refresh,
-    toggleLayout,
-    layoutOption,
-    commentKey,
-    focusSide,
-    enterMain,
-    setDialog,
-    dialog: !!dialog,
-    menu: !!menu,
-    rewinding: !!rewinding,
-    busyRef,
-    queuedRef,
-  })
+  const onKey = (e: ReactKeyboardEvent) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.metaKey || e.ctrlKey || e.altKey) return
+    // A dialog open over the view (Discard the comments) has the keys.
+    if (dialog || (e.target instanceof Element && e.target.closest("[data-modal]"))) return
+    const step = (by: number) => {
+      const i = at === null ? -1 : order.indexOf(at)
+      const next = order[Math.max(0, Math.min(order.length - 1, i < 0 ? (by > 0 ? 0 : order.length - 1) : i + by))]
+      if (next !== undefined) pickFile(next)
+    }
+    const keys: Record<string, () => void> = {
+      t: () => {
+        setTreeShown(true)
+        setFindAsked((n) => n + 1)
+      },
+      j: () => step(1),
+      k: () => step(-1),
+      "|": toggleLayout,
+      n: () =>
+        picked.current
+          ? picked.current.comment()
+          : setFlash("Pick lines by their numbers first (drag or shift-click for more), or use a line's comment button"),
+      Escape: () => (at !== null ? pickFile(null) : undefined),
+    }
+    const run = keys[e.key]
+    if (!run || (e.key === "Escape" && at === null)) return
+    e.preventDefault()
+    e.stopPropagation()
+    run()
+  }
 
-  const shell = (children: ReactNode) => (
+  const treeView = (
+    <Loading result={result}>
+      {(d: DiffResult) =>
+        d.available ? (
+          <FileTree
+            tree={tree}
+            changed={changed}
+            open={open}
+            at={at}
+            filterRef={filterRef}
+            showIgnored={false}
+            empty="No changes yet."
+            onOpen={(p) => {
+              pickFile(p)
+              focusView()
+            }}
+            onToggle={(f) =>
+              setPlace((p) => {
+                const next = new Set(p.closed)
+                if (!next.delete(f)) next.add(f)
+                return { ...p, closed: next }
+              })
+            }
+          />
+        ) : (
+          <div className="p-3 text-[12.5px] text-muted">No changes to show: {d.reason ?? "not a git repository"}.</div>
+        )
+      }
+    </Loading>
+  )
+
+  return (
     <div
       ref={root}
-      tabIndex={0}
+      tabIndex={-1}
       // The keys that work on every page leave this view's alone (usePageShortcuts).
       data-own-keys
       onKeyDown={onKey}
-      onFocus={() => setFocused(true)}
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false)
-      }}
-      // Keys go to the view after a click anywhere in it (buttons in it don't take the focus).
+      // Keys go to the view after a click anywhere in it (a line number picked doesn't take the focus), but in a field,
+      // a dialog or a menu.
       onMouseDownCapture={(e) => {
-        if (!(e.target instanceof Element && e.target.closest("input, textarea, [data-modal], [role^=menu]"))) root.current?.focus({ preventScroll: true })
+        if (!(e.target instanceof Element && e.target.closest("input, textarea, [data-modal], [role^=menu]"))) focusView()
       }}
-      className="flex h-full min-h-0 flex-col bg-bg font-mono text-[12px] leading-[18px] outline-none"
+      className="flex h-full min-h-0 flex-col outline-none"
+      data-testid="changes-view"
     >
-      <CommentsContext.Provider value={comments}>{children}</CommentsContext.Provider>
-    </div>
-  )
-  if (!status)
-    return shell(
-      <div className="flex h-full items-center justify-center font-sans text-[13px] text-faint">
-        {loadErr ? <span className="text-red-400">Couldn't read the repository: {loadErr}</span> : <Loader2 size={16} className="animate-spin" />}
-      </div>,
-    )
-  if (!status.available) return shell(<div className="p-5 font-sans text-[13px] text-muted">Changes unavailable: {status.reason}</div>)
-
-  const opts = options()
-  return shell(
-    <>
-      {(task.running || status.state || loadErr || status.folder) && (
-        <div className="shrink-0 border-b border-line px-3 py-1 text-[11.5px]">
-          {status.folder && (
-            <div className="text-amber-300">
-              The project's folder is only <span className="font-mono">{status.folder}</span> in the repository at{" "}
-              <span className="font-mono">{status.dir}</span>: this shows its files and the commits that touch them. Committing what's staged elsewhere,
-              amending, stashing and resetting are left to a terminal.
+      <CommentsContext.Provider value={comments}>
+        <div className="flex min-h-0 flex-1">
+          {(!narrow || treeShown) && (
+            <aside className={clsx("flex min-h-0 flex-col border-r border-line", narrow ? "w-full" : "w-64 shrink-0")}>
+              {cut && (
+                <div className="shrink-0 border-b border-line px-3 py-1.5 text-[11.5px] text-amber-300" role="note">
+                  The diff is too big to read whole: the files after its first 2 MB aren&apos;t listed.
+                </div>
+              )}
+              {treeView}
+            </aside>
+          )}
+          {(!narrow || !treeShown) && (
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="flex h-9 shrink-0 items-center gap-1 border-b border-line px-2">
+                {narrow && (
+                  <IconButton
+                    title="Files"
+                    onClick={() => {
+                      setTreeShown(true)
+                      focusView()
+                    }}
+                  >
+                    <FolderTree size={14} />
+                  </IconButton>
+                )}
+                {pickedPath !== null ? (
+                  <>
+                    <button
+                      className="shrink-0 text-[12px] text-muted hover:text-fg hover:underline"
+                      onClick={() => pickFile(null)}
+                      title="All the changes (Esc)"
+                    >
+                      All changes
+                    </button>
+                    <span className="shrink-0 px-1 text-faint">/</span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-fg" title={pickedPath} data-testid="changes-path">
+                      {pickedPath}
+                    </span>
+                    {file && (
+                      <span className="shrink-0 px-1 font-mono text-[11px]">
+                        <span className="text-emerald-400">+{file.adds}</span> <span className="text-red-400">−{file.dels}</span>
+                      </span>
+                    )}
+                    <IconButton title="Copy the path" onClick={() => copyText(pickedPath)}>
+                      <Copy size={13} />
+                    </IconButton>
+                    {(file ? file.newPath !== null : true) && (
+                      <IconButton title="Open in the Code tab" onClick={() => (file ? openInCode(file) : openPath(pickedPath, null))}>
+                        <FileCode size={14} />
+                      </IconButton>
+                    )}
+                  </>
+                ) : (
+                  <span className="min-w-0 flex-1 truncate text-[12px] text-muted">
+                    {diff?.available
+                      ? `${paths.length}${cut ? "+" : ""} file${paths.length === 1 ? "" : "s"} changed${diff.base ? ` against ${diff.base}` : ""}`
+                      : "Changes"}
+                  </span>
+                )}
+                <span className="shrink-0 font-mono text-[11px]">
+                  <LayoutToggle layout={layout} onToggle={toggleLayout} />
+                </span>
+              </div>
+              <div ref={scroller} className="@container min-h-0 flex-1 overflow-auto bg-bg py-1.5 font-mono text-[12px] leading-[18px]">
+                {diff && !diff.available ? (
+                  <Note error>Diff unavailable: {diff.reason}</Note>
+                ) : unreadAt !== null ? (
+                  <div className="px-1.5 font-sans text-[13px] text-muted">
+                    A new file. Its contents aren&apos;t in the diff, which reads only the first 50 new files and its first 2 MB:{" "}
+                    <button className="text-accent hover:underline" onClick={() => openPath(unreadAt, null)}>
+                      open it in the Code tab
+                    </button>{" "}
+                    to see it.
+                  </div>
+                ) : (
+                  diff && (
+                    <PatchView
+                      files={shownFiles}
+                      layout={layout}
+                      source={source}
+                      empty="No changes yet."
+                      head={!file && <BranchHead diff={diff} />}
+                      onOpenFile={openInCode}
+                    />
+                  )
+                )}
+              </div>
             </div>
           )}
-          {loadErr && <div className="text-red-400">Couldn't refresh: {loadErr}</div>}
-          {status.state && <div className="text-amber-300">The repository is {status.state}: finish or abort that in the terminal.</div>}
-          {task.running && <div className="text-faint">The agent is working in this folder: changes made here may clash with its own.</div>}
         </div>
-      )}
-      <div className={clsx("flex min-h-0 flex-1 gap-2 px-2 pt-3 pb-1", narrow && "flex-col")}>
-        <SidePanels
-          status={status}
-          sides={sides}
-          sel={sel}
-          actions={actions}
-          turns={turns}
-          focused={focused}
-          narrow={narrow}
-          focusSide={focusSide}
-          setMenu={setMenu}
-        />
-        <MainPanel
-          status={status}
-          sel={sel}
-          staging={staging}
-          d={d}
-          shown={shown}
-          actions={actions}
-          turns={turns}
-          layout={layout}
-          toggleLayout={toggleLayout}
-          focused={focused}
-          mainScroll={mainScroll}
-          stagingSource={stagingSource}
-          commentStaging={commentStaging}
-        />
-      </div>
-      <ReviewBar task={task} review={review} onJump={jumpTo} onDiscard={discardReview} onError={(text) => setFlash({ text, error: true })} />
-      <OptionsBar options={opts[0]?.items ?? []} busy={actions.busy} flash={flash} onDismiss={() => setFlash(null)} />
-      {menu && <ContextMenu x={menu.x} y={menu.y} title={menu.title} items={menu.items} onClose={() => setMenu(null)} />}
-      {dialog && <DialogView dialog={dialog} options={opts} onClose={() => setDialog(null)} />}
-      {rewinding && (
-        <RewindDialog
-          task={task}
-          turn={rewinding}
-          head={turns.data?.available ? turns.data.head : null}
-          onClose={() => setRewinding(null)}
-          onDone={(r, convo) => {
-            rewound(task, r, convo)
-            setFlash({ text: `Rewound to before turn ${rewinding.turn}: ${r.written} restored, ${r.removed} removed` })
-            // What the rewind restored (task/Rewind.tsx calls `checkpoints.rewind` itself, not as a mutation that would).
-            refresh()
-          }}
-        />
-      )}
-    </>,
+        <ReviewBar task={task} review={review} onJump={jumpTo} onDiscard={discardReview} onError={setFlash} />
+        {flash && (
+          <div className="shrink-0 border-t border-line px-3 py-1 text-[11.5px] text-muted" role="status">
+            {flash}
+          </div>
+        )}
+      </CommentsContext.Provider>
+      {dialog}
+    </div>
   )
 }

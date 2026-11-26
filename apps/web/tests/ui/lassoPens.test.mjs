@@ -73,7 +73,7 @@ test("the lasso picks tasks, and its bar and their menus put them in a pen", asy
 
     // Right-clicking one of them offers to move them all.
     await page.click(`[data-task="${second}"]`, { button: "right" })
-    await ui.run(["wait New pen… (2 picked)"])
+    await ui.run(["click role=menuitem[name='Pen']", "wait New pen… (2 picked)"])
     await page.keyboard.press("Escape")
     await ui.run(["gone New pen… (2 picked)"])
 

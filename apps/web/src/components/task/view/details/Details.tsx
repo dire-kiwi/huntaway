@@ -1,7 +1,7 @@
 import { isAssistant, taskLabels, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
 import { TaskId, type TaskPatch } from "@huntaway/contracts"
-import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react"
+import { ArrowRightLeft, Copy, GitBranch, Loader2, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../../../state/board"
 import { exitError, useMutation } from "../../../../state/mutation"
@@ -15,6 +15,7 @@ import { marksMergeWork, MergeWorkLine } from "../../../board/MergeWork"
 import { Button, PrIcon, PreviewDot, showsPreview, Toggle } from "../../../ui"
 import { LinkedTasks, usesAsana } from "../../ExternalLinks"
 import { TitleSection } from "../Title"
+import { MoveTaskModal } from "../../../layout/MoveTaskModal"
 import type { Mode } from "../layout"
 import { AgentSection } from "./AgentSection"
 import { DescriptionSection } from "./DescriptionSection"
@@ -80,7 +81,8 @@ function Status({ task }: { task: Task }) {
 function DetailsRest({ task, mode }: { task: Task; mode: Mode }) {
   const project = useProject(task.project_id)
   const asana = usesAsana(useBoard((s) => s.profiles.find((p) => p.host_id === task.host_id && p.id === task.profile_id)))
-  const { groupTask, scratch, pensThread, penThread, assistant, lasting, code, showMergesInto } = taskFacts(task)
+  const { groupTask, scratch, pensThread, penThread, stackThread, assistant, lasting, code, showMergesInto } = taskFacts(task)
+  const bottom = useBoard((s) => (stackThread && task.parent_id ? s.tasks[task.parent_id] : undefined))
   const pen = useBoard((s) => (penThread ? s.pens.find((p) => p.host_id === task.host_id && p.thread_id === task.id) : undefined))
   // What went wrong with each part, until it's tried again.
   const [errs, setErrs] = useState<Partial<Record<"worktree" | "preview" | "pr", string>>>({})
@@ -93,6 +95,7 @@ function DetailsRest({ task, mode }: { task: Task; mode: Mode }) {
     })
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [teardown, setTeardown] = useState(false)
+  const [moving, setMoving] = useState(false)
   const [, update] = useMutation("tasks.update")
   /** Changes the task, and says why it couldn't under `part`. */
   const change = (part: keyof typeof errs, patch: TaskPatch, clear: boolean) => {
@@ -167,6 +170,16 @@ function DetailsRest({ task, mode }: { task: Task; mode: Mode }) {
           <div className="text-[12.5px] text-muted">
             {pen ? `The ${pen.name} pen's own thread` : "The thread of a pen that's gone"}: one lasting conversation about the pen's tasks. Its agent is told
             which tasks are in the pen, puts the tasks it creates there, and keeps notes on what the pen is for. It's renamed with the pen, and deleted with it.
+          </div>
+        </Section>
+      )}
+
+      {stackThread && (
+        <Section title="Stack thread">
+          <div className="text-[12.5px] text-muted">
+            {bottom ? `The own thread of the stack that starts with ${bottom.title}` : "The thread of a stack that's gone"}: one lasting conversation that
+            manages the stack as a whole. Message it to restack the levels onto each other, push them or set their pull requests right; the levels&apos; agents
+            hand it that work too. Its agent is told the levels, their branches and worktrees each time it starts.
           </div>
         </Section>
       )}
@@ -329,15 +342,21 @@ function DetailsRest({ task, mode }: { task: Task; mode: Mode }) {
 
       <AgentSection task={task} />
 
-      {/* The assistant lasts: it can't be deleted. */}
+      {/* The assistant lasts: it can't be deleted. The threads that last aren't moved to another project (HE-110). */}
       {!assistant && (
-        <div className="px-4 py-4">
+        <div className="flex flex-wrap gap-2 px-4 py-4">
+          {task.kind === "task" && !lasting && (
+            <Button size="sm" onClick={() => setMoving(true)}>
+              <ArrowRightLeft size={12} /> Move to project…
+            </Button>
+          )}
           <Button size="sm" variant="danger" onClick={() => setConfirmDelete(true)}>
             <Trash2 size={12} /> Delete task
           </Button>
         </div>
       )}
 
+      {moving && <MoveTaskModal task={task} onClose={() => setMoving(false)} />}
       {teardown && <TeardownModal task={task} onClose={() => setTeardown(false)} />}
       {confirmDelete && <DeleteTaskModal task={task} mode={mode} onClose={() => setConfirmDelete(false)} />}
     </>

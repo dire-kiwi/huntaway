@@ -4,7 +4,10 @@ import { SecureRandom } from "effect/crypto"
 import { SqlClient } from "effect/sql"
 import type { BoardEvent, BoardEventInput } from "@huntaway/contracts"
 
-/** How many events are kept in memory for a subscriber that resumes. */
+/**
+ * How many events are kept in memory for a subscriber that resumes, not counting those a later one replaces
+ * (`replacedBy`).
+ */
 export const TAIL = 5000
 /** How many events a subscriber may fall behind before it is cut off with `resync`. */
 export const BACKLOG = 10_000
@@ -37,6 +40,52 @@ export interface EventsShape {
   readonly watch: (since: Since | undefined) => Effect.Effect<Watch, never, Scope.Scope>
 }
 
+/**
+ * What an event says all of, so a later event with the same key replaces it in a replay: a task's whole row (or its
+ * deletion), an agent config's whole usage. Each `task` event holds a whole task, and a running agent's task changes
+ * many times a minute, so without this the tail was mostly old copies of the same few tasks (HE-104).
+ */
+export const replacedBy = (event: BoardEvent): string | null =>
+  event.type === "task"
+    ? `task ${event.task.id}`
+    : event.type === "task_deleted"
+      ? `task ${event.id}`
+      : event.type === "usage"
+        ? `usage ${event.usage.config_id}`
+        : null
+
+/**
+ * The events kept for a subscriber that resumes, by number, oldest first (a `Map` keeps insertion order). One a later
+ * event replaces is deleted at once, so it holds at most `TAIL` events. Only touched holding the bus's lock.
+ */
+export interface Tail {
+  readonly events: Map<number, BoardEvent>
+  /** The number of the latest event of each `replacedBy` key. */
+  readonly latest: Map<string, number>
+  /** The number of the newest event dropped for room (not replaced): a `since` below it can't be replayed. */
+  floor: number
+}
+
+/** Adds `event` to `tail`, deleting an earlier one with its key, and drops the oldest past `TAIL`. */
+export const keep = (tail: Tail, event: BoardEvent) => {
+  const key = replacedBy(event)
+  if (key !== null) {
+    const before = tail.latest.get(key)
+    if (before !== undefined) tail.events.delete(before)
+    tail.latest.set(key, event.seq)
+  }
+  tail.events.set(event.seq, event)
+  while (tail.events.size > TAIL) {
+    const first = tail.events.entries().next()
+    if (first.done === true) break
+    const [seq, oldest] = first.value
+    tail.events.delete(seq)
+    tail.floor = seq
+    const oldestKey = replacedBy(oldest)
+    if (oldestKey !== null && tail.latest.get(oldestKey) === seq) tail.latest.delete(oldestKey)
+  }
+}
+
 interface Subscriber {
   readonly queue: Queue.Queue<BoardEvent, Cause.Done>
 }
@@ -50,11 +99,8 @@ export class Events extends Context.Service<Events, EventsShape>()("huntaway-ser
       const random = yield* SecureRandom.SecureRandom
       const boot = yield* random.uuidV4()
       const lock = yield* Semaphore.make(1)
-      const state = yield* Ref.make<{ readonly seq: number; readonly tail: ReadonlyArray<BoardEvent>; readonly subscribers: ReadonlySet<Subscriber> }>({
-        seq: 0,
-        tail: [],
-        subscribers: new Set(),
-      })
+      const state = yield* Ref.make<{ readonly seq: number; readonly subscribers: ReadonlySet<Subscriber> }>({ seq: 0, subscribers: new Set() })
+      const tail: Tail = { events: new Map(), latest: new Map(), floor: 0 }
 
       const publish = (input: BoardEventInput) =>
         Semaphore.withPermits(
@@ -69,9 +115,9 @@ export class Events extends Context.Service<Events, EventsShape>()("huntaway-ser
               if (!Queue.offerUnsafe(subscriber.queue, event)) dropped.push(subscriber)
             }
             for (const subscriber of dropped) Queue.endUnsafe(subscriber.queue)
-            const tail = before.tail.length >= TAIL ? [...before.tail.slice(before.tail.length - TAIL + 1), event] : [...before.tail, event]
+            keep(tail, event)
             const subscribers = dropped.length === 0 ? before.subscribers : new Set([...before.subscribers].filter((s) => !dropped.includes(s)))
-            yield* Ref.set(state, { seq: event.seq, tail, subscribers })
+            yield* Ref.set(state, { seq: event.seq, subscribers })
           }),
         )
 
@@ -85,10 +131,8 @@ export class Events extends Context.Service<Events, EventsShape>()("huntaway-ser
           1,
         )(
           Ref.modify(state, (s) => {
-            const first = s.tail[0]
-            const covered =
-              since !== undefined && since.boot === boot && since.seq <= s.seq && (since.seq === s.seq || (first !== undefined && first.seq <= since.seq + 1))
-            const replay = covered ? s.tail.filter((e) => e.seq > since.seq) : null
+            const covered = since !== undefined && since.boot === boot && since.seq <= s.seq && since.seq >= tail.floor
+            const replay = covered ? [...tail.events.values()].filter((e) => e.seq > since.seq) : null
             return [
               { seq: s.seq, replay },
               { ...s, subscribers: new Set([...s.subscribers, subscriber]) },

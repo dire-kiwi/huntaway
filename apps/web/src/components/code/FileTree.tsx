@@ -1,6 +1,6 @@
 // HE-79: the Code tab's file tree, with a finder over it (`t` goes to it): the working tree's files, folders open as
 // they're clicked, and the files with changes marked as the Changes tab lists them. HE-90: the eye button shows what git
-// ignores too, dimmed.
+// ignores too, dimmed. HE-96: the Changes tab's tree too, of the files changed alone.
 import type { GitFile, GitTree } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { ChevronDown, ChevronRight, Eye, EyeOff, FileText, Search } from "lucide-react"
@@ -8,12 +8,21 @@ import { memo, useDeferredValue, useMemo, useState, type KeyboardEvent as ReactK
 import { IconButton } from "../ui"
 import { baseName, ancestors, buildTree, findFiles, rows, type Row } from "./tree"
 
+interface Mark {
+  readonly letter: string
+  /** What the letter means, in the row's tooltip. */
+  readonly label: string
+  readonly className: string
+}
+
 /** A file's change as one letter, and its colour; folders with changes in them get a dot. */
-function changeOf(f: GitFile): { readonly letter: string; readonly className: string } {
-  if (f.x === "?" || f.x === "A") return { letter: f.x === "?" ? "U" : "A", className: "text-emerald-400" }
-  if (f.x === "U" || f.y === "U") return { letter: "!", className: "text-red-400" }
-  if (f.x === "R" || f.y === "R") return { letter: "R", className: "text-sky-400" }
-  return { letter: "M", className: "text-amber-300" }
+function changeOf(f: GitFile): Mark {
+  if (f.x === "?") return { letter: "U", label: "untracked", className: "text-emerald-400" }
+  if (f.x === "A") return { letter: "A", label: "added", className: "text-emerald-400" }
+  if (f.x === "U" || f.y === "U") return { letter: "!", label: "conflicted", className: "text-red-400" }
+  if (f.x === "D" || f.y === "D") return { letter: "D", label: "deleted", className: "text-red-400" }
+  if (f.x === "R" || f.y === "R") return { letter: "R", label: "renamed", className: "text-sky-400" }
+  return { letter: "M", label: "modified", className: "text-amber-300" }
 }
 
 export function FileTree({
@@ -24,6 +33,7 @@ export function FileTree({
   filterRef,
   showIgnored,
   onIgnored,
+  empty = "No files.",
   onOpen,
   onToggle,
 }: {
@@ -34,7 +44,10 @@ export function FileTree({
   filterRef: RefObject<HTMLInputElement | null>
   /** Whether what git ignores is shown (`tree.ignored`, when it was asked for). */
   showIgnored: boolean
-  onIgnored: (show: boolean) => void
+  /** The button that shows or hides what git ignores: none without. */
+  onIgnored?: (show: boolean) => void
+  /** What's said with no files. */
+  empty?: string
   onOpen: (path: string) => void
   onToggle: (folder: string) => void
 }) {
@@ -93,14 +106,16 @@ export function FileTree({
           />
           {!filter && <kbd className="rounded border border-line px-1 text-[10px] text-faint">t</kbd>}
         </label>
-        <IconButton
-          title={showIgnored ? "Hide ignored files" : "Show ignored files"}
-          aria-pressed={showIgnored}
-          onClick={() => onIgnored(!showIgnored)}
-          className={clsx("shrink-0", showIgnored && "bg-raised text-fg")}
-        >
-          {showIgnored ? <Eye size={14} /> : <EyeOff size={14} />}
-        </IconButton>
+        {onIgnored && (
+          <IconButton
+            title={showIgnored ? "Hide ignored files" : "Show ignored files"}
+            aria-pressed={showIgnored}
+            onClick={() => onIgnored(!showIgnored)}
+            className={clsx("shrink-0", showIgnored && "bg-raised text-fg")}
+          >
+            {showIgnored ? <Eye size={14} /> : <EyeOff size={14} />}
+          </IconButton>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-auto pb-2 text-[12.5px]" role="tree" aria-label="Files">
         {finding ? (
@@ -136,7 +151,7 @@ export function FileTree({
           ))
         )}
         {tree.truncated && <div className="px-3 py-2 text-[11px] text-faint">Only the first 50,000 files are listed.</div>}
-        {!finding && tree.files.length === 0 && <div className="px-3 py-2 text-faint">No files.</div>}
+        {!finding && tree.files.length === 0 && <div className="px-3 py-2 text-faint">{empty}</div>}
       </div>
     </div>
   )
@@ -152,7 +167,7 @@ const TreeRow = memo(function TreeRow({
 }: {
   row: Row
   selected: boolean
-  mark: { readonly letter: string; readonly className: string } | null
+  mark: Mark | null
   dot: boolean
   onOpen: (path: string) => void
   onToggle: (folder: string) => void
@@ -163,7 +178,7 @@ const TreeRow = memo(function TreeRow({
       role="treeitem"
       aria-expanded={folder ? r.open : undefined}
       aria-selected={selected}
-      title={r.ignored ? `${r.path} (ignored by git)` : r.path}
+      title={r.ignored ? `${r.path} (ignored by git)` : mark ? `${r.path} (${mark.label})` : dot ? `${r.path} (has changes)` : r.path}
       onClick={() => (folder ? onToggle(r.path) : onOpen(r.path))}
       className={clsx(
         "flex w-full min-w-0 items-center gap-1 py-[3px] pr-2 text-left",
@@ -181,8 +196,12 @@ const TreeRow = memo(function TreeRow({
         <FileText size={12} className="mx-[0.5px] shrink-0 text-faint" />
       )}
       <span className={clsx("min-w-0 flex-1 truncate", mark?.className, r.ignored && "opacity-60")}>{r.name}</span>
-      {mark && <span className={clsx("shrink-0 text-[10.5px] font-medium", mark.className)}>{mark.letter}</span>}
-      {dot && <span className="size-1.5 shrink-0 rounded-full bg-amber-300/70" title="Has changes" />}
+      {mark && (
+        <span aria-hidden className={clsx("shrink-0 text-[10.5px] font-medium", mark.className)}>
+          {mark.letter}
+        </span>
+      )}
+      {dot && <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-amber-300/70" />}
     </button>
   )
 })

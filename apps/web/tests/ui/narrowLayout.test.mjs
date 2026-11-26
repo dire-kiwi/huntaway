@@ -249,3 +249,30 @@ test("a tablet has menu buttons on its cards, and a task view wide enough to use
     assert.ok(panel.width >= 470, `panel ${panel.width} wide`)
   })
 })
+
+/** That `item`, in the open menu, scrolls into the 844-high phone screen and the menu's box. */
+const reachable = async (page, item) => {
+  await item.scrollIntoViewIfNeeded()
+  const menu = await page.getByRole("menu").boundingBox()
+  const r = await item.boundingBox()
+  assert.ok(menu.y >= 0 && menu.y + menu.height <= 844, `the menu fits the screen: ${JSON.stringify(menu)}`)
+  assert.ok(r.y >= menu.y && r.y + r.height <= menu.y + menu.height + 1, `${await item.textContent()} is reachable: ${JSON.stringify(r)}`)
+}
+
+// HE-109 review: a submenu opened in place makes the menu taller; it moves up and scrolls so all of it can be reached.
+test("on a phone a card's menu reaches every item with a submenu open in place", async () => {
+  await withBrowser(server, PHONE, async (ui) => {
+    const { page } = ui
+    await ui.run([`goto /p/${board.project.id}`, "click role=tab[name=/^To do/]"])
+    await untilOnScreen(page, OTHER_TODO)
+    await ui.run([`click [aria-label="Move ${OTHER_TODO} to…"]`, "wait role=menu", "click role=menuitem[name='Remind me']", "wait At…"])
+    const menu = page.getByRole("menu")
+    await reachable(page, menu.getByRole("menuitemradio", { name: "At…" }))
+    await reachable(page, menu.getByRole("menuitemradio", { name: "Delete…" }))
+    // Pen in place of Remind me, its last item and Delete… too.
+    await ui.run(["click role=menuitem[name='Pen']", "gone At…", "wait New pen…"])
+    await reachable(page, menu.getByRole("menuitemradio", { name: "New pen…" }))
+    await reachable(page, menu.getByRole("menuitemradio", { name: "Delete…" }))
+    await ui.run(["press Escape", "gone role=menu"])
+  })
+})

@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Option, Predicate, Queue, Schema, Stream, SubscriptionRef } from "effect"
+import { Cause, Duration, Effect, Exit, Option, Predicate, Queue, Schema, Stream, SubscriptionRef } from "effect"
 import { AsyncResult, Atom } from "effect/reactivity"
 import { type HostId, PROTOCOL, type Unavailable } from "@huntaway/contracts"
 import { HostClient } from "../session/HostClient.ts"
@@ -9,6 +9,10 @@ import { liveTaskChanged } from "./live.ts"
 
 /** The host speaks another protocol: the session stops until the page is reloaded (or the host updated). */
 class NeedsUpdate extends Schema.TaggedError<NeedsUpdate, { readonly brand: unique symbol }>()("NeedsUpdate", { protocol: Schema.Int }) {}
+
+/** How long a subscription that never got going waits before the next, doubling each time up to `MOST_BACKOFF`. */
+export const FIRST_BACKOFF = Duration.seconds(1)
+export const MOST_BACKOFF = Duration.seconds(30)
 
 /** Why a subscription ended, as the loop below acts on it. */
 const ending = (cause: Cause.Cause<unknown>): "interrupted" | "unauthorized" | { readonly protocol: number } | { readonly error: string } => {
@@ -66,13 +70,18 @@ export const watchBoard = (host: HostId, initial: HostBoard | undefined): Stream
         // Subscribe after the atom that runs this has been built, not while it is: an answer that comes at once
         // would change the atoms that read it while they are being built, and they would subscribe again.
         yield* Effect.yieldNow
+        let backoff = FIRST_BACKOFF
         while (true) {
-          let heard = false
-          const since = loaded && !fresh ? { since: { boot: board.boot, seq: board.seq } } : {}
+          // Whether the subscription got going: anything came after `hello` (the snapshot, a replayed or a live event),
+          // or `hello` answered a resume with nothing owed (same boot and seq: no snapshot or replay follows, so none
+          // can fail), as a quiet board's reconnect does.
+          let going = false
+          const resume = loaded && !fresh ? { boot: board.boot, seq: board.seq } : undefined
+          const since = resume === undefined ? {} : { since: resume }
           fresh = false
           const exit = yield* client("board.watch", since).pipe(
             Stream.runForEach((message) => {
-              if (message.type === "hello") heard = true
+              if (message.type !== "hello" || (resume !== undefined && message.boot === resume.boot && message.seq === resume.seq)) going = true
               return apply(message)
             }),
             Effect.exit,
@@ -84,10 +93,15 @@ export const watchBoard = (host: HostId, initial: HostBoard | undefined): Stream
             if ("protocol" in why) return yield* setState(session, { _tag: "needs_update", protocol: why.protocol })
             yield* setOffline(session, why.error)
           }
-          // Subscribe again once connected; not at once when this one never got going, so a host that keeps ending
-          // the stream is not asked in a loop.
+          // Subscribe again once connected; not at once when this one never got going, and each time longer, so a host
+          // that keeps ending the stream (or a snapshot this end can't read) is not asked for its board in a loop: each
+          // time, it reads and sends the whole of it (HE-104).
           yield* session.connected.await
-          if (!heard) yield* Effect.sleep("1 second")
+          if (going) backoff = FIRST_BACKOFF
+          else {
+            yield* Effect.sleep(backoff)
+            backoff = Duration.min(Duration.times(backoff, 2), MOST_BACKOFF)
+          }
         }
       }),
     { bufferSize: 1, strategy: "sliding" },

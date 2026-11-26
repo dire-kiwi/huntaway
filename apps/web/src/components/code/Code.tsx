@@ -49,7 +49,8 @@ export function CodeView({ task }: { task: Task }) {
   const root = useRef<HTMLDivElement>(null)
   const filterRef = useRef<HTMLInputElement>(null)
   const [narrow, setNarrow] = useState(false)
-  const [treeShown, setTreeShown] = useState(true)
+  // Narrow, it opens on the file when there's one to go to (one opened from the Changes tab, HE-96), else on the tree.
+  const [treeShown, setTreeShown] = useState(() => s.at === null)
   // `t` goes to the finder, once the tree is shown (it may only now be).
   const [findAsked, setFindAsked] = useState(0)
   useLayoutEffect(() => {

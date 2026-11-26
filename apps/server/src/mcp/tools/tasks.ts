@@ -17,6 +17,7 @@ import type { McpCaller } from "../tool.ts"
 import { asker, boardTool, given, Json, MAX_HOPS, nextHops, ProfileArg, TaskRefArg, told, tooManyHops } from "./common.ts"
 import { BAD_REMIND_AT, reminderTime } from "../../tasks/reminders.ts"
 import { field, makeTaskJson, overview, TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT } from "./taskJson.ts"
+import { lastingOf } from "../../runs/finish.ts"
 
 // The board's task tools (docs/plan/inventory/03-mcp.md 2.5; the old mcp/schemas/tasks.ts and mcp/tools/local.ts):
 // `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `delete_task` and `send_to_task`. Each
@@ -476,6 +477,8 @@ export const taskTools = Effect.gen(function* () {
         params.status === "in_progress" &&
         (found.status === "todo" || found.status === "backlog") &&
         t.kind === "task" &&
+        // HE-105: a conversation (a stack's thread, say) starts on a message, not on a move.
+        lastingOf(t) === null &&
         t.session_id === null &&
         t.status === "in_progress" &&
         !t.waiting &&

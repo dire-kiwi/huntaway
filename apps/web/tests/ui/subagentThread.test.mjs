@@ -1,6 +1,7 @@
 // A subagent's own thread view (IA-127, IA-131), from the old subagentThread check. The thread is put into the server's
-// database before the page opens it (threads.mjs: `seedThread`). A subagent opens from the Agents list
-// (layout/AgentsPill, "Subagents in this thread") or from its row ("Open subagent thread").
+// database before the page opens it (threads.mjs: `seedThread`). A subagent opens from the Subagents list in the column
+// beside the thread (HE-112), from the Agents list (layout/AgentsPill, "Subagents in this thread") where that column isn't
+// shown, or from its row ("Open subagent thread").
 //
 // Dropped from the old check:
 // - "Codex children show their metadata, nested transcript and permission source": Codex's translator comes with M5.
@@ -110,8 +111,11 @@ async function threadTask(title) {
   return task
 }
 
-/** Opens the subagent `name`'s own thread from the Agents list. */
+/** Opens the subagent `name`'s own thread from the Agents list (the header's pill). */
 const fromList = (name) => ["click Subagents in this thread", `click css=.shadow-xl button:has-text('${name}')`]
+
+/** Opens the subagent `name`'s own thread from the Subagents list in the column beside the thread. */
+const fromSide = (name) => [`click css=[data-subagents] button:has-text('${name}')`]
 
 /** Opens the subagent `name`'s own thread from its row. */
 const openRow = (name) => `click css=[data-tool-row]:has-text('${name}') [aria-label='Open subagent thread'] >> visible=true`
@@ -134,8 +138,17 @@ test("a subagent opens in its own thread view, and goes back to the main thread"
   const task = await threadTask("Subagents")
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    // From another tab: the list switches to the thread.
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Thread", "wait Main agent's summary.", "click Details", ...fromList("Explore config")])
+    // Beside the thread, the column has the list and the header has no pill (HE-112).
+    await ui.run([
+      `goto /p/${board.project.id}?task=${task.id}`,
+      "click Thread",
+      "wait Main agent's summary.",
+      "wait css=[data-subagents]",
+      "gone Subagents in this thread",
+    ])
+    // From another tab: the list switches to the thread. Beside the Details tab the column has the rest of the details,
+    // so the pill is back.
+    await ui.run(["click Details", "gone css=[data-subagents]", ...fromList("Explore config")])
     await ui.run(["wait Show in thread", "wait Find where the configuration is loaded.", "wait Subagent searching now.", "wait Subagent report."])
     // Its permission prompt is in its thread, without the link to itself; the main thread isn't shown.
     await ui.run(["wait Permission for Bash", "gone from Explore config", "gone Main agent's summary."])
@@ -157,7 +170,8 @@ test("a subagent opens in its own thread view, and goes back to the main thread"
 test("escape with a menu open in a subagent's thread only closes the menu", async () => {
   const task = await threadTask("Subagent menus")
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Thread", "wait Main agent's summary.", ...fromList("Explore config")])
+    // A window too small for the column beside the thread, so the list is the header's pill.
+    await ui.run(["size 800x900", `goto /p/${board.project.id}?task=${task.id}`, "click Thread", "wait Main agent's summary.", ...fromList("Explore config")])
     await ui.run(["wait Subagent searching now.", "gone Main agent's summary."])
 
     // The Agents list.
@@ -215,11 +229,11 @@ test("show in thread reaches a nested subagent and one in a group's hidden calls
     await ui.run(["size 1900x500", `goto /p/${board.project.id}?task=${task.id}`, "click Thread", "wait Main agent's summary."])
     await ui.run(["gone Subagent searching now.", "gone Hidden subagent's answer.", "wait Show 1 earlier tool call"])
 
-    await ui.run([...fromList("Check env"), "wait Nested subagent's answer.", "click Show in thread"])
+    await ui.run([...fromSide("Check env"), "wait Nested subagent's answer.", "click Show in thread"])
     await ui.run(["gone Show in thread", "wait Subagent searching now."])
     await inView(page, "Nested subagent's answer.")
 
-    await ui.run([...fromList("Look for tests"), "wait Show in thread", "click Show in thread"])
+    await ui.run([...fromSide("Look for tests"), "wait Show in thread", "click Show in thread"])
     await ui.run(["gone Show in thread", "gone Show 1 earlier tool call"])
     await inView(page, "Hidden subagent's answer.")
   })
@@ -284,8 +298,9 @@ test("the Agents list and the header stay within the task view, however crowded 
         await ui.run([
           `size ${size}`,
           `goto /p/${board.project.id}?task=${task.id}${side}`,
-          "click Thread",
-          "wait Main agent's summary.",
+          // The Details tab, where the header has the pill whatever the view's width (beside the thread, a view with room
+          // for the column has the list there instead, HE-112).
+          "click Details",
           "click Subagents in this thread",
         ])
         const title = page.locator(".shadow-xl button:has-text('Explore config') span.truncate").first()
@@ -325,8 +340,8 @@ test("the controls come back beside the title once the view is wide again", asyn
     await ui.run([
       "size 1900x1000",
       `goto /p/${board.project.id}?task=${task.id}`,
-      "click Thread",
-      "wait Main agent's summary.",
+      // The Details tab, where the header has the pill at any width (HE-112).
+      "click Details",
       "wait Subagents in this thread",
     ])
     assert.ok(await besideTitle(), "the controls aren't beside the title in the dialog")
@@ -361,7 +376,9 @@ test("a crowded review thread's header keeps its buttons within the side panel",
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     for (const size of ["1000x900", "720x900", "1900x900"]) {
-      await ui.run([`size ${size}`, `goto /p/${project.id}?task=${thread.id}&side`, "wait Main agent's summary.", "wait Subagents in this thread"])
+      await ui.run([`size ${size}`, `goto /p/${project.id}?task=${thread.id}&side`, "wait Main agent's summary."])
+      // The pill, or the list in the column beside the thread where the view has room for it (HE-112).
+      await page.locator("[title='Subagents in this thread'], [data-subagents]").first().waitFor()
       const header = await page.locator("header:has([title^='Close']) h1").evaluate((h1) => {
         let clip = { left: 0, right: window.innerWidth }
         // The nearest ancestor that clips: the side panel's view.
@@ -378,6 +395,9 @@ test("a crowded review thread's header keeps its buttons within the side panel",
     }
     // The list opens from the pill wherever it is.
     await ui.run(["size 720x900", "click Subagents in this thread", "click css=.shadow-xl button:has-text('Explore config')", "wait Show in thread"])
+    // And from the column beside the thread, in a page wide enough for it, where the header has no pill.
+    await ui.run(["size 1900x900", `goto /p/${project.id}?task=${thread.id}`, "wait Main agent's summary.", "gone Subagents in this thread"])
+    await ui.run(["click css=[data-subagents] button:has-text('Check env')", "wait Show in thread"])
   })
 })
 
@@ -416,8 +436,8 @@ test("the controls still leave the title row after the title is edited", async (
       await ui.run([
         `size ${size}`,
         `goto /p/${board.project.id}?task=${task.id}`,
-        "click Thread",
-        "wait Main agent's summary.",
+        // The Details tab, where the header has the pill at any width (HE-112).
+        "click Details",
         "wait Subagents in this thread",
       ])
       assert.ok((await header()).beside, `the controls aren't beside the title at ${size}`)

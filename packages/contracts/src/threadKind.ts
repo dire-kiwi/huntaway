@@ -23,6 +23,8 @@ export type ThreadKind =
   | { readonly _tag: "PensRoot" }
   /** A pen's own thread. `pen` is the thread's `pen_id`: null on a row the old board wrote, which linked them the other way. */
   | { readonly _tag: "Pen"; readonly pen: PenId | null }
+  /** HE-105: a stack's own thread, in its project, under the stack's bottom task (`of`), which looks after the stack. */
+  | { readonly _tag: "Stack"; readonly of: TaskId }
   /** Threads under a task (kind `review`): a reviewer, a summarizer, a workflow's agent step. */
   | { readonly _tag: "Review"; readonly of: TaskId }
   | { readonly _tag: "Summary"; readonly of: TaskId }
@@ -57,6 +59,8 @@ export const threadKindOf = (task: ThreadKindFields): ThreadKind => {
       return { _tag: "PensRoot" }
     case "pen":
       return { _tag: "Pen", pen: task.pen_id }
+    case "stack":
+      return { _tag: "Stack", of: parent }
     case "scratch":
       return { _tag: "Scratch", project_id: task.project_id }
     case "summary":
@@ -80,7 +84,7 @@ interface KindFacts {
 }
 
 const anyStatus: ReadonlySet<Status> = new Set(["backlog", "todo", "in_progress", "needs_attention", "in_review", "ready_for_merge", "done"])
-/** Lasting threads (the assistant, the pens thread, a pen's thread) are never reviewed, merged, done or parked. */
+/** Lasting threads (the assistant, the pens thread, a pen's thread, a stack's thread) are never reviewed, merged, done or parked. */
 const lastingStatuses: ReadonlySet<Status> = new Set(["todo", "in_progress", "needs_attention"])
 const noStatus: ReadonlySet<Status> = new Set()
 
@@ -93,6 +97,7 @@ const facts: { readonly [Tag in ThreadKind["_tag"]]: KindFacts } = {
   Routine: { onBoard: false, statuses: anyStatus, letter: "A" },
   PensRoot: { onBoard: false, statuses: lastingStatuses, letter: "S" },
   Pen: { onBoard: false, statuses: lastingStatuses, letter: "S" },
+  Stack: { onBoard: false, statuses: lastingStatuses, letter: "T" },
   Review: { onBoard: false, statuses: noStatus, letter: "T" },
   Summary: { onBoard: false, statuses: noStatus, letter: "T" },
   WorkflowStep: { onBoard: false, statuses: noStatus, letter: "T" },

@@ -338,6 +338,7 @@ export const checkStartFrom = (
     const t = tasks.get(sf.task_id)
     if (t === undefined) return badStart(`no task ${sf.task_id}`)
     if (t.kind !== "task" || t.project_id !== project.id) return badStart(`"${t.title}" isn't a task in the same project`)
+    if (t.task_type === "stack") return badStart(`"${t.title}" is a stack's thread, with no branch to start from`)
     if (t.id === taskId) return badStart("a task can't start from itself")
     if (!hasOwnBranch(t)) return badStart(`"${t.title}" has no branch of its own to start from`)
     // Nor from one whose worktree (by way of others) needs this one's first.
@@ -364,6 +365,7 @@ export const checkMergesInto = (
   const t = findTask(tasks, project, text)
   if (t === null) return badTarget(`no task ${text} in ${project.name}`)
   if (t.kind !== "task") return badTarget(`${text} isn't a task`)
+  if (t.task_type === "stack") return badTarget(`"${t.title}" is a stack's thread, with no branch to merge into`)
   if (task !== null && t.id === task.id) return badTarget("a task can't merge into itself")
   if (!hasOwnBranch(t)) return badTarget(`"${t.title}" has no branch of its own to merge into`)
   if (t.status === "done") return badTarget(`"${t.title}" is done already, so there's nothing to merge into`)
@@ -390,6 +392,8 @@ export const checkDependencies = (
     const dep = tasks.get(id)
     if (dep === undefined) return badDeps(`no task ${id}`)
     if (dep.kind !== "task" || dep.project_id !== projectId) return badDeps(`"${dep.title}" isn't a task in the same project`)
+    // HE-105: a stack's thread lasts, so nothing waiting on it would ever start.
+    if (dep.task_type === "stack") return badDeps(`"${dep.title}" is a stack's thread, which is never done`)
     if (dep.id === taskId) return badDeps("a task can't depend on itself")
     if (taskId !== null && reaches(tasks, dep, taskId, (x) => x.depends_on)) return badDeps(`"${dep.title}" already depends on this task`)
     out.push(dep.id)

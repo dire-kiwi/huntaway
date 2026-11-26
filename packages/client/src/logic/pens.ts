@@ -29,3 +29,6 @@ export const isPenThread = (t: Pick<Task, "kind" | "task_type">): boolean => t.k
 
 /** The pens thread or a pen's own: lasting threads in no project, off the board, that look after pens. */
 export const isPenThreads = (t: Pick<Task, "kind" | "task_type">): boolean => isPensThread(t) || isPenThread(t)
+
+/** HE-105: a stack's own thread: in the stack's project, under its bottom task (`parent_id`), off the board's columns. */
+export const isStackThread = (t: Pick<Task, "kind" | "task_type">): boolean => t.kind === "task" && t.task_type === "stack"

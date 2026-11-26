@@ -99,7 +99,9 @@ export type Outgoing = { text: string; source: "user" | "agent" | "routine" | "a
 
 ### Starting
 
-`Runs.send` takes the task's lock and decides with a pure function (`decideSend`: steer, queue, wait, or start).
+`Runs.send` takes the task's lock and decides with a pure function (`decideSend`: steer, queue, wait, or start). A
+message sent with `queue` (HE-113) is queued rather than steered while the agent is in a turn, and the turn's end
+(`RunInput.turnEnded`) steers what is queued into the same run, which starts its next turn.
 Starting has two parts, as now:
 
 1. **Register** (one transaction): insert the run as `preparing`, take what is queued (ahead of this message, or as
@@ -1402,10 +1404,14 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   is refused, or the shells are still there 10 s later. "Asks on its output" is now "takes input" (every Claude run of
   this board; Codex's is M5). A run's kill and reap keep what was going as `background-killed` first.
 - **Dev servers left running (HE-56, the old HA-409)**: `RunInput.turnEnded` with only background tasks that
-  `detachable` allows (Bash shells not waited on whose commands `looksLikeServer`: a server word such as `dev` or
-  `serve`, a name ending in `-server` or `_server` even as the program's path after `exec` or `nohup`
-  (`exec target/release/app-server`), or `start` after a package manager or `expo`, `next` or `react-native`; HE-95
-  added the last three, whose servers held KIW2-5 in In progress), of a task `lastingOf` says goes to
+  `detachable` allows (Bash shells not waited on that `mayOutliveTurn` lets go: a dev server never holds its task in
+  In progress, a test, build, check or wait does. The command's words decide (a server word such as `dev` or `serve`,
+  a name ending in `-server` or `_server` even as the program's path after `exec` or `nohup`, or `start` after a
+  package manager or `expo`, `next` or `react-native` (HE-95, KIW2-5's) make it a server; `test`, `build`, `cargo`,
+  `timeout`, an `until` loop or a script named so, `scripts/build.mjs`, one waited on); a command that says neither is
+  read by its Bash call's description the same way, and one whose description says neither may be left too (HE-106:
+  ODS-92's `node --input-type=module < $TMPDIR/email-dev.mjs`, "Restart the email template preview server", held its
+  task in In progress). Listening on a port is what makes it a server), of a task `lastingOf` says goes to
   review, on Linux, arms a `detach` fiber: after `DETACH_AFTER` (1.5 s), and once `DevServers.shellsListen` sees each
   of the agent's shell sessions listening on a port (again every `DETACH_RETRY`, up to `DETACH_FOR_MS`), it writes
   `background-detached` and `Shim.killAgentOnly` (SIGKILL to the agent's group). `outcomeOf(…, detached)` makes the
@@ -1480,6 +1486,81 @@ Claude Code can move a session to another model: when Opus 5.5's safeguards flag
   as people say it (`claude-opus-4-8` is `Opus 4.8`).
 - Codex has no such line; its tasks never have the mark.
 
+### Output styles (HE-102)<a id="output-styles"></a>
+
+Claude Code's `/output-style` picks how the agent writes its replies (`default`, `Explanatory`, `Learning`, a user's
+`<config>/output-styles/*.md`, a project's `.claude/output-styles/*.md`, a plugin's). In `-p` it is not a command, so the
+board has its own, for a Claude task:
+
+- **`/output-style <name>`** (`queue.ts` `outputStyleCommand`, handled in `Runs.send` like `/new`, under the task's
+  lock) sets the task's `output_style` (a text column, `2026-11-24-output-style.ts`; null is whatever Claude Code's
+  settings say) and writes an info notice. It is no message for the agent and starts no run, so it neither answers
+  the agent's questions nor skips its permission prompts (`reachesAgent`, in `UserMessages` and `Assistant.send`). The
+  name is the rest of its first line: what follows (the composer's line comments, attached files) is sent on to the
+  agent as the user's message, as `/new <message>`'s is, and that one does answer and skip. Every later launch gives
+  it as a setting (`--settings '{"outputStyle": …}'`, with the hooks when there are any), which outranks the settings
+  files; a running agent is also sent `apply_flag_settings { outputStyle }` on its input, which Claude Code takes for
+  its next turn (a run whose input has closed is ended, and the next is launched with it).
+- **The name** is matched to the styles the task's last run listed, exactly, else in any case (`styleNamed`); one not
+  among them gets a warning notice with the list, and nothing changes. Before a run has listed them, any name is
+  taken as it is (a plugin's style isn't in the board's own list).
+- **`/output-style`** alone says the task's style (or its last run's) and lists them.
+- **The list.** Claude Code's answer to the board's `initialize` has `output_style` and `available_output_styles`; the
+  line handler keeps them per task in memory (`AgentTools.recordOutputStyles`, lost on a restart). `tasks.skills`
+  gives a Claude task's `output_styles` (that list, else Claude Code 2.1's built-in ones and the files'; descriptions
+  from the built-ins and the files' frontmatter, `agentTools/outputStyles.ts`) and its last run's `output_style`. Codex
+  and ACP tasks have none: the command says so in a warning notice there.
+- **The composer** (`task/SkillMenu.tsx`) offers `/output-style` (with the style it has now), and once its name is
+  being typed lists the styles, the current one marked; picking one fills in `/output-style <name>`, and Enter sends it.
+- **A project's and a profile's (HE-111).** `projects.output_style` and `profiles.default_output_style` (text columns,
+  `2026-11-26-default-output-style.ts`; blank is null) are the style of their Claude tasks that have none of their
+  own: a launch gives the task's, else its project's, else its profile's (`agentTools/outputStyles.ts` `styleOf`), and
+  null leaves it to Claude Code's settings files. A review thread (a reviewer's, a summarizer's) takes only its own, so
+  a `Learning` or `Explanatory` default doesn't reach the reports the board reads. A changed default reaches a task's
+  next launch, not a running agent. `/output-style` alone names the one given and whose it is ("Output style: Concise
+  (the profile's)"). They are set in the profile form's Agents group and the project settings' Agents tab
+  (`hosts/profileFields.tsx` `OutputStyleInput`: a text field suggesting Claude Code's built-in styles, which are
+  `@huntaway/shared`'s `BUILT_IN_OUTPUT_STYLES`; any other name, a user's, a project's or a plugin's, is taken as typed).
+  The profile's syncs between hosts with its other settings (`settingsSync/fields.ts`). On the wire both are optional
+  (`Project.output_style`, `Profile.default_output_style`), as a host from before HE-111 sends neither. Codex and ACP
+  have no output styles: their launches never read either.
+
+### Code Mode (HE-107)<a id="code-mode"></a>
+
+Claude Code's Code Mode (its own experiment, `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`) has the agent work through a REPL
+tool, writing JavaScript scripts that call its tools, rather than one tool call at a time. The board's `code_mode`
+experiment (Settings → Experiments, [09-frontend.md](09-frontend.md#experiments-he-22)) asks for it in new Claude
+conversations.
+
+- **Asked for in `--settings`.** A `-p` run takes the variable only from `--settings` (Claude Code's `flagSettings`):
+  from the environment or the settings files it refuses it (`not_passed`). `hookSettings` adds
+  `env: { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: "1" }` beside the hooks and the output style when `claudeLaunch` asks.
+  Codex and ACP runs have no such thing.
+- **A conversation keeps the mode it started in.** Claude Code decides Code Mode when a session starts. It refuses to
+  resume a session that started in Code Mode in a run that isn't asked for it ("This session was started in Code Mode,
+  which is off in this run, so it can't be resumed"), and tells a session that didn't, on every run that asks, that it
+  goes on with the ordinary tools. So `claudeLaunch` asks for a new conversation (no `session_id`) as the experiment
+  says (`codeMode`, read from the host's `experiments` at each launch), and for one it resumes as its session started
+  (`sessionCodeMode`), whatever the experiment says now: switching it on or off applies to new conversations.
+- **Which sessions are in Code Mode.** A Code Mode session's `system`/`init` lists Claude Code's `REPL` tool (an
+  ordinary one doesn't), so the translator's `SessionStarted` says `codeMode`, and the line handler writes it to the
+  run's `runs.code_mode` (`2026-11-26-code-mode.ts`). `RunRepo.sessionCodeMode` reads the session's first run's, as
+  Codex's `sessionBoardTools` does. Runs imported from the old board have it off.
+- **Claude Code decides.** It refuses a new session Code Mode when it goes through a gateway or a cloud provider (a
+  config's proxy, `ANTHROPIC_BASE_URL` in the config folder's settings), on a model older than Opus 5.5 or Fable 5.2,
+  with tools that leave its REPL out, and for its other reasons; then it starts with the ordinary tools and writes
+  `system`/`notification` with `key: "code-mode-opt-in"` and why. The translator turns its `code-mode…` notifications
+  into thread notices (a warning when Claude Code colours it one) and drops its other notifications. Only a new
+  conversation asks when the session's own mode is ordinary, so the notice comes once per conversation, not every run.
+- **A Code Mode conversation that can't go on.** When a resumed Code Mode session can't have it any more (its model
+  or its config's gateway changed since), Claude Code refuses to resume it: the run ends with a `result`
+  (`error_during_execution`, no turns) whose `errors` starts "Failed to resume session: This session was started in
+  Code Mode". The line handler (`recordTurn`, `codeModeResumeRefused`) then clears the task's `session_id`, as for a
+  session that was never answered, and writes a warning notice: the next message starts a new conversation.
+- **Checks.** `launch.test.ts` (the setting with and without hooks, none when off; a resumed session asks as it
+  started), `translate.test.ts` (the notice; `init` with `REPL`), `RunRepo.test.ts` (`sessionCodeMode`),
+  `runs/claude/output.test.ts` (the run's `code_mode`; a refused resume clears the session and warns).
+
 ### As built in 4.8 (HE-5): stack titles
 
 - **`agents/StackTitles.ts`** (the old `agent/stack_title.ts`, HA-387) writes a stack's title and description with the
@@ -1510,3 +1591,64 @@ Claude Code can move a session to another model: when Opus 5.5's safeguards flag
   queued (not forced): those already written from what their levels say cost nothing.
 - **Tests**: `agents/StackTitles.test.ts`, every case of the old `agent/stack_title.test.ts` on the test board with
   `TitleScript`, but the wire and MCP parts it names at its top.
+
+### Stack threads (HE-105)<a id="stack-threads"></a>
+
+A stack's levels each have their own agent, and restacking (rebasing a level onto the level below after that changed,
+force-pushing, putting pull requests' bases right) touches several of them at once: left to the levels' agents, they
+each tried to coordinate it (work:ODS-89). So a stack has **one lasting thread of its own** that manages the stack as a
+whole, which the user messages, and which the levels' agents are told to hand stack work to.
+
+- **The row** (`tasks/StackThreads.ts`): `task_type` `stack` (`ThreadKind` `Stack`), in the stack's project (numbered
+  and keyed as the project's tasks, e.g. `HE-12`), `parent_id` the stack's bottom, `use_worktree` off, titled
+  `Stack: <the stack's title>`. `thread(id)` (`tasks.stackThread`, any level) finds the one under any of the stack's
+  levels (`stackThreadOf`, the bottom's first) or makes it in the transaction that looked; `Invalid` for a task in no
+  stack, or a stack in no project. Off the board: the web board already leaves out a project's rows with a `parent_id`.
+- **Made when it's first needed**: from the Stack card (its thread button, or its menu's "Open the stack's thread"), or
+  when a level's run is launched (`Prompts.system`), so a level's agent always has a key to send to.
+- **What it's told** (`prompts/stackThread.ts`, then `prompts/stackBrief.ts` last, as a pen's thread is told its pen):
+  that it is where the stack is managed; how to restack (bottom up, in each level's own worktree, never under a running
+  agent, `git rebase --onto <below> refs/huntaway/start/<id>`, the start ref moved after, checks, `--force-with-lease`,
+  GitHub's stack keeping its bases); to leave a level whose `restack` is `due` to the board; to hand the levels' own
+  work to their tasks; not to merge, move or delete them. The brief lists the levels bottom first with key, state,
+  title, id, the level each lands after, branch and base, start ref, worktree (once set up), pull request and GitHub
+  stack, and restack state. Its first prompt is the message (a conversation, like the pens threads).
+- **What a level is told** (`codeTask`'s `stackNote`, from `agents/prompts/stack.ts` `stackLevelOf`): "This task is
+  level N of M of a stack (…), whose own thread, KEY, manages the stack as a whole. Refer any stack management to it…",
+  with `send_to_task`; a restack the board itself asks of it (`RestackAsk`) it still does.
+- **Where it works**: in the project's repository (`cwdOf` falls through to it), with the open levels' set-up worktrees
+  as `--add-dir`s (Claude) or writable roots (Codex, `workDirs`); its permissions are the project's, as a task's.
+- **A lasting thread**: its runs end in To do (`lastingOf` `stack`), never reviewed, never in a workflow
+  (`workflows/engine/start.ts` skips it), nothing to merge (`decide.ts` `ownFolderKinds`); it can't be moved to In
+  review, Ready for merge, Done or Backlog.
+- **It stays with its stack** (`StackThreads.settle`, the reactor's step after the stack titles', for a task made,
+  deleted, changed in what it starts from or merges into, or closed or reopened; the plan is the pure `settleThreads`).
+  A change touches only the threads of the stack the task was in before it (read from the rows with the task as the
+  change says it was, so a change the reactor comes to late, after later ones, decides as it would have) and of the one
+  it's in now. A thread's home (`homeIn`) is its stack's bottom (which changes when a level is put below it), or a level
+  held on a deleted or closed level below (`heldLevel`: its merge waits for the user to say where it goes; its brief
+  says so, `heldBrief`). A thread whose part of the old stack has no home, or is all done while another part isn't,
+  goes to another part's home (a split, a deleted middle level); with none, it's deleted (`TaskDeletion`, which stops
+  its run). Of two threads in one stack (two stacks joined), the older stays, whichever side it came from, and the other
+  is deleted.
+- **A level deleted** (`TaskDeletion`): the thread of the task's stack and the levels landing on it are read before
+  `Worktrees.forDeletion` (which unstacks the levels on a merged task); after it, on the rows as they'll be without the
+  task, the thread goes where its part will have a home, else (or when its part is all done and theirs isn't) under the
+  home of a level that landed on the task (`beforeDelete`, `rehome`). With no home at all, a thread under the task has
+  its run stopped and goes with the row (`Tasks.delete` emits its `task_deleted`); `decideDeleted` moves one under the
+  task to the first level on it, for a `Tasks.delete` of its own.
+- **Not a task to wait for, start from or merge into**: `checkDependencies`, `checkStartFrom` and `checkMergesInto`
+  refuse it (`Invalid`), and the web's dependency and New task pickers leave out a project's rows with a `parent_id`.
+- **Not started on nothing**: a conversation (the assistant, the pens threads, a stack's thread) with no session isn't
+  started on an empty message (`queue.ts` `decideSend` answers `Nothing`; its composer doesn't offer to), nor by
+  `update_task` moving it to In progress.
+- **The web**: the Stack card has a thread button (amber while the thread asks something), shows the thread's running
+  dot and attention, and its menu has "Open the stack's thread"; the thread opens on its conversation, without Changes,
+  Code or Review tabs, with a "Stack thread" section in Details.
+- **Tests**: `tasks/StackThreads.test.ts` (made once, from any level; refused for a task in no stack and for In review;
+  what a level and the thread are told; kept when its bottom is deleted, a merged one through `TaskDeletion` too; moved
+  to a new bottom and with a split; held with a level on a deleted middle level, then restacked; following the levels on a
+  deleted middle level that weren't flagged; kept when a merged level above the bottom is deleted; the older of two
+  joined stacks' threads kept; gone once no stack is left; refused as a dependency, start or target),
+  `tasks/settleThreads.test.ts` (the plan, a change come to late among them),
+  `system.test.ts`'s two cases, `queue.test.ts`'s empty start, `threadKind.test.ts`'s row.

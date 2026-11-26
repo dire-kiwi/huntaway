@@ -221,6 +221,15 @@ export const stackRunLanes = (rows: Rows): Map<string, string> => {
   return held
 }
 
+/**
+ * HE-105: the task a stack thread under task `gone` goes under once `gone` is deleted: the first level landing after it
+ * (an open one first), which is a bottom then. Null when none does, and the thread goes with it.
+ */
+export const stackThreadHeir = (rows: Rows, gone: string): Task | null => {
+  const on = stackedOn(rows, gone).filter((t) => t.kind === "task" && t.merges_into === null && t.id !== gone)
+  return on.find((t) => t.status !== "done") ?? on[0] ?? null
+}
+
 /** Whether `below` is the task `x` lands after, in the same project and profile (a stack doesn't cross them). */
 const sameStack = (x: Task, below: Task | null): below is Task =>
   below !== null && below.kind === "task" && below.project_id === x.project_id && below.profile_id === x.profile_id

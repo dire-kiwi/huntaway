@@ -7,7 +7,7 @@ import { Aead, Cipher, Digest, Kdf, KeyAgreement, Signature } from "effect/crypt
 import { createSocket } from "node:dgram"
 import { networkInterfaces } from "node:os"
 import { FetchHttpClient, HttpRouter } from "effect/http"
-import { RpcSerialization, RpcServer } from "effect/rpc"
+import { RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
 import { createServer } from "node:http"
 import {
@@ -73,7 +73,7 @@ import { RoutineHost } from "./automations/RoutineHost.ts"
 import { Routines } from "./automations/Routines.ts"
 import { Scheduler } from "./automations/Scheduler.ts"
 import { Webhooks } from "./automations/Webhooks.ts"
-import { websocketOptions } from "./http/websocket.ts"
+import { RpcNdjsonServer, websocketOptions } from "./http/websocket.ts"
 import { WebhookRoute } from "./http/webhooks.ts"
 import { AutomationHandlers } from "./rpc/automations.ts"
 // 6.7: the assistant.
@@ -301,6 +301,7 @@ import { Leftovers } from "./tasks/Leftovers.ts"
 import { MergeFacts } from "./tasks/MergeFacts.ts"
 import { PenRepo } from "./tasks/PenRepo.ts"
 import { Pens } from "./tasks/Pens.ts"
+import { StackThreads } from "./tasks/StackThreads.ts"
 import { TaskRefs } from "./tasks/TaskRefs.ts"
 import { TaskTmp } from "./tasks/TaskTmp.ts"
 import { TaskRepo } from "./tasks/TaskRepo.ts"
@@ -388,7 +389,7 @@ const ProfilesLive = Layer.mergeAll(Profiles.ensureFromConfig, Profiles.folders)
   Layer.provideMerge(SettingsLive),
 )
 const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
-const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner, TaskTmp.sweeper).pipe(
+const TasksLive = Layer.mergeAll(Pens.layer, StackThreads.layer, Attachments.pruner, TaskTmp.sweeper).pipe(
   Layer.provideMerge(Layer.mergeAll(Tasks.layer, TaskRefs.layer, Attachments.layer, TaskTmp.layer)),
   Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer, MergeFacts.layer)),
   Layer.provideMerge(ProjectsLive),
@@ -858,7 +859,7 @@ export const HandlersLive = Layer.mergeAll(
 export const RpcLive = Layer.mergeAll(
   RpcServer.layerHttp({ group: Served, path: "/api/rpc", protocol: "websocket" }),
   RpcServer.layerHttp({ group: Served, path: "/api/rpc", protocol: "http" }),
-).pipe(Layer.provide(HandlersLive), Layer.provide(RpcSerialization.layerNdjson))
+).pipe(Layer.provide(HandlersLive), Layer.provide(RpcNdjsonServer))
 
 /** The routes the server answers, `/api` first, then the UI. */
 export const RoutesLive = Layer.mergeAll(

@@ -6,7 +6,7 @@
 // `hub.hosts.update` and `profiles.update`. A profile "Default" is made on each (the old servers had one from the start).
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, makeProfile, startServer, withBrowser } from "./harness.mjs"
+import { eventually, makeProfile, pick, pickedValue, startServer, withBrowser } from "./harness.mjs"
 
 let hub, home, mine, theirs
 beforeAll(async () => {
@@ -101,4 +101,28 @@ test("the routines left on the board's host are listed under the assistant host'
     (await home.rpc("automations.list", { profile_id: theirs.id })).automations.map((a) => a.name),
     ["New inbox"],
   )
+})
+
+// HE-103: the assistant's page has a dropdown of where it runs, which sets the board's host's profile's
+// `assistant_host` and opens the assistant on the host picked; and back.
+test("the assistant's page moves it to the host picked in its dropdown", async () => {
+  const homeId = (await hub.rpc("hub.hosts.list")).find((h) => h.name === "homeserver")?.id ?? (await link(hub, home, "homeserver"))
+  await home.rpc("profiles.update", { id: theirs.id, patch: { assistant_host: null } })
+  await hub.rpc("profiles.update", { id: mine.id, patch: { assistant_host: null } })
+  const assistantHost = async () => (await hub.rpc("profiles.list")).find((p) => p.id === mine.id)?.assistant_host ?? null
+  await withBrowser(hub, {}, async (ui) => {
+    const { page } = ui
+    await ui.run(openAssistant)
+    const where = page.getByRole("combobox", { name: "Where Default's assistant runs" })
+    assert.equal(await pickedValue(where), "")
+    await pick(where, homeId)
+    await eventually(async () => assert.equal(await assistantHost(), homeId))
+    // Opened on homeserver, where it's made the first time.
+    await eventually(async () => assert.equal((await assistants(home, theirs)).length, 1))
+    await eventually(async () => assert.equal(await pickedValue(where), homeId))
+    await ui.run(["wait Message your assistant"])
+    await pick(where, "")
+    await eventually(async () => assert.equal(await assistantHost(), null))
+    await eventually(async () => assert.equal(await pickedValue(where), ""))
+  })
 })

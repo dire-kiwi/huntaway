@@ -223,6 +223,44 @@ describe("Claude output in chunks", () => {
     ),
   )
 
+  it.effect("HE-107: a Code Mode session is recorded, and one Claude Code won't resume ends the conversation", () =>
+    run(
+      Effect.gen(function* () {
+        const handler = yield* RunOutput
+        const agent = yield* fakeAgent()
+        let end = 0
+        const feed = Effect.fnUntraced(function* (line: unknown) {
+          const text = yield* Schema.encodeEffect(Json)(line).pipe(Effect.orDie)
+          yield* agent.write([text])
+          end += new TextEncoder().encode(`${text}\n`).length
+          yield* handler.handle(yield* agent.row, text, end)
+        })
+        const tasks = yield* TaskRepo
+        yield* feed({ type: "system", subtype: "init", session_id: "s1", tools: ["REPL", "Poll"] })
+        assert.isTrue((yield* agent.row).code_mode)
+        // A turn that cost something, so the session isn't one that was never answered (which starts again anyway).
+        yield* feed(result)
+        assert.strictEqual((yield* tasks.get(agent.run.task_id))?.session_id, "s1")
+        // As Claude Code 2.1.332 ends a run that resumes it without Code Mode (the model or the gateway changed since).
+        const why = "Failed to resume session: This session was started in Code Mode (experimental), which isn't available because …, so it can't be resumed."
+        yield* feed({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          duration_api_ms: 0,
+          num_turns: 0,
+          session_id: "s1",
+          total_cost_usd: 0,
+          errors: [why],
+        })
+        assert.isNull((yield* tasks.get(agent.run.task_id))?.session_id)
+        const stored = yield* (yield* Threads).stored(agent.run.task_id).pipe(Effect.orDie)
+        const notices = stored.entries.flatMap((e) => (e.item.type === "notice" ? [[e.item.level, e.item.text]] : []))
+        assert.isTrue(notices.some(([level, text]) => level === "warning" && text?.includes("start a new conversation") === true))
+      }),
+    ),
+  )
+
   it.effect("HE-59: the same, read in one chunk", () =>
     run(
       Effect.gen(function* () {

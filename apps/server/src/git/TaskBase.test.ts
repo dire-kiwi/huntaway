@@ -227,6 +227,31 @@ describe("a task's diff", () => {
     ),
   )
 
+  // HE-96: a project on a folder of its repository had the whole repository's changes, and its new files' paths from the
+  // folder while the others' were from the top, so the Changes tab couldn't open them in the Code tab.
+  it.live("of a project on a folder of its repository, is that folder's, with paths from the top", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* tempDir
+        yield* git(repo, ["init", "-q", "-b", "master"])
+        yield* write(`${repo}/root.txt`, "root\n")
+        yield* write(`${repo}/web/src/a.txt`, "a\n")
+        yield* git(repo, ["add", "."])
+        yield* git(repo, ["commit", "-qm", "init"])
+        const project = yield* projectOn(`${repo}/web`)
+        const task = yield* make(project, "Do it", { use_worktree: false })
+        yield* write(`${repo}/root.txt`, "root, changed\n")
+        yield* write(`${repo}/web/src/a.txt`, "a, changed\n")
+        yield* write(`${repo}/web/src/new.txt`, "new\n")
+        yield* write(`${repo}/outside.txt`, "outside\n")
+        const d = yield* diff(task.id)
+        assert.deepStrictEqual(d.untracked, ["web/src/new.txt"])
+        assert.deepStrictEqual((yield* changedFiles(task.id)).toSorted(), ["web/src/a.txt", "web/src/new.txt"])
+        assert.notInclude(d.stat, "root.txt")
+      }),
+    ),
+  )
+
   // HA-51: a task whose worktree was removed showed the project folder's changes as its own.
   it.live("without its worktree, is its branch's", () =>
     run(
@@ -244,6 +269,31 @@ describe("a task's diff", () => {
         d = yield* diff(task.id)
         assert.isFalse(d.available)
         assert.include(d.reason, "is gone")
+      }),
+    ),
+  )
+
+  // HE-96 review: only a task working in the project's folder has its diff limited to that folder; a worktree's is its
+  // whole repository's, and so is its branch's once the worktree is gone.
+  it.live("of a project on a folder of its repository, is the whole worktree's, and its branch's once that's gone", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* tempDir
+        yield* git(repo, ["init", "-q", "-b", "master"])
+        yield* write(`${repo}/web/src/a.txt`, "a\n")
+        yield* git(repo, ["add", "."])
+        yield* git(repo, ["commit", "-qm", "init"])
+        const project = yield* projectOn(`${repo}/web`)
+        const task = yield* setUp((yield* make(project, "Do it", { use_worktree: true })).id)
+        const top = (yield* git(task.worktree_path ?? "", ["rev-parse", "--show-toplevel"])).trim()
+        yield* write(`${top}/web/src/a.txt`, "a, changed\n")
+        yield* write(`${top}/docs/b.md`, "b\n")
+        yield* git(top, ["add", "."])
+        yield* git(top, ["commit", "-qm", "both"])
+        const both = ["docs/b.md", "web/src/a.txt"]
+        assert.deepStrictEqual((yield* changedFiles(task.id)).toSorted(), both)
+        yield* (yield* Worktrees).teardown(task.id, { force: false, deleteBranch: false })
+        assert.deepStrictEqual((yield* changedFiles(task.id)).toSorted(), both)
       }),
     ),
   )

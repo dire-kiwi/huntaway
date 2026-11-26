@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react"
 import { useAtom } from "@effect/atom-react"
+import { Exit } from "effect"
 import { Atom } from "effect/reactivity"
 import { type HostTask as Task } from "@huntaway/client"
 import { TaskId, type Status } from "@huntaway/contracts"
 import { board } from "../../../state/board"
 import { exitError, useMutation } from "../../../state/mutation"
+import { openTask } from "../../../state/route"
 import { stacksAtom, stackViewsAtom } from "../../../state/prefs"
 
 import { StatusIcon, type MenuItem } from "../../ui"
@@ -56,6 +58,7 @@ export function useBoardStacks({
   const [dragStack, setDragStack] = useState<Stack | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
   const [, mergeStackCall] = useMutation("tasks.mergeStack")
+  const [, stackThreadCall] = useMutation("tasks.stackThread")
 
   const stacks = useMemo(() => groupStacks(tasks), [tasks])
   const gathered = useMemo(() => (kanban ? stacks.filter((st) => isGathered(views, st)) : []), [kanban, stacks, views])
@@ -89,6 +92,14 @@ export function useBoardStacks({
       if (failed !== null) setErr(`Couldn't merge the stack: ${failed}`)
     })
   }
+  /** Opens the stack's own thread (HE-105), made the first time: the user messages it to restack the stack and the like. */
+  const openThread = (st: Stack, setErr: (msg: string | null) => void) => {
+    setErr(null)
+    void stackThreadCall(st.bottom.host_id, { id: TaskId.make(st.bottom.id) }).then((exit) => {
+      if (Exit.isSuccess(exit)) return openTask(exit.value.id)
+      setErr(`Couldn't open the stack's thread: ${exitError(exit) ?? "it failed"}`)
+    })
+  }
   const onMenu: OnStackMenu = (e, st, button) => {
     e.preventDefault()
     const r = button && e.currentTarget instanceof HTMLElement ? e.currentTarget.getBoundingClientRect() : null
@@ -114,7 +125,8 @@ export function useBoardStacks({
             },
           ]
         : []),
-      { label: "Spread its cards", divider: !!check, onSelect: () => spread(st, false) },
+      { label: "Open the stack's thread", divider: !!check, onSelect: () => openThread(st, setErr) },
+      { label: "Spread its cards", onSelect: () => spread(st, false) },
       ...(hasMeta(st) ? [{ label: "Edit its title and description…", onSelect: () => setEditing(st.key) }] : []),
     ]
   }
@@ -133,6 +145,7 @@ export function useBoardStacks({
     columnCount,
     inGathered,
     mergeStack,
+    openThread,
     spread,
     dragStack,
     setDragStack,

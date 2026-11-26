@@ -44,6 +44,19 @@ and the 5-hour-window restarter.
 ### Messages while a run is live (`runner/queue.ts`)
 - Steer: append a stream-json user message to `input.jsonl` at once; keep it on `tasks.steering` until echoed; add the thread message at the echo (`steer_or_queue`, `write_steers`, `steered`).
 - Queue (one concatenated message per task) when it can't be steered; send it when the run ends (`db.queue`, `send_queued`).
+- HE-113 (new): the user can queue a message on purpose rather than steer it (`tasks.send`'s `queue`; the composer's
+  Queue button, Alt+Enter). It waits in the queue while the agent is in a turn (steered at once if the run is between
+  turns); when the turn ends, `RunInput.turnEnded` moves the queued messages ahead of the first `/compact` or `/plan`
+  into steers of the same run and writes them, so they start the next turn rather than waiting for a new run; that
+  command and what follows it stay queued for the run's end. Nothing moves for a stopped run, a turn that failed, a
+  compaction, or a run that takes no input. A queued message settles the agent's questions but leaves its permission
+  prompts be, and it doesn't end the agent's `wait` while it is held for the turn's end (`Wait.check` asks
+  `RunInput.queuedForTurnEnd`); what waits for the run's end still does.
+- HE-113 (new): a queued `/compact` or `/plan` goes alone. A run's start takes the queued messages ahead of the first
+  of them (`takenAtStart`); a run for what is queued (`Only`) with one first takes it alone; the rest stay queued and
+  go when that run ends. A blank row (a Start queued behind dependencies or a usage limit) is no message: it is never
+  steered, ends no wait, and a run for what is queued takes it with the command after it. Before, the queue was joined into one text, so a message and a `/compact` became one prompt,
+  or a compaction with the message as its instructions.
 - Requeue never-taken-in steers ahead of anything queued later (`requeue_steers`, `requeue_ahead`).
 - Unqueue (give the text back to the user) (`unqueue`).
 - Close the input when a turn ends with nothing waiting; grace timers when something should start a turn but doesn't.
@@ -62,7 +75,8 @@ and the 5-hour-window restarter.
 - Scan `/proc` every 4 s for listening TCP sockets of processes whose environ has `HUNTAWAY_TASK_ID=<task>`; show `Task.servers`; stop one by port.
 - A turn that ends with only dev servers left (HA-409, after this inventory was taken; HE-56 on this board): Bash
   shells, not waited on, whose commands look like servers' (`looks_like_server`: `pnpm dev`, `astro dev`, `vite`, not
-  a test, build, check or wait), each with a process in its session listening on a port (looked at 1.5 s after the
+  a test, build, check or wait; on this board, HE-106, any command or Bash description that doesn't say it's a test,
+  build, check or wait), each with a process in its session listening on a port (looked at 1.5 s after the
   turn's end, then every 5 s for up to 2 minutes), of a task that goes to review (not the assistant's, pens' or a
   routine's thread), on Linux: the agent's process group gets SIGKILL (Claude Code stops its shells on a TERM; they're
   in sessions of their own), `background-detached` keeps them, and the run ends Ok (not Failed) as a turn's end does.
@@ -118,6 +132,7 @@ and the 5-hour-window restarter.
 | `session_id`, `session_cost` | the agent session the run is in and the session's running total at its last result |
 | `config_dir` TEXT | config folder the run was started with (`''` = agent default); the first run of a session pins the session's folder |
 | `board_tools` INT | Codex: this run gave the new session the board's tools as dynamic tools |
+| `code_mode` INT | Claude: its session works in Code Mode (its `init` listed `REPL`; HE-107, not the old board's) |
 | `effort` TEXT | effort as given to the agent (`''` = agent default) |
 | `turn_message_id` INT | user message the current turn started with (checkpoints) |
 | `agent_at` TEXT | Claude: uuid of the latest top-level message; Codex: current turn id (rewind target) |
@@ -126,7 +141,7 @@ and the 5-hour-window restarter.
 | `created_at`, `ended_at` | RFC 3339 ms |
 
 Queries of note: `active_runs` (status != exited, by created_at), `has_active_run`, `later_run` (rowid order), `latest_run`,
-`run_after`, `idle_sessions`, `session_board_tools`, `session_config_dir`, `add_cost`.
+`run_after`, `idle_sessions`, `session_board_tools`, `session_config_dir`, `add_cost` (and HE-107's `sessionCodeMode`).
 
 `add_cost(run, session, total, counted)`: Claude's `total_cost_usd` is the **session's** running total. The run is charged
 `total - before`, where `before` is the latest `session_cost` of this run or an earlier run of the task in the same
@@ -275,7 +290,9 @@ Shim binary lookup (`shim_path`): `$IA_SHIM_BIN`; else the newer of `target/{rel
 --append-system-prompt-file <run dir>/system-prompt.md        # file, not arg: can exceed 128 KiB
 --permission-mode <default|acceptEdits|auto|plan|dontAsk|bypassPermissions>
 [--permission-prompt-tool stdio]                              # input && (mode != bypassPermissions || rules need a prompt)
-[--settings '{"hooks":{"PreToolUse":[…]}}']                   # gh hook and/or approval-rules hook
+[--settings '{"hooks":{"PreToolUse":[…]},"outputStyle":…,"env":{"CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"1"}}']
+                                                              # hooks, output style, Code Mode (HE-107: a new conversation's
+                                                              # as the experiment says, a resumed one's as it started)
 --allowedTools <tool> <tool> …                                # separate args, see below
 [--disallowedTools "<space-joined list>"]
 [--resume <session id> [--resume-session-at <message uuid>]]  # rewind
@@ -319,7 +336,8 @@ response:{mcp_response:<JSON-RPC>}}` or `{subtype:"error", request_id, error}`.
 
 ### Claude lines the server reads from `out.jsonl`
 `system`/`init` (session id; a turn starts), `system`/`compact_boundary`, `system`/`background_tasks_changed`,
-`system`/`task_started|task_progress|task_updated|task_notification`, `rate_limit_event`, `stream_event` (top level only:
+`system`/`task_started|task_progress|task_updated|task_notification`, `system`/`model_refusal_fallback|model_fallback`
+(HE-59), `system`/`notification` (only `code-mode…` keys are shown, HE-107), `rate_limit_event`, `stream_event` (top level only:
 `message_start`, `content_block_start`, `content_block_delta` text deltas), `assistant`, `user` (tool results; `isReplay`
 echoes), `control_request` (`can_use_tool`, `mcp_message`; others answered with an error), `control_cancel_request`,
 `control_response` (to `huntaway-init-`, `bgstop-`, `context-` ids), `result`. Any line with a `method` field is Codex's.
@@ -410,7 +428,9 @@ MCP tools whose effect lands here: `request_user_input` (sets `runs.attention`),
 CLI subcommands: `huntaway codex-run <codex.json>` (adapter), `huntaway gh-hook`, `huntaway approval-hook '<rules>'`
 (Claude PreToolUse hooks; they load only their own modules because agents start them often).
 
-Slash commands handled by the board: `/new`, `/compact`, `/plan`.
+Slash commands handled by the board: `/new`, `/compact`, `/plan`; and in the new server `/output-style` (HE-102,
+[07-agents.md](../07-agents.md#output-styles)). The web composer's own `/rewind` (HE-101) is never sent (it opens the
+rewind list, docs/plan/09-frontend.md).
 
 ## 8. Events
 
@@ -477,7 +497,8 @@ Consumed: agent output lines (above); task status changes (via `state.update_tas
 - A session the model never answered (`is_error`, `duration_api_ms == 0`, zero cost, first run of that session, not
   stopped, task kind `task`) is dropped (`session_id=null`) so the next run starts again from the description.
 - Queue vs steer: steer iff a run handle exists, text isn't `/compact`, a `/plan` targets a run that can write documents,
-  run kind isn't `compact`, and the run is `preparing` or `accepts_input`. Otherwise `db.queue`.
+  run kind isn't `compact`, and the run is `preparing` or `accepts_input`, and (HE-113) the message isn't one to queue
+  for after the turn, unless the run is between turns. Otherwise `db.queue`.
 - `finish` requeues un-taken steers *ahead of* anything queued since; a queued message is sent before the task's column is
   written (so the card stays put) unless the config is out of usage.
 

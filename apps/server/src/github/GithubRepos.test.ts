@@ -330,48 +330,52 @@ describe("GithubRepos", () => {
     ),
   )
 
-  it.live("lists the repositories an account can clone, and finds others by name", () =>
-    onBoard(
-      {
-        orgs: { me: ["acme"] },
-        repos: {
-          "me/old": { pushed_at: "2024-01-01T00:00:00Z" },
-          "me/website": { pushed_at: "2026-10-01T00:00:00Z", description: "The site", private: true },
-          "friend/shared": { pushed_at: "2025-06-01T00:00:00Z", collaborators: ["me"] },
-          "acme/tool": { pushed_at: "2026-11-01T00:00:00Z", contributors: ["me"] },
-          "acme/website-old": { pushed_at: "2020-01-01T00:00:00Z" },
-          "stranger/website": { pushed_at: "2026-11-02T00:00:00Z" },
+  // Each list runs the fake gh, a process of its own, several times: past the default 5 s on a busy CI runner.
+  it.live(
+    "lists the repositories an account can clone, and finds others by name",
+    () =>
+      onBoard(
+        {
+          orgs: { me: ["acme"] },
+          repos: {
+            "me/old": { pushed_at: "2024-01-01T00:00:00Z" },
+            "me/website": { pushed_at: "2026-10-01T00:00:00Z", description: "The site", private: true },
+            "friend/shared": { pushed_at: "2025-06-01T00:00:00Z", collaborators: ["me"] },
+            "acme/tool": { pushed_at: "2026-11-01T00:00:00Z", contributors: ["me"] },
+            "acme/website-old": { pushed_at: "2020-01-01T00:00:00Z" },
+            "stranger/website": { pushed_at: "2026-11-02T00:00:00Z" },
+          },
         },
-      },
-      () =>
-        Effect.gen(function* () {
-          const repos = yield* GithubRepos
-          const all = yield* repos.list(null, null)
-          assert.strictEqual(all.error, null)
-          assert.strictEqual(all.account, "me")
-          assert.deepStrictEqual(
-            all.repos.map((r) => r.full_name),
-            ["acme/tool", "me/website", "friend/shared", "me/old"],
-          )
-          assert.deepStrictEqual([all.repos[1]?.description, all.repos[1]?.private], ["The site", true])
-          // A search is among the account's and its organizations', by name.
-          const found = yield* repos.list(null, " website ")
-          assert.deepStrictEqual(found.repos.map((r) => r.full_name).toSorted(), ["acme/website-old", "me/website"])
-          assert.deepStrictEqual(
-            (yield* repos.list(null, "stranger/web")).repos.map((r) => r.full_name),
-            ["stranger/website"],
-          )
-          assert.deepStrictEqual((yield* repos.list(null, "::")).repos, [])
-          // As another account: one gh isn't signed in to says so.
-          const other = yield* repos.list("someone", null)
-          assert.deepStrictEqual([other.account, other.repos], ["someone", []])
-          assert.include(other.error ?? "", "someone")
-          // The accounts gh is signed in to.
-          assert.deepStrictEqual(yield* repos.accounts, {
-            accounts: [{ account: "me", host: "github.com", login: "me", active: true, ok: true }],
-            error: null,
-          })
-        }),
-    ),
+        () =>
+          Effect.gen(function* () {
+            const repos = yield* GithubRepos
+            const all = yield* repos.list(null, null)
+            assert.strictEqual(all.error, null)
+            assert.strictEqual(all.account, "me")
+            assert.deepStrictEqual(
+              all.repos.map((r) => r.full_name),
+              ["acme/tool", "me/website", "friend/shared", "me/old"],
+            )
+            assert.deepStrictEqual([all.repos[1]?.description, all.repos[1]?.private], ["The site", true])
+            // A search is among the account's and its organizations', by name.
+            const found = yield* repos.list(null, " website ")
+            assert.deepStrictEqual(found.repos.map((r) => r.full_name).toSorted(), ["acme/website-old", "me/website"])
+            assert.deepStrictEqual(
+              (yield* repos.list(null, "stranger/web")).repos.map((r) => r.full_name),
+              ["stranger/website"],
+            )
+            assert.deepStrictEqual((yield* repos.list(null, "::")).repos, [])
+            // As another account: one gh isn't signed in to says so.
+            const other = yield* repos.list("someone", null)
+            assert.deepStrictEqual([other.account, other.repos], ["someone", []])
+            assert.include(other.error ?? "", "someone")
+            // The accounts gh is signed in to.
+            assert.deepStrictEqual(yield* repos.accounts, {
+              accounts: [{ account: "me", host: "github.com", login: "me", active: true, ok: true }],
+              error: null,
+            })
+          }),
+      ),
+    20_000,
   )
 })

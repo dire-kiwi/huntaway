@@ -14,6 +14,7 @@ import { FailedChecks } from "./FailedChecks"
 import { PluginSections } from "./PluginSections"
 import { Section } from "./Section"
 import { StatusNotes } from "./StatusSection"
+import { SubagentsSection } from "./SubagentsSection"
 import { CreatedTasksSection, FanoutSection } from "./TaskLists"
 import { taskFacts } from "./taskFacts"
 import { TodosSection } from "./TodosSection"
@@ -23,12 +24,12 @@ import { useWorkflowRuns, WorkflowsList } from "../../Workflows"
 
 /**
  * The column beside a task's thread (HE-31): what there is to know about the task while following it, each part only
- * when it has something to say. Its status and what it waits for, its agent's todo list, its pull request with its
+ * when it has something to say. Its status and what it waits for, its agent's todo list, its subagents, its pull request with its
  * checks, its preview, its workflows, the plugins' panels, the tasks it made, depends on or merges with, and its branch. Everything that's
  * set by hand (its title and description, its status, its labels, its links and its worktree) is in the Details tab
  * (Details.tsx), which also has all of this for a view too narrow for the column.
  */
-export function KeyItems({ task, className }: { task: Task; className: string }) {
+export function KeyItems({ task, className, onReveal }: { task: Task; className: string; onReveal?: (() => void) | undefined }) {
   const project = useProject(task.project_id)
   const host = useBoard((s) => s.hosts.find((h) => h.id === task.host_id))
   const { groupTask, assistant, lasting, code, showMergesInto } = taskFacts(task)
@@ -61,6 +62,9 @@ export function KeyItems({ task, className }: { task: Task; className: string })
       {assistant && <TrackedWork task={task} />}
 
       <TodosSection task={task} />
+
+      {/* HE-112: the Agents pill's list, which the header leaves to this column where it's shown. */}
+      <SubagentsSection task={task} onReveal={onReveal} />
 
       {task.kind === "task" && code && task.pr_url && (
         <Section title="Pull request">

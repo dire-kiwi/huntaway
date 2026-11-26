@@ -137,6 +137,7 @@ export const Task = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   effort: Schema.NullOr(Effort),
   permission_mode: Schema.NullOr(PermissionMode),
+  output_style: Schema.optional(Schema.NullOr(Schema.String)), // HE-102: `/output-style`, null for the project's, the profile's (HE-111) or Claude Code's settings'
   claude_config_id: Schema.NullOr(AgentConfigId),
   auto_allow: Schema.Array(Schema.String),
   review: Schema.NullOr(Review),
@@ -182,12 +183,17 @@ export type ThreadKind =
   | { _tag: "Routine"; assistant: TaskId }
   | { _tag: "PensRoot" }
   | { _tag: "Pen"; pen: PenId }
+  | { _tag: "Stack"; of: TaskId } // HE-105: a stack's own thread, in its project under the stack's bottom task
   | { _tag: "Review"; of: TaskId }
   | { _tag: "Summary"; of: TaskId }
   | { _tag: "WorkflowStep"; of: TaskId }
 
 export const threadKindOf: (task: Task) => ThreadKind
 ```
+
+A stack's own thread (HE-105) is a task row with `task_type` `stack`, in the stack's project (numbered and keyed as its
+tasks are), whose `parent_id` is the stack's bottom task; it lasts like a pen's thread (To do, In progress or Needs
+attention only) and is off the board's columns. See [07-agents.md](07-agents.md#stack-threads).
 
 `threadKindOf` is a pure function in `packages/contracts`, so the clients use it too. "Is on a board", "takes a
 status", "is reviewed", "has a merge", "which key letter" and "which system prompt" are all tables over `_tag`.

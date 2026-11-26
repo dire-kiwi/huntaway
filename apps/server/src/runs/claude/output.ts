@@ -2,6 +2,7 @@ import { Cause, Effect, Exit, Layer, MutableHashMap, Option, Result, Schema } fr
 import type { NewEvent, RunId, TaskId } from "@huntaway/contracts"
 import { SavedEvent } from "@huntaway/contracts"
 import { AgentTools } from "../../agents/AgentTools.ts"
+import { reportedStyles } from "../../agents/agentTools/outputStyles.ts"
 import { INIT_PREFIX } from "../../agents/claude/launch.ts"
 import { ContextMeter } from "../../agents/ContextMeter.ts"
 import { Checkpoints } from "../../git/Checkpoints.ts"
@@ -122,6 +123,16 @@ const echoes = (line: ClaudeLine, raw: string, id: string): boolean => {
 const neverAnswered = (line: ResultLine): boolean =>
   line.is_error === true && typeof line.session_id === "string" && line.duration_api_ms === 0 && (line.total_cost_usd ?? 0) === 0
 
+/**
+ * How Claude Code's error for a session started in Code Mode that this run can't have starts (HE-107): the switch was
+ * on then, and the model, the config's gateway or Claude Code's own rules now keep Code Mode from it.
+ */
+const CODE_MODE_RESUME_REFUSED = "Failed to resume session: This session was started in Code Mode"
+
+/** The result says Claude Code refused to resume the session: it started in Code Mode, which this run can't have. */
+export const codeModeResumeRefused = (line: ResultLine): boolean =>
+  Array.isArray(line.errors) && line.errors.some((e) => typeof e === "string" && e.startsWith(CODE_MODE_RESUME_REFUSED))
+
 export const ClaudeOutput = Layer.effect(
   RunOutput,
   Effect.gen(function* () {
@@ -198,7 +209,19 @@ export const ClaudeOutput = Layer.effect(
         dud = Option.getOrUndefined(first) === run.id && Option.isSome(row) && row.value.cost_usd - cost === 0
       }
       if (dud) yield* Effect.logInfo(`task=${run.task_id} run=${run.id} session ${line.session_id} was never answered, so the next run starts a new one`)
-      const session = dud ? null : typeof line.session_id === "string" ? line.session_id : task.session_id
+      // HE-107: a Code Mode conversation Claude Code won't resume can't go on: the next message starts a new one.
+      const refused = codeModeResumeRefused(line)
+      if (refused) {
+        yield* Effect.logWarning(`task=${run.task_id} run=${run.id} Claude Code refused to resume Code Mode session ${task.session_id ?? "?"}`)
+        yield* threads
+          .notice(
+            run.task_id,
+            "warning",
+            "This conversation was started in Claude Code's Code Mode, which this run can't have, so it can't go on. Send your message again to start a new conversation.",
+          )
+          .pipe(Effect.catchTag("TaskNotFound", () => Effect.void))
+      }
+      const session = dud || refused ? null : typeof line.session_id === "string" ? line.session_id : task.session_id
       yield* writeTask(run.task_id, { cost_usd: task.cost_usd + cost, session_id: session })
       // 4.3: a checkpoint of what the turn left, taken in the background once this commits, with the message the turn
       // started with, which goes (a turn the agent starts by itself didn't start with one).
@@ -228,7 +251,7 @@ export const ClaudeOutput = Layer.effect(
           case "SessionStarted": {
             const task = yield* tasks.get(run.task_id)
             if (task !== null && task.session_id !== effect.sessionId) yield* writeTask(run.task_id, { session_id: effect.sessionId })
-            yield* repo.update(run.id, { session_id: effect.sessionId })
+            yield* repo.update(run.id, { session_id: effect.sessionId, code_mode: effect.codeMode })
             break
           }
           case "TurnStarted":
@@ -289,10 +312,18 @@ export const ClaudeOutput = Layer.effect(
       return { ended, started, agentAt, fallbackCleared }
     })
 
-    /** Claude Code refused the `initialize` that gives it the board's tools: the agent goes on without them. */
-    const initRefused = Effect.fnUntraced(function* (run: Run, line: Extract<ClaudeLine, { readonly type: "control_response" }>) {
+    /**
+     * Claude Code's answer to the `initialize` that gives it the board's tools: taken, it lists the output styles the
+     * task's `/output-style` menu offers (HE-102); refused, the agent goes on without the tools.
+     */
+    const initAnswered = Effect.fnUntraced(function* (run: Run, line: Extract<ClaudeLine, { readonly type: "control_response" }>) {
       const id = line.response.request_id
-      if (id === undefined || !id.startsWith(INIT_PREFIX) || line.response.subtype === "success") return
+      if (id === undefined || !id.startsWith(INIT_PREFIX)) return
+      if (line.response.subtype === "success") {
+        const styles = reportedStyles(line.response.response)
+        if (styles !== null) yield* agentTools.recordOutputStyles(run.task_id, styles)
+        return
+      }
       const error = line.response.error
       const why = typeof error === "string" && error !== "" ? error : "no reason given"
       yield* Effect.logWarning(`task=${run.task_id} run=${run.id} Claude Code refused the board's tools: ${why}`)
@@ -367,7 +398,7 @@ export const ClaudeOutput = Layer.effect(
       const { ended: turnEnded, started: turnStarted, agentAt, fallbackCleared } = yield* apply(run, line, made.effects, cost, now)
       // The wait its agent is in (3.5): its own thread's other calls and its turn's end end it, a subagent's end is recorded.
       yield* waits.line(run, line)
-      if (line.type === "control_response") yield* initRefused(run, line)
+      if (line.type === "control_response") yield* initAnswered(run, line)
       // 6.4: what the run's agent had (skills, MCP servers), for its project's settings.
       if (line.type === "system" && line.subtype === "init") yield* agentTools.recordSeen(run.task_id, line)
       yield* repo.saveOffset(run.id, end, agentAt === undefined ? undefined : { agent_at: agentAt })

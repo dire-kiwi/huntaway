@@ -3,13 +3,26 @@
 // button spreads it into its levels' own cards, which each carry a tab ("2 of 3") that gathers it again. The card never
 // shows task keys: it names a level by its title (a part of the bar names its task in its tooltip).
 import { clsx } from "clsx"
-import { CheckCheck, CircleAlert, CircleX, Ellipsis, FoldVertical, GitMerge, Layers, ListFilter, ShieldQuestionMark, UnfoldVertical } from "lucide-react"
+import {
+  CheckCheck,
+  CircleAlert,
+  CircleX,
+  Ellipsis,
+  FoldVertical,
+  GitMerge,
+  Layers,
+  ListFilter,
+  MessagesSquare,
+  ShieldQuestionMark,
+  UnfoldVertical,
+} from "lucide-react"
 import { useState, type FormEvent, type MouseEvent, type ReactNode } from "react"
 import {
   agentWaiting,
   backgroundIdle,
   failedChecks,
   isMerged,
+  isStackThread,
   keyPrefix,
   mergeAwaitsApproval,
   mergeQueued,
@@ -258,6 +271,7 @@ export function StackCard({
   meta,
   anchor,
   onSpread,
+  onThread,
   onMenu,
   onDragStart,
   onDragEnd,
@@ -273,6 +287,8 @@ export function StackCard({
   /** The level whose place in the column it takes, which a task dropped above it goes before. */
   anchor: string
   onSpread: () => void
+  /** Opens the stack's own thread (HE-105). */
+  onThread: () => void
   onMenu: OnStackMenu
   onDragStart: (s: Stack) => void
   onDragEnd: () => void
@@ -282,8 +298,11 @@ export function StackCard({
   const narrow = useNarrow()
   const touch = useTouch()
   const open = !!panel && stack.tasks.some((t) => t.id === panel.taskId)
-  const attention = stack.tasks.some((t) => t.status === "needs_attention")
-  const running = stack.tasks.some((t) => t.running)
+  // HE-105: the stack's own thread, once it has one, off the board: its card shows it running or asking.
+  const thread = Object.values(all).find((t) => isStackThread(t) && t.host_id === stack.bottom.host_id && stack.tasks.some((l) => l.id === t.parent_id))
+  const threadAsks = thread?.status === "needs_attention"
+  const attention = threadAsks || stack.tasks.some((t) => t.status === "needs_attention")
+  const running = !!thread?.running || stack.tasks.some((t) => t.running)
   // Levels that came into In review and haven't been opened since (HE-65).
   const fresh = stack.tasks.filter(unreadInReview)
   const notes = stackNotes(stack, all, check, hidden, narrow || touch)
@@ -337,6 +356,26 @@ export function StackCard({
               />
             )}
             {running && <RunningDot />}
+            <button
+              type="button"
+              className={clsx(
+                "-my-1 flex h-6 w-6 items-center justify-center rounded-md border bg-raised hover:text-fg",
+                threadAsks ? "border-st-attention/60 text-st-attention" : "border-line-strong text-muted",
+              )}
+              title={
+                threadAsks
+                  ? "The stack's thread is asking you something"
+                  : "The stack's thread: message it to restack the stack, or anything else about the stack as a whole"
+              }
+              aria-label="Open the stack's thread"
+              onClick={(e) => {
+                e.stopPropagation()
+                onThread()
+              }}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <MessagesSquare size={13} />
+            </button>
             <button
               type="button"
               className="-my-1 flex h-6 w-6 items-center justify-center rounded-md border border-line-strong bg-raised text-muted hover:text-fg"

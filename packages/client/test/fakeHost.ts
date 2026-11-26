@@ -23,6 +23,8 @@ export interface FakeHost {
   readonly builds: () => number
   /** The snapshot a fresh subscription gets (its `seq` is set to the log's head). */
   snapshot: BoardSnapshot
+  /** A snapshot the client can't read: a fresh subscription fails right after `hello`, as a decoding error does. */
+  unreadable: boolean
   boot: string
   on(method: string, handler: Handler): FakeHost
   /** Numbers an event after the log's head, keeps it, and sends it to the subscription open now. */
@@ -79,6 +81,7 @@ export const fakeHost = (id: string): Effect.Effect<FakeHost> =>
               queue,
               log.filter((e) => e.seq > since.seq),
             )
+          else if (fake.unreadable) yield* Queue.fail(queue, dropped)
           else yield* Queue.offer(queue, yield* numbered(fake.snapshot, head()))
           return Stream.fromQueue(queue)
         }),
@@ -101,6 +104,7 @@ export const fakeHost = (id: string): Effect.Effect<FakeHost> =>
       calls: [],
       builds: () => builds,
       snapshot: snapshot(),
+      unreadable: false,
       boot: "boot-1",
       layer: Layer.mergeAll(
         Layer.effect(

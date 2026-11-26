@@ -4,6 +4,7 @@ import { codeTask } from "../../prompts/codeTask.ts"
 import { codexPlanMode } from "../../prompts/codexPlanMode.ts"
 import { desktopNote } from "../../prompts/desktopNote.ts"
 import { spacesNote } from "../../prompts/spacesNote.ts"
+import { stackThread } from "../../prompts/stackThread.ts"
 import { browserNote } from "../../prompts/browserNote.ts"
 import { a2uiNote } from "../../prompts/a2uiNote.ts"
 import { docsNote } from "../../prompts/docsNote.ts"
@@ -58,6 +59,7 @@ const ownPrompt: { readonly [Tag in ThreadKind["_tag"]]: (kind: ThreadKind, c: P
       github: c.github,
       ghTools: c.ghTools,
       boardPr: c.boardPr,
+      stack: c.stackLevel,
     }),
   Document: (kind, c) =>
     documentsOnly({
@@ -75,6 +77,7 @@ const ownPrompt: { readonly [Tag in ThreadKind["_tag"]]: (kind: ThreadKind, c: P
   Routine: (_, c) => routine({ number: c.task.number, id: c.task.id, parentId: c.task.parent_id ?? "", workDir: c.task.work_dir }),
   PensRoot: (_, c) => pens({ number: c.task.number, id: c.task.id, codex: c.codex, acp: c.acp }),
   Pen: (_, c) => pen({ number: c.task.number, id: c.task.id, codex: c.codex, acp: c.acp }),
+  Stack: (kind, c) => stackThread({ key: keyOf(kind, c, c.task.number), title: c.task.title, id: c.task.id, project: c.project }),
   Review: underTask("review"),
   Summary: underTask("summary"),
   WorkflowStep: underTask("workflow"),
@@ -97,7 +100,8 @@ const grants = (profile: PromptContext["profiles"][number], name: string) => pro
 
 /**
  * What a run is told after `base`: Codex's plan mode, GitHub, the docs, desktop and spaces servers, its temp folder, which
- * profiles' boards it reaches, a pen thread's pen and the assistant's memory (last), each when it applies.
+ * profiles' boards it reaches, a pen thread's pen, a stack thread's stack and the assistant's memory (last), each when it
+ * applies.
  */
 export const instructions = (base: string, kind: ThreadKind, c: PromptContext): string => {
   let s = base
@@ -117,6 +121,7 @@ export const instructions = (base: string, kind: ThreadKind, c: PromptContext): 
     s += profilesNote(c.profile.name, names(others.filter((p) => grants(p, c.profile.name))), names(others.filter((p) => !grants(p, c.profile.name))))
   }
   s += c.pen
+  s += c.stackBrief
   s += c.memory
   return s
 }

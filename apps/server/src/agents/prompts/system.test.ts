@@ -66,6 +66,8 @@ const context = (task: Thread, o: Partial<PromptContext> = {}): PromptContext =>
   profiles,
   githubAccount: null,
   pen: "",
+  stackBrief: "",
+  stackLevel: null,
   github: null,
   ghTools: false,
   boardPr: false,
@@ -383,5 +385,25 @@ describe("systemPrompt", () => {
     assert.isTrue(text.includes("`huntaway.a2ui_check`"), text)
     const parent = { number: 1, title: "Fix it", worktree_path: "/w/1", branch: "ia/web-1-fix-it", worktree_ready: true }
     assert.isFalse(told(thread({ kind: "review", parent_id: TaskId.make("p"), number: 0 }), { parent, a2ui: true }).includes("a2ui_rules"))
+  })
+
+  it("a stack's own thread is told it manages the stack, and its stack last (HE-105)", () => {
+    const stack = thread({ task_type: "stack", parent_id: TaskId.make("bottom"), number: 9, title: "Stack: Login", use_worktree: false })
+    const own = base(stack)
+    assert.isTrue(own.startsWith("You look after one stack of tasks on the Huntaway board") && own.includes('thread WEB-9 ("Stack: Login", id t1)'), own)
+    assert.isTrue(own.includes("of project Web (repository /src/web)") && own.includes("git rebase --onto") && own.includes("--force-with-lease"), own)
+    assert.isTrue(own.includes("never rewrite a branch under a working agent") && own.includes("don't move it to another status"), own)
+    assertParagraphs(own)
+    const text = told(stack, { stackBrief: '\n\nYour stack, as it was when this run started: "Login"' })
+    assert.isTrue(text.endsWith('\n\nYour stack, as it was when this run started: "Login"'), text)
+  })
+
+  it("a stack's level is told to refer stack management to the stack's thread (HE-105)", () => {
+    const stackLevel = { title: "Login", level: 2, levels: 3, thread: "WEB-9" }
+    const text = base(thread(), { stackLevel })
+    assert.isTrue(text.includes('This task is level 2 of 3 of a stack ("Login"), whose own thread, WEB-9, manages the stack as a whole.'), text)
+    assert.isTrue(text.includes("Refer any stack management to it") && text.includes("`send_to_task` (task WEB-9)"), text)
+    assertParagraphs(text)
+    assert.isFalse(base(thread()).includes("stack as a whole"))
   })
 })

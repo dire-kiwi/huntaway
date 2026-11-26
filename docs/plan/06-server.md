@@ -131,7 +131,8 @@ tail and publishes it. A subscriber that cannot keep up is cut off with `resync`
   -` through `ChildProcessSpawner` with the old entry lists, strict base64 (`decodeArchive`), the folder made 0700, a login
   there `Conflict` `in_use` unless `overwrite`. Plain calls of one host: copying a config between hosts (7.5, HE-6's
   `copyConfig`) exports on one and imports on the other. **Decided**: an archive is bounded by the RPC's 16 MiB message
-  (about 12 MiB of tar), not the old route's 256 MiB; the old profile archive (`/profiles/{id}/claude-config`, a
+  (about 12 MiB of tar, `MAX_ARCHIVE`: no more of tar's output is kept, and a bigger one is `Invalid`, HE-104), not the
+  old route's 256 MiB; the old profile archive (`/profiles/{id}/claude-config`, a
   profile's own `claude_config_dir`) is gone with that column (configs have it).
 - **Claude logins on a Mac** (HE-87): `profiles/claudeLogin.ts` reads and saves a Claude config's login where Claude
   Code keeps it. On macOS that is the login keychain (`security`, `$HUNTAWAY_SECURITY`, default `/usr/bin/security`),

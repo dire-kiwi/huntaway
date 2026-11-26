@@ -17,7 +17,8 @@ It shows one board, in five tabs:
 
 A task opens over them: its status (a tap moves it), its agent, its pull request, its thread with its prompt, question
 and plan cards (a run of tool calls folded into one line, a published document as a card that opens it), and a composer
-whose button sends, or stops the agent when nothing is typed. Its microphone (and New task's) dictates into the field
+whose button sends, or stops the agent when nothing is typed. While the agent is in a turn, a clock button
+queues the message for the turn's end rather than steering it. Its microphone (and New task's) dictates into the field
 with the phone's own speech recognition: tap to start, tap again to stop. **⋯** has Start or Stop, Move, Details (description,
 todos, the documents the task published) and the ways out to the web. A link to a document or a task opens in the app;
 a link out of the app that a document's page asked for is asked about first.

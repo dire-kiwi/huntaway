@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { TaskId } from "@huntaway/contracts"
 import type { PermissionMode } from "@huntaway/contracts"
 import type { Rules } from "@huntaway/shared"
@@ -48,6 +48,13 @@ const cases: Readonly<Record<string, Partial<ClaudeLaunchInput>>> = {
     } satisfies Rules,
   },
 }
+
+/** A launch's `--settings`, read. */
+const settingsOf = (args: ReadonlyArray<string>) =>
+  Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(args[args.indexOf("--settings") + 1] ?? "").pipe(Effect.orDie)
+
+/** A launch asks for Code Mode (its `--settings` has an `env`). */
+const asks = (spec: { readonly args: ReadonlyArray<string> }) => Effect.map(settingsOf(spec.args), (s) => typeof s === "object" && s !== null && "env" in s)
 
 const inputOf = (golden: LaunchGolden, own: Partial<ClaudeLaunchInput>): ClaudeLaunchInput => ({
   run: "RUN",
@@ -118,6 +125,55 @@ describe("claudeLaunch", () => {
       assert.isFalse(spec.args.includes("mcp__docs"))
       assert.isTrue(spec.args.includes("mcp__gh__pr_view"))
       assert.deepStrictEqual(Object.keys(spec.mcpServers ?? {}), [])
+    }),
+  )
+
+  // HE-102
+  it.effect("a task's output style is a setting, beside the hooks or on its own", () =>
+    Effect.gen(function* () {
+      const golden = goldenOf("a task's first run")
+      const hooked = yield* claudeLaunch({ ...inputOf(golden, {}), outputStyle: "Explanatory" })
+      const withHooks = yield* settingsOf(hooked.args)
+      assert.deepInclude(withHooks, { outputStyle: "Explanatory" })
+      assert.property(withHooks, "hooks")
+      const alone = yield* claudeLaunch({ ...inputOf(golden, {}), exe: null, outputStyle: "Learning" })
+      assert.deepStrictEqual(yield* settingsOf(alone.args), { outputStyle: "Learning" })
+    }),
+  )
+
+  // HE-107
+  it.effect("Code Mode is asked for in the settings, beside the hooks or on its own", () =>
+    Effect.gen(function* () {
+      const golden = goldenOf("a task's first run")
+      const env = { env: { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: "1" } }
+      const hooked = yield* settingsOf((yield* claudeLaunch({ ...inputOf(golden, {}), codeMode: true })).args)
+      assert.deepInclude(hooked, env)
+      assert.property(hooked, "hooks")
+      const alone = yield* claudeLaunch({ ...inputOf(golden, {}), exe: null, codeMode: true })
+      assert.deepStrictEqual(yield* settingsOf(alone.args), env)
+      // Not asked for, there is no `env`, nor its variable in the run's environment.
+      const off = yield* claudeLaunch({ ...inputOf(golden, {}), codeMode: false })
+      assert.notProperty(yield* settingsOf(off.args), "env")
+      assert.isFalse(off.env.some(([k]) => k === "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE"))
+    }),
+  )
+
+  // HE-107
+  it.effect("a resumed conversation asks for Code Mode as its session started, whatever the experiment says", () =>
+    Effect.gen(function* () {
+      const golden = goldenOf("a task's first run")
+      const resumed = (own: Partial<ClaudeLaunchInput>) => {
+        const input = inputOf(golden, own)
+        return claudeLaunch({ ...input, task: { ...input.task, session_id: "s1" } })
+      }
+      // Started in Code Mode, with the experiment since switched off: still asked for, or Claude Code won't resume it.
+      const kept = yield* resumed({ codeMode: false, sessionCodeMode: true })
+      assert.isTrue(kept.args.includes("--resume"))
+      assert.isTrue(yield* asks(kept))
+      // Started without, with the experiment on: not asked for (it would stay on the ordinary tools, and say so each run).
+      assert.isFalse(yield* asks(yield* resumed({ codeMode: true, sessionCodeMode: false })))
+      // A new conversation goes by the experiment alone.
+      assert.isFalse(yield* asks(yield* claudeLaunch({ ...inputOf(golden, {}), codeMode: false, sessionCodeMode: true })))
     }),
   )
 

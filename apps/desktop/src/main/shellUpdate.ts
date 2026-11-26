@@ -3,8 +3,8 @@ import type { PlatformError } from "effect"
 import { Digest } from "effect/crypto"
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
-import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcSerialization } from "effect/rpc"
-import { Auth, RequiredScope } from "@huntaway/contracts"
+import { Rpc, RpcClient, RpcGroup, RpcMiddleware } from "effect/rpc"
+import { Auth, RequiredScope, RpcNdjson } from "@huntaway/contracts"
 import { compareVersions, packageName } from "../shared/versions.ts"
 import type { UpdateKind } from "../shared/versions.ts"
 
@@ -74,7 +74,7 @@ export const latestShellRelease = Effect.fn("shellUpdate.latest")(function* (opt
   readonly current: string
 }) {
   const layer = Layer.mergeAll(
-    RpcClient.layerProtocolHttp({ url: `${options.base.replace(/\/+$/, "")}/api/rpc` }).pipe(Layer.provide(RpcSerialization.layerNdjson)),
+    RpcClient.layerProtocolHttp({ url: `${options.base.replace(/\/+$/, "")}/api/rpc` }).pipe(Layer.provide(RpcNdjson)),
     RpcMiddleware.layerClient(Auth, ({ next, request }) =>
       next({ ...request, headers: Headers.set(request.headers, "authorization", `Bearer ${options.token}`) }),
     ),

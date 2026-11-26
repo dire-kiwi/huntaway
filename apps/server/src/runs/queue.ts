@@ -1,4 +1,5 @@
 import type { Task } from "@huntaway/contracts"
+import { planRest } from "../agents/prompts/start.ts"
 import type { MessageSource, QueuedRow } from "../tasks/TaskRepo.ts"
 import { fromAgent } from "../tasks/TaskRepo.ts"
 import type { RunKind, RunPhase } from "./Run.ts"
@@ -24,6 +25,11 @@ export interface Outgoing {
    * of the sending agent's turn for a message an agent sent; 0 (left out) for the user's and the board's own.
    */
   readonly hops?: number | undefined
+  /**
+   * HE-113: it waits for the agent's turn to end rather than steering it: queued while the agent works, it is written
+   * to its input once the turn is over, which starts the next turn of the same run (`RunInput.turnEnded`).
+   */
+  readonly queue?: boolean | undefined
 }
 
 /** `/compact [instructions]`: Claude Code summarises the conversation so far. */
@@ -40,6 +46,29 @@ export const newCommand = (text: string): string | null => {
   if (!t.startsWith("/new")) return null
   const rest = t.slice("/new".length)
   return rest === "" || /^\s/u.test(rest) ? rest.trim() : null
+}
+
+/**
+ * HE-102: `/output-style [name]`: the name on its line (perhaps "", to say which there are) and what follows that line
+ * (the composer's line comments and attached files), which goes on to the agent as a message; null for any other message.
+ */
+export const outputStyleCommand = (text: string): { readonly name: string; readonly rest: string } | null => {
+  const t = text.trim()
+  const end = t.indexOf("\n")
+  const line = end < 0 ? t : t.slice(0, end)
+  if (!line.startsWith("/output-style")) return null
+  const after = line.slice("/output-style".length)
+  if (after !== "" && !/^\s/u.test(after)) return null
+  return { name: after.trim(), rest: end < 0 ? "" : t.slice(end + 1).trim() }
+}
+
+/**
+ * Whether the user's `text` reaches the agent as a message, so it answers the agent's questions and skips its
+ * permission prompts: anything but blank text or an `/output-style` with nothing after it, which the board takes.
+ */
+export const reachesAgent = (text: string): boolean => {
+  const style = outputStyleCommand(text)
+  return style === null ? text.trim() !== "" : style.rest !== ""
 }
 
 /** What a run starts with: the messages it takes from the queue and its own, as one (the old `Queued`). */
@@ -90,6 +119,30 @@ export const combine = (parts: ReadonlyArray<QueuedRow>): Combined => {
   }
 }
 
+/**
+ * `/compact` or `/plan` (HE-113): a queued one goes on its own, in a run of its own, as the board handles it: joined
+ * with other messages, a `/compact` would compact with them as its instructions, or be sent as text with them ahead.
+ */
+export const goesAlone = (text: string): boolean => isCompact(text) || planRest(text) !== null
+
+/** How many of the queued messages, from the front, are plain messages: those ahead of the first `/compact` or `/plan`. */
+export const plainAhead = (queued: ReadonlyArray<{ readonly text: string }>): number => {
+  const at = queued.findIndex((q) => goesAlone(q.text))
+  return at < 0 ? queued.length : at
+}
+
+/**
+ * How many of the queued messages, from the front, a run's start takes (`take` not `No`): the plain messages ahead of
+ * the first `/compact` or `/plan`; with none that says anything (a blank one is a Start queued behind dependencies or a
+ * usage limit), a run for what is queued (`Only`) takes that command too, and a run for a message of its own (`Ahead`)
+ * only the blank ones. The rest stay queued, for when it ends.
+ */
+export const takenAtStart = (queued: ReadonlyArray<{ readonly text: string }>, take: Take): number => {
+  const plain = plainAhead(queued)
+  const says = queued.slice(0, plain).some((q) => q.text.trim() !== "")
+  return says || take !== "Only" ? plain : Math.min(plain + 1, queued.length)
+}
+
 /** What a run's start does with the thread's queue: `Ahead` takes it ahead of the message; `Only` is for what is queued. */
 export type Take = "No" | "Ahead" | "Only"
 
@@ -125,12 +178,14 @@ export interface LiveRun {
   readonly phase: RunPhase
   /** Its agent still reads input (`RunDir.acceptsInput`). */
   readonly acceptsInput: boolean
+  /** Its turn is over and it waits for input (kept going by its background work, say): a queued message goes in at once. */
+  readonly betweenTurns: boolean
   /** It may write the task's documents folder, so a `/plan` can be steered into it. */
   readonly writesDocuments: boolean
 }
 
 export interface SendFacts {
-  readonly task: Pick<Task, "kind" | "merging" | "merge_approval" | "session_id" | "queued_message">
+  readonly task: Pick<Task, "kind" | "task_type" | "merging" | "merge_approval" | "session_id" | "queued_message">
   /** The message; null to send what is queued (the old `send_queued`). */
   readonly message: Outgoing | null
   /** It is `/plan …` for a task. */
@@ -144,6 +199,9 @@ export interface SendFacts {
   /** The keys of what it depends on that isn't merged. */
   readonly unmet: ReadonlyArray<string>
 }
+
+/** The lasting threads whose first prompt is the user's message (the assistant, the pens threads, a stack's thread). */
+const CONVERSATIONS: ReadonlySet<string> = new Set(["assistant", "pens", "pen", "stack"])
 
 /** The old `send_message`'s cases, in its order. */
 export const decideSend = (f: SendFacts): SendDecision => {
@@ -159,11 +217,16 @@ export const decideSend = (f: SendFacts): SendDecision => {
   if (f.task.merging && !auto && f.task.merge_approval !== "pending" && f.activeMerge !== null) {
     return { _tag: "Refuse", refusal: { _tag: "MergeQueued", after: f.activeMerge.title } }
   }
+  // HE-105: a conversation has nothing to start on but a message (its first prompt is the message alone).
+  const conversation = f.task.kind === "task" && f.task.task_type !== null && CONVERSATIONS.has(f.task.task_type)
+  if (conversation && f.live === null && f.task.session_id === null && text === "" && (f.task.queued_message ?? "").trim() === "") return { _tag: "Nothing" }
   if (!auto && f.live !== null) {
     if (text === "") return { _tag: "Nothing" }
     const run = f.live
     // A run being prepared takes input once it starts; a `/plan` only goes to one that can write the plan.
-    const steer = !isCompact(text) && !(f.plan && !run.writesDocuments) && run.kind !== "compact" && (run.phase === "preparing" || run.acceptsInput)
+    const steerable = !isCompact(text) && !(f.plan && !run.writesDocuments) && run.kind !== "compact" && (run.phase === "preparing" || run.acceptsInput)
+    // HE-113: one to send once the agent's turn is over waits in the queue, unless its turn is over already.
+    const steer = steerable && (f.message?.queue !== true || (run.phase === "running" && run.betweenTurns))
     return { _tag: steer ? "Steer" : "Queue" }
   }
   if (!auto && !compact && kind === "prompt" && f.task.kind === "task" && !f.task.merging && f.agents && f.unmet.length > 0) {

@@ -19,6 +19,8 @@ import { ErrorText, Icon, s } from "./ui"
 // The button never turns from Send into Stop under a thumb: it does nothing while a message is on its way, and stays
 // Send (with nothing to send) for a moment after, so a second tap meant for Send can't stop the agent just messaged or
 // send the message twice.
+// While the agent is in a turn a message would steer, a second button queues what is typed for the turn's end instead
+// (HE-113).
 // Its microphone dictates into the field with the phone's speech recognition (state/dictation.ts).
 
 /** How long after a message went the button waits before it can be Stop. */
@@ -31,6 +33,7 @@ export function Composer({
   taskId,
   running,
   queued = null,
+  queueable = false,
   placeholder = "Message the agent",
   inset = false,
 }: {
@@ -40,6 +43,8 @@ export function Composer({
   readonly running: boolean
   /** The message that goes to the agent once its run ends, if one waits. */
   readonly queued?: string | null
+  /** The agent is in a turn a message steers: Queue holds what is typed for the turn's end. */
+  readonly queueable?: boolean
   readonly placeholder?: string
   /** It is at the bottom of the screen, with nothing under it (no tab bar): it keeps clear of the phone's own edge. */
   readonly inset?: boolean
@@ -70,13 +75,13 @@ export function Composer({
   }, [sent, sending])
   const stops = running && !typed && !sending && !sent
   const sends = typed && !sending
-  const go = () => {
+  const go = (queue = false) => {
     if (stops) return stop(mutate("tasks.stop", host, { id: TaskId.make(taskId) }))
     // What is sent is what the field holds now: words still on their way would land in the next message.
     dictation.drop()
     if (!sends) return
     setSent(true)
-    send({ body: text.trim(), sent: text, files: [], draft: draftAtom })
+    send({ body: text.trim(), sent: text, files: [], draft: draftAtom, queue })
   }
   const busy = sending || stopping.busy
   return (
@@ -116,12 +121,37 @@ export function Composer({
           }}
         />
         <MicButton dictation={dictation} text={text} />
+        {queueable && typed && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Queue for when the agent finishes its turn"
+            accessibilityState={{ disabled: !sends }}
+            disabled={!sends}
+            onPress={() => go(true)}
+            style={({ pressed }) => [
+              {
+                width: 44,
+                height: 44,
+                borderRadius: radius.pill,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: colors.raised,
+                borderWidth: 1,
+                borderColor: colors.lineStrong,
+              },
+              !sends && s.disabled,
+              pressed && s.pressed,
+            ]}
+          >
+            <Icon name="time-outline" size={20} color={colors.fg} />
+          </Pressable>
+        )}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={stops ? "Stop the agent" : "Send"}
           accessibilityState={{ disabled: !stops && !sends, busy }}
           disabled={(!stops && !sends) || stopping.busy}
-          onPress={go}
+          onPress={() => go()}
           style={({ pressed }) => [
             {
               width: 44,

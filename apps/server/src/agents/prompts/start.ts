@@ -33,8 +33,9 @@ export const planRest = (text: string): string | null => {
   return rest === "" || /^\s/u.test(rest) ? rest.trim() : null
 }
 
-/** The lasting threads (the assistant, its routines, the pens threads) are conversations: their first prompt is the message. */
-const isConversation = (kind: ThreadKind) => kind._tag === "Assistant" || kind._tag === "Routine" || kind._tag === "PensRoot" || kind._tag === "Pen"
+/** The lasting threads (the assistant, its routines, the pens threads, a stack's) are conversations: their first prompt is the message. */
+const isConversation = (kind: ThreadKind) =>
+  kind._tag === "Assistant" || kind._tag === "Routine" || kind._tag === "PensRoot" || kind._tag === "Pen" || kind._tag === "Stack"
 
 /**
  * A task's first prompt: the task, the instructions for starting (`startInstructions`), then any message it was started

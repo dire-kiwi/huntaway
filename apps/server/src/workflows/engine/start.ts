@@ -184,7 +184,8 @@ const quiet = Effect.fnUntraced(function* (d: Deps, cause: Change & { readonly _
  */
 export const onStatus = Effect.fnUntraced(function* (d: Deps, change: Change & { readonly _tag: "TaskChanged" }) {
   const task = change.after
-  if (task === null || task.kind !== "task" || task.project_id === null || change.before?.status === task.status) return
+  // HE-105: a stack's own thread is in its project, but isn't one of its tasks to run workflows on.
+  if (task === null || task.kind !== "task" || task.project_id === null || task.task_type === "stack" || change.before?.status === task.status) return
   const chain = change.cause._tag === "Workflow" ? change.cause.chain + 1 : 0
   // Its agent's work moves it to In progress, and a question it asks to Needs attention, without leaving the column it works for.
   if (task.status !== "in_progress" && task.status !== "needs_attention") {

@@ -1,13 +1,35 @@
 import { useAtomValue } from "@effect/atom-react"
 import { agentSuffix, canRunAgents, holdsProjects, type HostAgentConfig as ClaudeConfig, query } from "@huntaway/client"
+import { BUILT_IN_OUTPUT_STYLES } from "@huntaway/shared"
 import { clsx } from "clsx"
+import { useId } from "react"
 import { profileNames, useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
-import { resultError, resultValue, Select } from "../../ui"
+import { Input, resultError, resultValue, Select } from "../../ui"
 
 // The fields of a profile's form (docs/plan/09-frontend.md). gh's accounts are 6.11's `profiles.githubAccounts`.
 
 const label = (c: ClaudeConfig | undefined): string => (c ? `${c.name}${agentSuffix(c)}` : "")
+
+/**
+ * HE-111: an output style for Claude agents, suggesting Claude Code's built-in ones; any other name (a user's, a
+ * project's or a plugin's style) is taken as typed.
+ */
+export function OutputStyleInput({ value, placeholder, onChange }: { value: string; placeholder: string; onChange: (style: string) => void }) {
+  const list = useId()
+  return (
+    <>
+      <Input value={value} placeholder={placeholder} list={list} spellCheck={false} onChange={(e) => onChange(e.target.value)} />
+      <datalist id={list}>
+        {BUILT_IN_OUTPUT_STYLES.map((s) => (
+          <option key={s.name} value={s.name}>
+            {s.description}
+          </option>
+        ))}
+      </datalist>
+    </>
+  )
+}
 
 /** One of a profile's configs for its assistant or its threads, or "" for its default (the first). */
 export function ThreadConfigSelect({ configs, value, onChange }: { configs: ReadonlyArray<ClaudeConfig>; value: string; onChange: (id: string) => void }) {
@@ -24,12 +46,26 @@ export function ThreadConfigSelect({ configs, value, onChange }: { configs: Read
 }
 
 /** This board's host, or a linked host with assistants, for a profile's assistant to run on. */
-export function AssistantHostSelect({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+export function AssistantHostSelect({
+  value,
+  onChange,
+  className = "h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none",
+  title,
+  disabled,
+  "aria-label": ariaLabel,
+}: {
+  value: string
+  onChange: (id: string) => void
+  className?: string | undefined
+  title?: string | undefined
+  disabled?: boolean | undefined
+  "aria-label"?: string | undefined
+}) {
   const local = useBoard((s) => s.hosts.find((h) => h.local))
   const hosts = useBoard(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected)))
   const picked = useBoard((s) => s.hosts.find((h) => h.id === value))
   return (
-    <Select value={value} onChange={onChange} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
+    <Select value={value} onChange={onChange} className={className} title={title} disabled={disabled} aria-label={ariaLabel}>
       <option value="">This host{local ? ` (${local.name})` : ""}</option>
       {hosts.map((h) => (
         <option key={h.id} value={h.id}>

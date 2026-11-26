@@ -213,12 +213,18 @@ for mockups are `srcdoc` frames inside the plugin's, which `FRAME_CSP`'s
 `frame-src 'none'` doesn't hold (they load nothing), each under its own nonce policy on top of the inherited one
 (`tests/e2e/docs.test.ts` uploads an image and publishes it; the editors were tried in a browser).
 
+At 0.4.0 (HE-114; DOC-21) only its look changed: renderer 0.7.0's "print" look for pages and the doc components, with
+light and dark. The plugin maps the renderer's variables to the board's (`READER_VARS`: `--color-line-strong`,
+`--color-panel-2`, `--color-accent`, `--font-sans`, `--font-mono` and the rest, all of which `boardVars` gives the
+frame) and sets `color-scheme:inherit`, so a page takes the board's dark theme rather than the reader's system setting.
+It loads no fonts (the hosted site's aren't in the package), so the board's frame needs nothing new from `FRAME_CSP`.
+
 Updating it is a new release in dire-kiwi/docs (`render-v…` first if it needs a new renderer, then `huntaway-v…`) and
 the tarball URL bumped in `apps/server/package.json`. pnpm records no `integrity` for a tarball that is only a
 dependency's (the renderer is the plugin's), and `pnpm deploy` (`scripts/package-server.sh`) refuses one without: put
 the renderer's in `pnpm-lock.yaml` by hand, `sha512-` and the base64 of its tarball's SHA-512 (`openssl dgst -sha512
--binary <tgz> | base64 -w0`), which later installs keep. (pnpm 10.34 recorded the 0.6.0 renderer's itself, HE-63:
-check that the lockfile has it, and that it matches.)
+-binary <tgz> | base64 -w0`), which later installs keep. (pnpm 10.34 recorded the 0.6.0 and 0.7.0 renderers'
+itself, HE-63 and HE-114: check that the lockfile has it, and that it matches.)
 
 ## What's next
 

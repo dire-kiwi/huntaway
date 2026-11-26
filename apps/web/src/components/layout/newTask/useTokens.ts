@@ -39,7 +39,8 @@ export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, save
     useShallow((s) =>
       depProject
         ? Object.values(s.tasks)
-            .filter((t) => t.kind === "task" && t.project_id === depProject.id && !isMerged(t))
+            // Not a thread under a task (a stack's own, HE-105).
+            .filter((t) => t.kind === "task" && !t.parent_id && t.project_id === depProject.id && !isMerged(t))
             .toSorted((a, b) => b.number - a.number)
         : [],
     ),

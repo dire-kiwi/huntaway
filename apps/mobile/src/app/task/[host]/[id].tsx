@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react"
-import { heldTodos, type HostTask, mutate, query, STATUSES, taskAtom, unreadInReview } from "@huntaway/client"
+import { backgroundIdle, heldTodos, type HostTask, mutate, query, STATUSES, taskAtom, unreadInReview } from "@huntaway/client"
 import { TaskId, type Todo } from "@huntaway/contracts"
 import { AsyncResult } from "effect/reactivity"
 import { Stack, useLocalSearchParams } from "expo-router"
@@ -108,7 +108,14 @@ export default function TaskScreen() {
       <View style={{ flex: 1 }}>
         <ThreadView host={host} task={task} />
       </View>
-      <Composer host={host} taskId={id} running={task.running} queued={task.queued_message} inset />
+      <Composer
+        host={host}
+        taskId={id}
+        running={task.running}
+        queued={task.queued_message}
+        queueable={task.running && task.steerable && !backgroundIdle(task)}
+        inset
+      />
       {open === "actions" && (
         <Sheet title={task.key} onClose={() => setOpen(null)}>
           {task.running ? (

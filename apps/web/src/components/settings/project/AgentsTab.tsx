@@ -5,13 +5,13 @@ import { profileConfigLabel } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 import { ConfigPicker } from "../ClaudeConfigs"
-import { GithubAccountSelect } from "../hosts/profileFields"
+import { GithubAccountSelect, OutputStyleInput } from "../hosts/profileFields"
 import { Field, Input, Select } from "../../ui"
 import { selectClass } from "../parts"
 
 const isMode = Schema.is(PermissionMode)
 
-/** The Agents tab: the agent configs, model, permission mode and GitHub account of the project's agents. */
+/** The Agents tab: the agent configs, model, output style, permission mode and GitHub account of the project's agents. */
 export function AgentsTab({ form, hostMode, set }: { form: ProjectForm; hostMode: PermissionMode; set: SetField }) {
   return (
     <>
@@ -19,6 +19,7 @@ export function AgentsTab({ form, hostMode, set }: { form: ProjectForm; hostMode
       <Field label="Model">
         <Input value={form.model ?? ""} placeholder="The profile's default" onChange={(e) => set("model", e.target.value)} />
       </Field>
+      <ProjectOutputStyle project={form} onChange={(style) => set("output_style", style)} />
       <Field
         label="Permission mode"
         help="What agents may do without asking. With Ask, tool approvals show in the thread and flag the task as needing attention."
@@ -71,6 +72,28 @@ function ProjectGithubAccount({ project, onChange }: { project: ProjectForm; onC
         value={project.github_account ?? ""}
         onChange={(a) => onChange(a || null)}
         inherit={(active) => `The profile's (${profile?.github_account || (active ? `gh's active account, ${active}` : "gh's active account")})`}
+      />
+    </Field>
+  )
+}
+
+/** HE-111: the project's own output style for its Claude agents, or its profile's. */
+function ProjectOutputStyle({ project, onChange }: { project: ProjectForm; onChange: (style: string) => void }) {
+  const profile = useBoard((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id))
+  return (
+    <Field
+      label="Output style"
+      help={
+        <>
+          How the project&apos;s Claude agents write their replies (Claude Code&apos;s <code>/output-style</code>), unless a task picks its own with{" "}
+          <code>/output-style</code>. Review threads keep Claude Code&apos;s. Blank follows the profile.
+        </>
+      }
+    >
+      <OutputStyleInput
+        value={project.output_style ?? ""}
+        placeholder={`The profile's (${profile?.default_output_style || "Claude Code's settings"})`}
+        onChange={onChange}
       />
     </Field>
   )

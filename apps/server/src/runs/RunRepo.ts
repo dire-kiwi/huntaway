@@ -28,6 +28,7 @@ export interface RunColumns {
   readonly config_dir?: string | null | undefined
   readonly effort?: string | null | undefined
   readonly board_tools?: boolean | undefined
+  readonly code_mode?: boolean | undefined
   readonly agent_at?: string | null | undefined
   readonly write_no?: number | null | undefined
   readonly turn_start_tokens?: number | null | undefined
@@ -74,6 +75,11 @@ export interface RunRepoShape {
   readonly sessionConfigDir: (task: TaskId, session: string) => Effect.Effect<Option.Option<string>>
   /** The first run of the task's conversation `session` (the one that started it). */
   readonly sessionStartedBy: (task: TaskId, session: string) => Effect.Effect<Option.Option<RunId>>
+  /**
+   * Claude: whether the task's session `session` works in Code Mode (its first run's `init` listed the REPL tool,
+   * HE-107). A later run of it must ask for Code Mode, or Claude Code refuses to resume it.
+   */
+  readonly sessionCodeMode: (task: TaskId, session: string) => Effect.Effect<boolean>
   /** Codex: whether the task's session `session` has the board's tools as dynamic tools (its first run gave them). */
   readonly sessionBoardTools: (task: TaskId, session: string) => Effect.Effect<boolean>
   /**
@@ -142,8 +148,8 @@ export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-
         }).pipe(Effect.orDie)
 
       const firstOfSession = (task: TaskId, session: string) =>
-        sql<{ readonly config_dir: string | null; readonly board_tools: number }>`
-          SELECT config_dir, board_tools FROM runs WHERE task_id = ${task} AND session_id = ${session} ORDER BY seq LIMIT 1`.pipe(
+        sql<{ readonly config_dir: string | null; readonly board_tools: number; readonly code_mode: number }>`
+          SELECT config_dir, board_tools, code_mode FROM runs WHERE task_id = ${task} AND session_id = ${session} ORDER BY seq LIMIT 1`.pipe(
           Effect.map((rows) => Option.fromNullishOr(rows[0])),
           Effect.orDie,
         )
@@ -186,6 +192,8 @@ export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-
             Effect.map((rows) => Option.fromNullishOr(rows[0]?.id)),
             Effect.orDie,
           ),
+        sessionCodeMode: (task, session) =>
+          firstOfSession(task, session).pipe(Effect.map(Option.match({ onNone: () => false, onSome: (row) => row.code_mode === 1 }))),
         sessionBoardTools: (task, session) =>
           firstOfSession(task, session).pipe(Effect.map(Option.match({ onNone: () => false, onSome: (row) => row.board_tools === 1 }))),
         addCost,

@@ -149,7 +149,8 @@ export class SettingsSyncExchange extends Context.Service<SettingsSyncExchange, 
       const watchers = yield* FiberMap.make<LinkId>()
       const watched = yield* Ref.make<ReadonlyMap<LinkId, Live>>(new Map())
       const watchLink = (live: Live) =>
-        live.client("board.watch", {}).pipe(
+        // Only the events: a peer's whole board (tens of MB on a big one) was read, sent and decoded here for nothing.
+        live.client("board.watch", { events_only: true }).pipe(
           Stream.filter((m) => synced(m.type)),
           Stream.runForEach(() => schedule),
           Effect.catchCause((cause) => Effect.logDebug(`settings sync: watching ${live.hello.name}`, cause)),

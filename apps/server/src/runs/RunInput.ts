@@ -14,6 +14,7 @@ import { detachable, kindOf, listed, notTakenIn } from "./background.ts"
 import { BackgroundWork } from "./BackgroundWork.ts"
 import { shellsListen, SUPPORTED } from "./DevServers.ts"
 import { lastingOf } from "./finish.ts"
+import { plainAhead } from "./queue.ts"
 import type { Run } from "./Run.ts"
 import { RunDir } from "./RunDir.ts"
 import { RunRepo } from "./RunRepo.ts"
@@ -86,6 +87,12 @@ export interface RunInputShape {
    * next turn, its input is closed so that it exits and the run ends; with messages waiting, they get `STEER_GRACE`.
    */
   readonly turnEnded: (run: Run) => Effect.Effect<void>
+  /**
+   * HE-113: how many of `queued` (the task's queue, in order) wait for `run`'s turn to end, when they go to it as its
+   * next turn: the plain messages ahead of the first `/compact` or `/plan`, for a live run that takes input and isn't
+   * a compaction; none otherwise. The rest wait for the run's end.
+   */
+  readonly queuedForTurnEnd: (run: Run, queued: ReadonlyArray<{ readonly text: string }>) => Effect.Effect<number>
   /** Ask the agent to end its turn for the stop `stopId`, and stop its process if it hasn't within `STOP_GRACE`. False when it takes no input. */
   readonly interrupt: (run: RunId, stopId: string) => Effect.Effect<boolean>
   /** End the run now: its input closed and its process stopped (SIGTERM, then SIGKILL). False when there was no process to signal. */
@@ -224,7 +231,52 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
           }),
         ).pipe(Effect.asVoid)
 
+      const queuedForTurnEnd = Effect.fn("RunInput.queuedForTurnEnd")(function* (run: Run, queued: ReadonlyArray<{ readonly text: string }>) {
+        if (!run.isLive || run.kind === "compact" || queued.length === 0 || !(yield* dir.acceptsInput(run.id))) return 0
+        return plainAhead(queued)
+      })
+
+      /**
+       * HE-113: what was queued for the task while the agent worked goes to it now that its turn is over, as steers of
+       * its run, in the order queued, so that it starts the agent's next turn rather than waiting for the run to end
+       * and a new one to start on it: the messages ahead of the first `/compact` or `/plan`, which stays queued with what
+       * follows it for the run's end (`queuedForTurnEnd`); blank ones are dropped, not sent. Not into a run that is
+       * stopped or failed its turn, or one that can't take them. Whether any went.
+       */
+      const steerQueued = Effect.fnUntraced(function* (run: Run) {
+        const at = yield* nowTimestamp
+        const moved = yield* tx(
+          Effect.gen(function* () {
+            const row = yield* repo.get(run.id)
+            // A turn that failed (out of usage, say) leaves it for the run's end, which knows what to do with it.
+            if (Option.isNone(row) || row.value.stop !== "none" || row.value.result_error !== null) return false
+            const queued = yield* tasks.queued(run.task_id)
+            const n = yield* queuedForTurnEnd(row.value, queued)
+            // A blank one (a Start queued behind dependencies or a usage limit) is no message: the run it asked for is
+            // this one. It goes with the messages, or stays, harmless, when there are none.
+            const messages = queued.slice(0, n).filter((q) => q.text.trim() !== "")
+            if (messages.length === 0) return false
+            const all = yield* tasks.takeQueued(run.task_id)
+            for (const q of messages) {
+              const id = yield* random.uuidV4()
+              yield* tasks.addSteer(
+                run.task_id,
+                { id, run_id: run.id, text: q.text, source: q.source, automation_run_id: q.automation_run_id, hops: q.hops ?? 0 },
+                at,
+              )
+            }
+            for (const q of all.slice(n)) yield* tasks.enqueue(run.task_id, q, at)
+            return true
+          }),
+        )
+        if (!moved) return false
+        // Shown as sent once written; as waiting to be, if it couldn't be.
+        if (!(yield* writeSteers(run.task_id))) yield* publish(run.task_id)
+        return true
+      })
+
       const turnEnded: (run: Run) => Effect.Effect<void> = Effect.fn("RunInput.turnEnded")(function* (run: Run) {
+        yield* steerQueued(run)
         const waiting = yield* tasks.steers(run.task_id, run.id)
         if (waiting.length > 0) {
           yield* closeUnlessTakenIn(
@@ -484,6 +536,7 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
         steered: (run, id) => tx(steered(run, id)),
         turnStarted,
         turnEnded,
+        queuedForTurnEnd,
         interrupt,
         closeAndKill,
         closeInput,

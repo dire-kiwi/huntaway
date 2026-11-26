@@ -215,6 +215,9 @@ const WAITED_WORDS = new Set([
   "vitest",
   "mocha",
   "tsc",
+  "e2e",
+  "gradle",
+  "gradlew",
 ])
 /** Commands that wait on something or end by themselves (`timeout 900 pnpm test`, `until grep …; do sleep 5; done`). */
 const WAITED_COMMANDS = new Set(["timeout", "until", "while", "for", "sleep", "wait"])
@@ -224,16 +227,31 @@ const SETUP_COMMANDS = new Set(["cd", "pushd", "export", "source", ".", "echo", 
 /** A word's last path part (`target/release/app-server` → `app-server`). */
 const baseName = (w: string): string => w.slice(w.lastIndexOf("/") + 1)
 
+/** Programs that run the script after them (`node scripts/build.mjs`), whose name says what it is. */
+const INTERPRETERS = new Set(["node", "tsx", "bun", "deno", "bash", "sh", "zsh", "python", "python3"])
+
 /**
- * Whether a background shell's command looks like a server's (`astro dev`, `pnpm preview`, `python3 -m http.server`,
- * `vite`, `exec target/release/app-server`), by its words, not its text: redirections (`> $TMPDIR/test.log`,
- * `2>/dev/null`), `cd` and the like, variables and launchers (`exec`, `nohup`) before a command, and words with a `/`
- * (paths such as `apps/server`) don't count, but for the program's own path, which counts by its name. A build, test, check or wait
- * (`pnpm test`, `test:ui`, `cargo …`, `timeout …`, an `until` loop) anywhere in it makes it one the agent waits to hear
- * the end of, even if what it runs listens on ports (a test run's servers). The old `looks_like_server` (HA-409).
+ * Whether a script's or program's file name says it is waited on (`scripts/build.mjs`, `./run-tests.sh`, `ia-api
+ * wait-idle`), but not a server's (`scripts/test-server.sh`).
  */
-export const looksLikeServer = (command: string | null | undefined): boolean => {
-  if (command === null || command === undefined || command === "") return false
+const waitedName = (w: string): boolean => {
+  const name = baseName(w).replace(/\.[a-z0-9]+$/u, "")
+  return !/[-_]server$/u.test(name) && name.split(/[-_.]/u).some((part) => WAITED_WORDS.has(part) || WAITED_COMMANDS.has(part))
+}
+
+/**
+ * What a command's words say it is (`astro dev`, `pnpm preview`, `python3 -m http.server`, `vite`, `exec
+ * target/release/app-server` a server's; `pnpm test`, `test:ui`, `cargo …`, `timeout …`, an `until` loop, `node
+ * scripts/build.mjs` one the agent waits to hear the end of, even if what it runs listens on ports, as a test run's
+ * servers do), or neither (`null`), by its words, not its text: redirections (`> $TMPDIR/test.log`, `2>/dev/null`),
+ * `cd` and the like, variables and launchers (`exec`, `nohup`) before a command, and words with a `/` (paths such as
+ * `apps/server`) don't count, but for the program's own path, which counts by its name. The name of what is run (the
+ * program, the script an interpreter runs, a hyphenated subcommand right after the program: `./run-tests.sh`, `node
+ * scripts/build.mjs`, `ia-api wait-idle`) can say it's waited on; other arguments' (`-C …/12-fix-build`, `--filter
+ * web-test`, `npx serve ./build`) can't (HE-106). A Bash call's description ("Run the e2e tests") reads the same way.
+ */
+const commandKind = (command: string | null | undefined): "server" | "waited" | null => {
+  if (command === null || command === undefined || command === "") return null
   const text = command.replace(/\d*(?:&>>?|>>?\|?|<)&?\s*(?:"[^"]*"|'[^']*'|[^\s;&|]+)/gu, " ")
   let server = false
   for (const segment of text.split(/&&|\|\||[;|&\n()]/u)) {
@@ -245,13 +263,16 @@ export const looksLikeServer = (command: string | null | undefined): boolean => 
     while (words.length > 0 && (/^[A-Za-z_]\w*=/u.test(words[0] ?? "") || LAUNCHERS.has(words[0] ?? ""))) words.shift()
     const first = words[0]
     if (first === undefined || SETUP_COMMANDS.has(first)) continue
-    if (WAITED_COMMANDS.has(first)) return false
+    if (WAITED_COMMANDS.has(first.toLowerCase())) return "waited"
+    const script = INTERPRETERS.has(baseName(first.toLowerCase())) ? words.findIndex((w, i) => i > 0 && !w.startsWith("-")) : -1
     for (let i = 0; i < words.length; i++) {
       const raw = (words[i] ?? "").toLowerCase()
+      const run = i === 0 || i === script || (i === 1 && raw.includes("-") && !raw.startsWith("-") && !raw.includes("/"))
+      if (run && waitedName(raw)) return "waited"
       if (raw.includes("/") && i > 0) continue
       const w = baseName(raw)
       const head = w.split(":")[0] ?? w
-      if (WAITED_WORDS.has(head) || WAITED_WORDS.has(w)) return false
+      if (WAITED_WORDS.has(head) || WAITED_WORDS.has(w)) return "waited"
       if (SERVER_WORDS.has(w) || (w.includes(":") && SERVER_WORDS.has(head)) || /[-_]server$/u.test(w)) server = true
       if (w === "vite" && words[i + 1] !== "build") server = true
       const prev = words[i - 1] === "run" ? words[i - 2] : words[i - 1]
@@ -259,17 +280,29 @@ export const looksLikeServer = (command: string | null | undefined): boolean => 
       if (w === "start" && before !== undefined && (PACKAGE_MANAGERS.has(before) || START_TOOLS.has(before))) server = true
     }
   }
-  return server
+  return server ? "server" : null
 }
 
 /**
+ * Whether a background shell may be left running as its turn ends (HA-409, HE-106): a dev server's, which never holds
+ * its task in In progress, and not one the agent waits to hear the end of (a test run, a build, a check, a wait). Its
+ * command says which; a command that says neither (`node --input-type=module < $TMPDIR/email-dev.mjs`, ODS-92's
+ * preview server, fed its script on stdin) is read by the description the agent gave its Bash call, and one whose
+ * description says neither too may be left as well. What makes it a server is that it listens on a port, which
+ * `RunInput` looks at: this only rules out what the agent waits on. The old `looks_like_server`.
+ */
+export const mayOutliveTurn = (command: string | null | undefined, description?: string | null): boolean =>
+  (commandKind(command) ?? commandKind(description)) !== "waited"
+
+/**
  * Whether a run's turn can end with what it has going in the background left running (HA-409): all of it is shells the
- * Bash tool started (not a Monitor, which only reports to the agent) whose commands look like servers' (`looksLikeServer`)
+ * Bash tool started (not a Monitor, which only reports to the agent) not waited on by their commands or descriptions (`mayOutliveTurn`)
  * and that the agent doesn't wait on. `RunInput` also asks that the task goes to review, the host can find the shells
  * again, and each of them listens on a port.
  */
 export const detachable = (list: ReadonlyArray<BackgroundTask>, waited: ReadonlyArray<string>): boolean =>
-  list.length > 0 && list.every((t) => t.id !== null && t.type === "local_bash" && t.tool === "Bash" && looksLikeServer(t.command) && !holds(t, waited))
+  list.length > 0 &&
+  list.every((t) => t.id !== null && t.type === "local_bash" && t.tool === "Bash" && mayOutliveTurn(t.command, t.description) && !holds(t, waited))
 
 /** `tasks` added to `before` (what the board stopped), each id once. */
 export const addKilled = (before: ReadonlyArray<BackgroundTask>, tasks: ReadonlyArray<BackgroundTask>): ReadonlyArray<BackgroundTask> => [
