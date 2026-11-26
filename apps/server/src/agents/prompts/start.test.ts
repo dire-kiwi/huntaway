@@ -136,7 +136,7 @@ describe("runPrompt", () => {
     const text = runPrompt(threadKindOf(c.task), c, { text: "/plan the X API", lost: [], mentions: () => "\n\n[Mentions]" })
     assert.strictEqual(
       text,
-      "Write a plan to /data/documents/t1/plan.html, as your instructions for this task's plan say, and iterate on it with me before you start on the work.\n\nWhat to plan: the X API",
+      "Make a plan and publish it with the docs server, as your instructions for this task's plan say, and iterate on it with me before you start on the work.\n\nWhat to plan: the X API",
     )
     // Without the label, it's the message as it is.
     const plain = { ...c, task: thread({ session_id: "s" }), docs: [] }

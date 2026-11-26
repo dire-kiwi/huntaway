@@ -945,6 +945,20 @@ answered 202 before the action runs), `Routines`, `Automations`. Cron and time-z
 published documents, which are the docs plugin's since HE-42 ([15-plugins.md](15-plugins.md#the-docs-plugin-he-42)).
 They were `Docs`, `DocImages` and `HostedDocs` until then.
 
+**HE-122: a label's document is published with the docs server.** A task's `plan`, `artifact` and `diagram` labels
+(and `/plan`) still ask its agent for that document, but the agent makes it with the docs plugin's `publish_document`
+(an MDX plan with form fields and an `<Approval />`; an artifact or diagram as an HTML page, since docs runs no scripts
+and renders no Mermaid) and gives the user its URL, rather than writing a file in the task's folder: `prompts/labels.ts`,
+`documentsOnly.ts`, `documentGuide.ts` (`publishGuide`), `planFeedback.ts`, `artifact.ts`, `diagram.ts`; the old
+`planFormat.ts` (the board's own plan components) is gone. There's no fallback when the docs plugin isn't installed.
+The documents older tasks have stay as they were, to read: nothing registers `follow` and `turnEnded` as `TurnHooks` any
+more, so a run's edit of the file keeps no version, and its agent is told to start from the file, if it's there, and
+leave it as it is. The task view shows a label's tab only on a task with a document (`document_at`), read only (a plan's
+questions can't be answered or sent, and there's no "Ask for changes"; `task/Document.tsx`), and `get_task` its
+`documents` paths only then. A plan-only run (`Checkpoints.planOnly`, `PLAN_READY`) is one with a `publish_document`
+call recorded done in `mcp_calls` since it started (`CheckpointRepo.publishedSince`), in place of a new plan version.
+What follows is 6.2 as it was built.
+
 As built in 6.2 (HE-7), `docs/TaskDocuments.ts` (+ `TaskDocumentRepo.ts`, the `documents` table of the initial schema):
 
 - **Following the runs**: `runs/TurnHooks` (new, in the runs area, `register(hook)`, `toolDone(task)`, `turnEnded(task)`),

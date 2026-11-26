@@ -714,7 +714,7 @@ describe("checkpoints through a run", () => {
     ),
   )
 
-  it.effect("a run that only writes the plan waits for the user; one that does the work goes to review", () =>
+  it.effect("a run that only publishes the plan waits for the user; one that does the work goes to review", () =>
     board(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
@@ -723,18 +723,19 @@ describe("checkpoints through a run", () => {
         // for its review: HE-66).
         yield* sql`UPDATE projects SET auto_review = 0`.pipe(Effect.orDie)
         let version = 0
-        /** A new version of the plan, written after the run's start. */
-        const writePlan = Effect.gen(function* () {
-          version += 1
-          yield* sql`INSERT INTO documents (task_id, label, version, content, created_at, updated_at)
-            VALUES (${task}, 'plan', ${version}, '<h1>Plan</h1>', '2026-11-12T00:00:01.000Z', '2026-11-12T00:00:01.000Z')`.pipe(Effect.orDie)
-        })
+        /** A new version of the plan, published with the docs server after the run's start (HE-122). */
+        const writePlan = (run: string) =>
+          Effect.gen(function* () {
+            version += 1
+            yield* sql`INSERT INTO mcp_calls (id, run_id, task_id, tool, args, status, created_at)
+              VALUES (${`publish-${version}`}, ${run}, ${task}, 'publish_document', '{}', 'done', '2026-11-12T00:00:01.000Z')`.pipe(Effect.orDie)
+          })
         /** One run of one turn: the plan written, and `work` done. */
         const planRun = <E, R>(work: Effect.Effect<unknown, E, R>, plan = true) =>
           Effect.gen(function* () {
             yield* setColumns(task, { status: "in_progress", running: true, attention_reason: null })
             const { agent } = yield* agentRun(task, "Go on")
-            if (plan) yield* writePlan
+            if (plan) yield* writePlan(agent.run.id)
             yield* work
             yield* output(agent, [result("success")])
             yield* ended(agent)
@@ -775,8 +776,8 @@ describe("checkpoints through a run", () => {
         const { task } = yield* taskRepo({ labels: ["plan"] })
         yield* setColumns(task, { use_worktree: false, worktree_state: "none", worktree_path: null, work_dir: `documents/${task}` })
         const { agent } = yield* agentRun(task, "Plan it")
-        yield* sql`INSERT INTO documents (task_id, label, version, content, created_at, updated_at)
-          VALUES (${task}, 'plan', 1, '<h1>Plan</h1>', '2026-11-12T00:00:01.000Z', '2026-11-12T00:00:01.000Z')`.pipe(Effect.orDie)
+        yield* sql`INSERT INTO mcp_calls (id, run_id, task_id, tool, args, status, created_at)
+          VALUES ('publish-1', ${agent.run.id}, ${task}, 'publish_document', '{}', 'done', '2026-11-12T00:00:01.000Z')`.pipe(Effect.orDie)
         yield* output(agent, [result("success")])
         yield* ended(agent)
         const t = yield* loadTask(task)

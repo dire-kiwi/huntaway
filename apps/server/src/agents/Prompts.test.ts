@@ -40,7 +40,7 @@ describe("Prompts", () => {
         text.startsWith(`You are an agent working on task WEB-1 ("Fix it") on the Huntaway board. Project: Web (repository ${project.repo_path}).`),
         text,
       )
-      assert.isTrue(text.includes(`a plan (HTML) to ${dataDir.documents(task.id)}/plan.html`), text)
+      assert.isTrue(text.includes("you make a plan.") && text.includes(`If ${dataDir.documents(task.id)}/plan.html exists`), text)
       assert.isTrue(text.endsWith('\n\nYour profile on the board is "me". Your board tools also reach these profiles\' boards: work.'), text)
       // Codex in plan mode is told so.
       assert.isTrue((yield* prompts.system(task.id, { codex: true, permission_mode: "plan" })).includes("You are in plan mode"))

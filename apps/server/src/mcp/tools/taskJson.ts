@@ -275,11 +275,12 @@ export const makeTaskJson = (reach: Reach) =>
       }
       if (t.waiting) v["queued_for_dependencies"] = true
       if (t.project_id === null && t.group_name !== null) v["group_task"] = t.group_name
-      // Its labels, and where the plan, artifact or diagram each asks for is, for agents on this host to read.
+      // Its labels, and, for a task with documents from before they were published with the docs server (HE-122), where
+      // they are, for agents on this host to read.
       const labels = t.kind === "task" ? DocumentLabel.literals.filter((l) => t.labels.includes(l)) : []
       if (labels.length > 0) {
         v["labels"] = labels
-        v["documents"] = Object.fromEntries(labels.map((l) => [l, `${dataDir.documents(t.id)}/${documentFile[l]}`]))
+        if (t.document_at !== null) v["documents"] = Object.fromEntries(labels.map((l) => [l, `${dataDir.documents(t.id)}/${documentFile[l]}`]))
       }
       if (t.kind === "task" && t.task_type !== null) v["type"] = t.task_type
       if (t.kind === "task" && t.task_type === "pen") {

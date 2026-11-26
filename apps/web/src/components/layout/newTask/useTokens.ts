@@ -70,7 +70,7 @@ export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, save
 
   const harnesses = useHarnesses(where, agent, ed, saved)
   const { modelVocab, effortList } = harnesses
-  // Labels, each a document its agent writes besides its other work, shown in a tab of the task.
+  // Labels, each a document its agent makes besides its other work, published with docs (HE-122).
   const labelling = true
   const labelWords = LABEL_WORDS
   const tokens = resolve({

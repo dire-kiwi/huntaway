@@ -1,36 +1,23 @@
 // A task's document for one of its labels (a plan, artifact or diagram), as its agent writes it (6.2; the old
 // components/task/Document.tsx: the labels' names and badges are documentInfo.tsx). Read with @huntaway/client's
-// `taskDocumentAtom`, again as the task's `document_at` changes; the plan's answers are sent as a message (`tasks.send`).
-import { useAtomSet, useAtomSubscribe, useAtomValue } from "@effect/atom-react"
-import { mutate, taskDocumentAtom, type DocumentType, type HostTask as Task } from "@huntaway/client"
-import { TaskId, type Item as ThreadItem } from "@huntaway/contracts"
+// `taskDocumentAtom`, again as the task's `document_at` changes. HE-122: read only, as the agents publish their documents
+// with the docs server now: older tasks' are shown as they were, with no answers to send or changes to ask for.
+import { useAtomValue } from "@effect/atom-react"
+import { taskDocumentAtom, type DocumentType, type HostTask as Task } from "@huntaway/client"
+import { type Item as ThreadItem } from "@huntaway/contracts"
 import { clsx } from "clsx"
-import { Effect } from "effect"
-import { AsyncResult, Atom } from "effect/reactivity"
-import { ChevronDown, ChevronUp, Code, Copy, Download, Eye, ListChecks, Loader2, MessagesSquare, ZoomIn, ZoomOut } from "lucide-react"
+import { ChevronDown, ChevronUp, Code, Copy, Download, Eye, Loader2, MessagesSquare, ZoomIn, ZoomOut } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
-import { exitError, useMutation } from "../../state/mutation"
 import { documentInfo } from "./documentInfo"
 import { followsFrameInput, frameDoc, fromFrame, openable, trackBoardInput } from "./htmlFrame"
 import { diagramImage, renderMermaid, svgWidth, withPlanDiagrams } from "./mermaid"
-import {
-  afterSend,
-  answered,
-  answersMessage,
-  loadAnswers,
-  readFields,
-  resetFields,
-  saveAnswers,
-  withTouched,
-  type PlanAnswers,
-  type PlanField,
-} from "./planAnswers"
+import { readFields, type PlanAnswers, type PlanField } from "./planAnswers"
 import { isWholePage, themedPlan } from "./planTheme"
 import planCss from "./planTheme.css?raw"
 import { useThreadView } from "./thread/threadView"
 import { Composer } from "./thread/Composer"
 import { Markdown } from "./thread/Markdown"
-import { Button, copyText, download, errorText, IconButton, OpenLinkBar, resultError, RunningDot, Select, timeAgo } from "../ui"
+import { Button, copyText, download, errorText, IconButton, OpenLinkBar, RunningDot, Select, timeAgo } from "../ui"
 
 /**
  * What the agent last said, as the server's `last_assistant_text` finds it, from the thread's items: its latest
@@ -49,60 +36,13 @@ function lastReply(items: ReadonlyArray<ThreadItem> | undefined): string | null 
 /** The message a thread item's id (`legacy:<message>[:<block>]`) is of. */
 const messageOf = (id: string) => /^legacy:(\d+)(?::|$)/.exec(id)?.[1]
 
-/** A short hash of a document's content (FNV-1a), to tell its revisions apart. */
-function hash(text: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193)
-  return `${text.length}.${(h >>> 0).toString(36)}`
-}
-
-/** A field as the plan has it, no longer the user's own answer. */
-const untouched = (f: PlanField): PlanField => ({
-  name: f.name,
-  label: f.label,
-  type: f.type,
-  value: f.value,
-  answer: f.answer,
-  initial: f.initial,
-  touched: false,
-})
-
-/** A send of a plan's answers (`fields`, of `version`) to its task's agent. */
-interface AnswersSend {
-  readonly host: string
-  readonly task: string
-  readonly fields: PlanField[]
-  readonly version: number
-}
-
-/** How a send of a task's answers went: the answers it sent as they are, and how many are left to send. */
-interface AnswersSent {
-  readonly sentAsIs: ReadonlyArray<string>
-  readonly left: number
-}
-
-/**
- * The send of a task's plan answers (`host:task`), kept for the page's life rather than in the view it's started from,
- * which can go (and another open) before it ends: the answers saved then that are as they were when it started go, and
- * the rest are left to send. The views of the task read how it goes (the old page's `ia-plan-answers` event).
- */
-const answersSend = Atom.family((_key: string) =>
-  Atom.fn<AnswersSend>()((s) =>
-    Effect.gen(function* () {
-      const before = loadAnswers(s.host, s.task)
-      yield* mutate("tasks.send", s.host, { id: TaskId.make(s.task), text: answersMessage(s.fields, s.version) })
-      const { answers, sentAsIs } = afterSend(before, loadAnswers(s.host, s.task))
-      saveAnswers(s.host, s.task, answers)
-      const sent: AnswersSent = { sentAsIs, left: Object.keys(answers).length }
-      return sent
-    }),
-  ).pipe(Atom.keepAlive),
-)
-
 /**
  * A task's document for one of its labels (a plan, artifact or diagram), as its agent writes it, with
- * the versions from earlier turns, and a composer to ask for changes.
+ * the versions from earlier turns, read only (HE-122), and the composer to talk to the agent.
  */
+/** A plan shown as it is: its questions can't be answered (HE-122). */
+const READ_ONLY = { readOnly: true, key: null, answers: (): PlanAnswers => ({}), onForm: () => {} }
+
 export function DocumentView({ task, label: type, onShowThread }: { task: Task; label: DocumentType; onShowThread: () => void }) {
   // Keyed by the task and label, so another starts over.
   const info = documentInfo(type)
@@ -128,77 +68,12 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
   const current = versions.find((v) => v.version === doc?.version)
   const content = doc?.content ?? null
   const writing = !!current?.open && task.running
-  // An earlier version than the latest, whose questions can't be answered.
-  const old = !!doc && !!latest && doc.version !== latest.version
   // A plan in the board's theme, with its components, unless it's a whole page of its own.
   const ownPage = content !== null && (type === "artifact" || (type === "plan" && isWholePage(content)))
   const themed = type === "plan" && content !== null && !ownPage
 
-  // The plan's questions as its frame reports them, and the answers the user hasn't sent yet (put back in the
-  // plan each time it reloads: after each change the agent makes, and on a new version).
   const frame = useRef<HTMLIFrameElement>(null)
-  // The answers are kept in storage only, so a view of the task opened since (switching tabs makes another) and a
-  // send started from an earlier one agree on them.
-  const answers = () => loadAnswers(task.host_id, task.id)
-  const keep = (saved: PlanAnswers) => saveAnswers(task.host_id, task.id, saved)
-  // Which document the fields are from (formKey): the version and its content (a version is written over while the
-  // agent's turn goes on), or null for an earlier version's, which can't be answered.
-  const contentId = useMemo(() => (content === null ? "" : hash(content)), [content])
-  const formKey = old || !doc?.version || content === null ? null : `${doc.version}:${contentId}`
-  const [form, setFormState] = useState<{ fields: PlanField[]; key: string | null }>({ fields: [], key: null })
-  // The latest, for Reset.
-  const latestForm = useRef(form)
-  const setForm = useCallback((f: { fields: PlanField[]; key: string | null }) => {
-    latestForm.current = f
-    setFormState(f)
-  }, [])
-  // Only the fields of the document shown: in the source view there's no frame to report another's.
-  const fields = form.key !== null && form.key === formKey ? form.fields : []
-  const send = answersSend(`${task.host_id}:${task.id}`)
-  const sending = useAtomValue(send).waiting
-  const startSend = useAtomSet(send)
-  const [sent, setSent] = useState(false)
   const page = useMemo(() => (themed ? themedPlan(content, planCss) : content), [content, themed])
-  // The frame reports its questions each time it loads, and as the user answers them.
-  const onForm = (list: PlanField[], user: boolean, key: string | null, dropped: string[]) => {
-    setForm({ fields: list, key })
-    if (!user) setSent(false)
-    if (!user || key === null) return
-    const saved = answers()
-    for (const name of dropped) delete saved[name]
-    keep(withTouched(saved, list))
-    setSent(false)
-  }
-  // A send can end after this view is gone (and another is open): it says how it went to the views of the task.
-  const onSent = useCallback(
-    (result: AsyncResult.AsyncResult<AnswersSent, unknown>) => {
-      if (result.waiting) return
-      const error = resultError(result)
-      if (error !== null) setErr(error)
-      if (!AsyncResult.isSuccess(result)) return
-      const { sentAsIs, left } = result.value
-      frame.current?.contentWindow?.postMessage({ iaFormSent: sentAsIs }, "*")
-      const f = latestForm.current
-      setForm({ ...f, fields: f.fields.map((x) => (sentAsIs.includes(x.name) ? untouched(x) : x)) })
-      setSent(!left)
-    },
-    [setForm],
-  )
-  useAtomSubscribe(send, onSent)
-  const sendAnswers = () => {
-    if (sending) return
-    setErr(null)
-    startSend({ host: task.host_id, task: task.id, fields, version: parseInt(form.key ?? "", 10) })
-  }
-  const resetAnswers = () => {
-    keep({})
-    // Here as well as in the frame, which isn't there in the source view (and reports them again when it is).
-    setForm({ ...latestForm.current, fields: resetFields(latestForm.current.fields) })
-    frame.current?.contentWindow?.postMessage({ iaFormReset: true }, "*")
-    setSent(false)
-  }
-  const questions = themed && fields.length > 0
-  const done = answered(fields)
   // A plan or diagram runs to the bottom, under the reply and the composer, and leaves room (`inset`) to
   // scroll clear of them. A page of its own design (an artifact) is often sized to the window, so it stops above them.
   const floating = !ownPage
@@ -211,15 +86,6 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
     if (el) ro.observe(el)
     return () => ro.disconnect()
   }, [])
-  const [, sendText] = useMutation("tasks.send")
-  const sendFix = (error: string) =>
-    void sendText(task.host_id, {
-      id: task.id,
-      text: `The diagram doesn't render. Mermaid says:\n\n\`\`\`\n${error}\n\`\`\`\n\nPlease fix it.`,
-    }).then((exit) => {
-      const failure = exitError(exit)
-      if (failure !== null) setErr(failure)
-    })
   const downloadDocument = () => {
     if (content === null) return
     const html = themed && page !== null ? withPlanDiagrams(page) : Promise.resolve(page ?? content)
@@ -304,11 +170,7 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
         ) : content === null ? (
           <div className="flex h-full items-center justify-center p-8" style={{ paddingBottom: inset + 32 }}>
             <div className="max-w-md rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">
-              {task.running
-                ? `The agent is working on the ${type}. It shows here as it's written.`
-                : !task.session_id
-                  ? `No ${type} yet. Press Start, or send instructions below, and its agent writes one here (in ${info.file} in the task's folder).`
-                  : `The agent hasn't written the ${type} yet (it goes in ${info.file} in the task's folder). Ask it below.`}
+              {`This task has no ${type} here: its agent publishes it with docs, and gives you the link in the thread.`}
             </div>
           </div>
         ) : source ? (
@@ -316,12 +178,12 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
             {content}
           </pre>
         ) : type === "diagram" ? (
-          <MermaidView source={content} inset={inset} onSvg={setSvg} onFix={task.running ? undefined : sendFix} />
+          <MermaidView source={content} inset={inset} onSvg={setSvg} />
         ) : (
           <HtmlFrame
             frame={frame}
             html={themed ? content : (page ?? content)}
-            plan={themed ? { readOnly: old, key: formKey, answers, onForm } : undefined}
+            plan={themed ? READ_ONLY : undefined}
             inset={inset}
             title={`${info.label}: ${task.title}`}
             onAsk={setAsked}
@@ -345,29 +207,6 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
               <RunningDot /> {task.agent_wait ? "Waiting…" : "Working…"}
             </span>
           )}
-          {questions && (
-            <span
-              className="pointer-events-auto flex items-center gap-2"
-              title="The plan's questions: answer them in the plan, then send the answers to the agent"
-            >
-              <ListChecks size={12} />
-              {sent ? "Answers sent" : `${done} of ${fields.length} ${fields.length === 1 ? "question" : "questions"} answered`}
-              {fields.some((f) => f.touched) && (
-                <button className="hover:text-fg" onClick={resetAnswers} title="Put back the plan's own answers">
-                  Reset
-                </button>
-              )}
-              <Button
-                size="sm"
-                variant="primary"
-                disabled={sending || sent || done === 0}
-                onClick={sendAnswers}
-                title="Send your answers to the agent, to update the plan with them"
-              >
-                {sending ? <Loader2 size={12} className="animate-spin" /> : null} Send answers
-              </Button>
-            </span>
-          )}
           {reply && (
             <button
               className="pointer-events-auto ml-auto flex items-center gap-1 hover:text-fg"
@@ -387,7 +226,7 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
           </button>
         </div>
         <div className="pointer-events-auto">
-          <Composer key={task.id} task={task} placeholder={`Ask for changes to the ${type}…`} />
+          <Composer key={task.id} task={task} />
         </div>
       </div>
     </div>

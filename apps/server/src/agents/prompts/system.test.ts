@@ -309,27 +309,29 @@ describe("systemPrompt", () => {
     const text = base(thread({ title: "Plan search", number: 1, labels: ["plan"], work_dir: "documents/t1" }), {
       docs: [["plan", "/data/documents/t/plan.html"]],
     })
-    assert.isTrue(text.includes('task WEB-1 ("Plan search"') && text.includes("a plan (HTML) to /data/documents/t/plan.html"), text)
+    assert.isTrue(text.includes('task WEB-1 ("Plan search"') && text.includes("you make a plan."), text)
+    // HE-122: published with the docs server, starting from the plan it had before, if any.
+    assert.isTrue(text.includes("`docs` MCP server's `publish_document`") && text.includes("If /data/documents/t/plan.html exists"), text)
     assert.isTrue(text.includes("Rather than changing code") && text.includes("break it into tasks"), text)
     assertParagraphs(text)
     assert.isTrue(text.includes("repository /src/web, which you can read") && !text.includes("worktree"), text)
     assert.isTrue(!text.includes("label plan") && !text.includes("carry it out in this task"), text)
-    // It's told about the plan theme's components.
-    assert.isTrue(text.includes('<ol class="steps">') && text.includes("<ia-html><template>"), text)
+    // It's told about the docs server's form fields, not the board's old plan components.
+    assert.isTrue(text.includes("`<Approval />`") && !text.includes("<ia-question"), text)
   })
 
   it("a labelled task is told to write its documents besides its work", () => {
     const task = thread({ title: "Search", worktree_path: "/w/1", branch: "ia/web-1-search" })
     const plain = base(task)
-    assert.isTrue(!plain.includes("label") && !plain.includes('<ol class="steps">'), plain)
+    assert.isTrue(!plain.includes("label") && !plain.includes("publish_document"), plain)
     const text = base({ ...task, labels: ["plan", "diagram"] }, { docs: planAndDiagram })
     // A code task still, in its worktree.
     assert.isTrue(text.startsWith(plain) && text.includes("dedicated git worktree at /w/1"), text)
-    assert.isTrue(text.includes("the labels plan, diagram") && text.includes("a plan (HTML) to /d/plan.html and a Mermaid diagram to /d/diagram.mmd"), text)
-    assert.isTrue(text.includes("don't commit them") && text.includes("The plan comes first") && text.includes("carry it out in this task"), text)
-    assert.isTrue(text.includes('<ol class="steps">') && text.includes("Mermaid source") && !text.includes("Rather than changing code"), text)
-    assert.isTrue(text.includes("<ia-diagram><pre>flowchart LR") && text.includes("Always use Mermaid for plan diagrams"), text)
-    assert.isTrue(!text.includes("<ia-diagram><svg"), text)
+    assert.isTrue(text.includes("the labels plan, diagram") && text.includes("you make a plan and a diagram."), text)
+    assert.isTrue(text.includes("The plan comes first") && text.includes("carry it out in this task") && !text.includes("Rather than changing code"), text)
+    // HE-122: each published with the docs server, the diagram as an HTML page (docs renders no Mermaid).
+    assert.isTrue(text.includes("Publish each as a document") && text.includes("If /d/diagram.mmd exists"), text)
+    assert.isTrue(text.includes("draws the diagram as inline SVG") && !text.includes("The board shows"), text)
   })
 
   it("a reviewer is told what it reviews and not to change it", () => {

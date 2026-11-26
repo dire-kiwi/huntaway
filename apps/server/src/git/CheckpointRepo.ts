@@ -33,8 +33,8 @@ export interface CheckpointRepoShape {
   readonly removeAll: (task: TaskId) => Effect.Effect<void>
   /** Mark the checkpoints after `after` stale at `level` (or more), but `except`. */
   readonly markStale: (task: TaskId, after: number, level: 1 | 2, except: number) => Effect.Effect<void>
-  /** Whether the task's plan document was written at `since` or later. */
-  readonly planWrittenSince: (task: TaskId, since: Timestamp) => Effect.Effect<boolean>
+  /** Whether the task's agent published a document (its plan, with the docs server: HE-122) at `since` or later. */
+  readonly publishedSince: (task: TaskId, since: Timestamp) => Effect.Effect<boolean>
   /** Whether the task created a task at `since` or later. */
   readonly createdTasksSince: (task: TaskId, since: Timestamp) => Effect.Effect<boolean>
 }
@@ -70,8 +70,13 @@ export class CheckpointRepo extends Context.Service<CheckpointRepo, CheckpointRe
             Effect.asVoid,
             Effect.orDie,
           ),
-        planWrittenSince: (task, since) =>
-          Effect.map(count(sql`SELECT COUNT(*) AS n FROM documents WHERE task_id = ${task} AND label = 'plan' AND updated_at >= ${since}`), (n) => n > 0),
+        publishedSince: (task, since) =>
+          Effect.map(
+            count(
+              sql`SELECT COUNT(*) AS n FROM mcp_calls WHERE task_id = ${task} AND tool = 'publish_document' AND status = 'done' AND error IS NULL AND created_at >= ${since}`,
+            ),
+            (n) => n > 0,
+          ),
         createdTasksSince: (task, since) =>
           Effect.map(count(sql`SELECT COUNT(*) AS n FROM tasks WHERE created_by = ${task} AND created_at >= ${since}`), (n) => n > 0),
       })

@@ -159,6 +159,9 @@ See §3.6 for the full piece list. Capabilities: per-project replaceable instruc
   `k: v` each ≤80 chars, total ≤300; keeps newest 5000 per profile; list ≤500 (default 200). Telemetry `permission` event on each decision.
 
 ### 2.7 Label documents (`agent/documents.ts`) — plan / artifact / diagram
+
+> HE-122: the new server's agents publish these with the docs server rather than writing the files below; the files
+> older tasks have are kept, to read ([06-server.md](../06-server.md#documents-and-docs--inventory-02-2728)).
 - Task `labels ⊆ ["plan","artifact","diagram"]` → files `plan.html`, `artifact.html`, `diagram.mmd` in `<data>/documents/<task id>/`. `check_labels` validates/orders.
 - `work_dir(task)`: `task.work_dir` (relative → under data dir; `~`/absolute as is), else `<data>/documents/<id>` for scratch tasks and pen threads, else null.
   `documents_only(task)`: legacy plan/artifact/diagram *tasks* (non-scratch, non-assistant, with `work_dir`): they only make documents.

@@ -90,7 +90,7 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
       ? [
           {
             name: "plan",
-            description: "Write a plan in the task's Plan tab and go over it with you before the work",
+            description: "Publish a plan with docs and go over it with you before the work",
             prefix: "/" as const,
             builtin: true,
             args: "[what to plan]",

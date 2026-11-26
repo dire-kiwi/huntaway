@@ -705,7 +705,7 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3, A, E4, R4>(
     Layer.provideMerge(WorkflowsLive),
     // 6.7: the assistant, over documents (its brief) and automations (its routines).
     Layer.provideMerge(AssistantLive),
-    // 6.2: a task's documents, kept as its runs write them (`TurnHooks`).
+    // 6.2: a task's documents, which older tasks have (HE-122: published with the docs server now).
     Layer.provideMerge(TaskDocuments.registered.pipe(Layer.provideMerge(TaskDocuments.layer), Layer.provideMerge(TaskDocumentRepo.layer))),
     // M2 to M5's areas.
     Layer.provideMerge(runAreasLayer(models)),
