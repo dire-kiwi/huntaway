@@ -297,7 +297,7 @@ describe("Claude output in chunks", () => {
     }),
   )
 
-  it.effect("6.2: a tool's result keeps the task's document as it's written, and the turn's end closes its version", () =>
+  it.effect("HE-122: neither a tool's result nor the turn's end keeps the task's document file any more", () =>
     Effect.gen(function* () {
       const handler = yield* RunOutput
       const documents = yield* TaskDocuments
@@ -316,9 +316,9 @@ describe("Claude output in chunks", () => {
       yield* feed(turn.slice(0, 3))
       assert.deepStrictEqual(yield* open(), [null, []])
       yield* feed([turn[3]])
-      assert.deepStrictEqual(yield* open(), ["<h1>Plan</h1>", [true]])
+      assert.deepStrictEqual(yield* open(), [null, []])
       yield* feed([result])
-      assert.deepStrictEqual(yield* open(), ["<h1>Plan</h1>", [false]])
+      assert.deepStrictEqual(yield* open(), [null, []])
     }).pipe(Effect.scoped, Effect.provide(TestBoard())),
   )
 })

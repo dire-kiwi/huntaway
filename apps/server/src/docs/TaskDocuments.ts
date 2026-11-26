@@ -5,7 +5,6 @@ import { nowTimestamp } from "../platform/columns.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
-import { TurnHooks } from "../runs/TurnHooks.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
@@ -19,9 +18,12 @@ import { TaskDocumentRepo } from "./TaskDocumentRepo.ts"
 //
 // A version follows the file while the agent's turn goes on (`follow`, after each tool call), so the task shows the
 // document as it's written, and is closed when the turn ends (`turnEnded`, at a turn's or a run's end): the next change
-// starts a new version, so there's one per turn that changed it. Both come through `TurnHooks` (`registered`). What the
-// prompts tell the agent is `agents/Prompts` (`prompts/labels.ts` and the guides); `/plan` is `runs/Runs`; writing the
-// folder without asking is `Permissions`.
+// starts a new version, so there's one per turn that changed it. What the prompts tell the agent is `agents/Prompts`
+// (`prompts/labels.ts` and the guides); `/plan` is `runs/Runs`; writing the folder without asking is `Permissions`.
+//
+// HE-122: a label's document is published with the docs server now, so the runs no longer keep the files (nothing
+// registers `follow` and `turnEnded` as `TurnHooks`): the documents older tasks have stay as they were, to read. The
+// demo board seeds its own with `turnEnded`.
 
 /** A bigger file isn't kept, so a runaway agent can't fill the database. */
 export const MAX_SIZE = 5 << 20
@@ -196,14 +198,12 @@ export class TaskDocuments extends Context.Service<TaskDocuments, TaskDocumentsS
   )
 
   /**
-   * The documents follow the runs (`TurnHooks`), and go with their task: a deleted task's folder at once, a deleted
-   * project's tasks' by a sweep of the folders whose task is gone.
+   * The documents go with their task: a deleted task's folder at once, a deleted project's tasks' by a sweep of the
+   * folders whose task is gone. They no longer follow the runs (HE-122).
    */
   static readonly registered = Layer.effectDiscard(
     Effect.gen(function* () {
       const documents = yield* TaskDocuments
-      const hooks = yield* TurnHooks
-      yield* hooks.register({ toolDone: documents.follow, turnEnded: documents.turnEnded })
       const watching = yield* (yield* Events).watch(undefined)
       yield* watching.live.pipe(
         Stream.runForEach((e) => (e.type === "task_deleted" ? documents.removed(e.id) : e.type === "project_deleted" ? documents.sweep : Effect.void)),

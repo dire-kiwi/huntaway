@@ -1,11 +1,11 @@
 import { askAndFinish } from "./askAndFinish.ts"
 import { boardTools } from "./boardTools.ts"
-import { documentGuide, documentsNamed } from "./documentGuide.ts"
+import { documentGuide, documentsNamed, publishGuide } from "./documentGuide.ts"
 import type { DocumentFile } from "./documentGuide.ts"
 
 // What a task that makes only documents is told (huntaway's agent/runner/prompt.ts system_prompt, the documents-only
 // branch, with agent/documents.ts system_prompt): a plan, artifact or diagram task from before they were labels. Plan
-// task 2.5.
+// task 2.5. HE-122: the documents are published with the docs server.
 
 export interface DocumentsOnlyFacts {
   /** Its key, e.g. `WEB-12`. */
@@ -33,10 +33,10 @@ const writes = (t: DocumentsOnlyFacts): string => {
     s = ` The task isn't in a project but is for the group "${group.name}", whose projects are: ${list.join("; ")}. You can read their repositories.`
   } else s = ""
   s +=
-    `\n\nRather than changing code, this task makes documents: you write ${files.length === 0 ? "none at the moment, as it has no labels: ask the user what to make" : documentsNamed(files)}. ` +
+    `\n\nRather than changing code, this task makes documents: you make ${files.length === 0 ? "none at the moment, as it has no labels: ask the user what to make" : documentsNamed(files)}. ` +
     "Your working directory is the task's own folder, where you can write freely. " +
-    `The board shows ${files.length === 1 ? "that file" : "each file"} in the task as it changes, and keeps a version from each turn. ` +
     "Don't change the repositories, commit, push or open pull requests."
+  if (files.length > 0) s += publishGuide(files)
   for (const [label] of files) s += documentGuide(label, true)
   return s
 }

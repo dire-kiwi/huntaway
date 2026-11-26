@@ -394,7 +394,7 @@ async function leakyPlan(ui) {
   assert.equal(await peek(`document.body.innerText.includes("opens a link")`), false, "nor asked")
   // The middle of the plan's composer, in the board.
   const composer = await peek(`(() => {
-    const r = document.querySelector('[placeholder="Ask for changes to the plan…"]').getBoundingClientRect()
+    const r = document.querySelector("textarea[placeholder]").getBoundingClientRect()
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
   })()`)
   return { opened, quiet, peek, until, cdp, composer }

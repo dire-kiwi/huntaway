@@ -77,6 +77,3 @@ export async function routeDocuments(page, server, task, { document, hold } = {}
 
 /** The page's own frames: the document's (the first), and the frames in it. */
 export const docFrame = (page) => page.frames().find((f) => f !== page.mainFrame() && f.parentFrame() === page.mainFrame())
-
-/** The answers kept in the browser for the plan, as stored. */
-export const saved = (page) => page.evaluate(() => JSON.parse(Object.entries(localStorage).find(([k]) => k.startsWith("ia.planAnswers"))?.[1] ?? "{}"))

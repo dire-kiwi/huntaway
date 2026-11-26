@@ -180,13 +180,16 @@ describe("TaskDocuments", () => {
     }).pipe(Effect.scoped, Effect.provide(board)),
   )
 
-  it.effect("the run's lines reach it through TurnHooks", () =>
+  it.effect("HE-122: a run's turns don't keep the files, so the documents a task has stay as they were", () =>
     Effect.gen(function* () {
+      const documents = yield* TaskDocuments
       const hooks = yield* TurnHooks
       const task = yield* taskWith(["plan"])
-      write(yield* fileOf(task, "plan"), "<h1>Plan</h1>", 1)
+      const file = yield* fileOf(task, "plan")
+      write(file, "<h1>Plan</h1>", 1)
+      yield* documents.turnEnded(task.id)
+      write(file, "<h1>Plan, changed</h1>", 2)
       yield* hooks.toolDone(task.id)
-      assert.deepStrictEqual(yield* versions(task.id), [[1, "<h1>Plan</h1>", true]])
       yield* hooks.turnEnded(task.id)
       assert.deepStrictEqual(yield* versions(task.id), [[1, "<h1>Plan</h1>", false]])
     }).pipe(Effect.scoped, Effect.provide(board)),

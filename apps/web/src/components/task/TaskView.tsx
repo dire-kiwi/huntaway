@@ -263,7 +263,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // A reviewer's, summarizer's or workflow step's thread has a view of its own, beside the review it's working on.
   if (task.kind === "review") return <ReviewThreadView thread={task} mode={mode} />
   // A group or scratch task works in no repository, so it has no changes of its own; nor does one
-  // that makes only its documents. Each of a task's labels has a tab for its document, first.
+  // that makes only its documents. Each of a task's labels has a tab for its document, first, on a task that has one:
+  // they're published with the docs server now (HE-122), so only older tasks have them, to read.
   const group = isGroupTask(task) ? (task.group_name ?? undefined) : undefined
   const scratch = isScratch(task)
   // The profile's assistant: no repository either, and it opens on a page of its own. Its routines' threads work in
@@ -275,7 +276,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const pensThread = isPenThreads(task) || isStackThread(task)
   // One in no project is on its profile's board (a scratch task can be in a project).
   const profileScratch = scratch && !task.project_id
-  const labels = taskLabels(task)
+  const labels = task.document_at ? taskLabels(task) : []
   const docsOnly = documentsOnly(task)
   const tabs: Tab[] = [
     ...labels,

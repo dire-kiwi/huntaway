@@ -228,7 +228,7 @@ describe("a Codex run's output", () => {
     ),
   )
 
-  it.effect("6.2: a Codex edit shows before its turn ends (the old a_codex_edit_shows_before_its_turn_ends)", () =>
+  it.effect("HE-122: a Codex edit of the task's document file isn't kept, during its turn or at its end", () =>
     Effect.gen(function* () {
       const documents = yield* TaskDocuments
       const fs = yield* FileSystem.FileSystem
@@ -244,14 +244,11 @@ describe("a Codex run's output", () => {
         { method: "turn/started", params: { ...t, turn: { id: "turn1" } } },
         { method: "item/completed", params: { ...t, item } },
       ])
-      const doc = yield* documents.get(agent.run.task_id).pipe(Effect.orDie)
-      assert.deepStrictEqual([doc.content, doc.versions.map((v) => v.open)], ["<h1>Plan</h1>", [true]])
-      assert.notStrictEqual((yield* (yield* TaskRepo).get(agent.run.task_id))?.document_at ?? null, null)
+      const kept = Effect.map(documents.get(agent.run.task_id).pipe(Effect.orDie), (d) => [d.content, d.versions.length])
+      assert.deepStrictEqual(yield* kept, [null, 0])
       yield* feed(agent, [{ method: "turn/completed", params: { ...t, turn: { id: "turn1", status: "completed" } } }])
-      assert.deepStrictEqual(
-        (yield* documents.get(agent.run.task_id).pipe(Effect.orDie)).versions.map((v) => v.open),
-        [false],
-      )
+      assert.deepStrictEqual(yield* kept, [null, 0])
+      assert.strictEqual((yield* (yield* TaskRepo).get(agent.run.task_id))?.document_at ?? null, null)
     }).pipe(Effect.scoped, Effect.provide(TestBoard())),
   )
 })

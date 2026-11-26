@@ -50,7 +50,7 @@ async function withDownload(page, check) {
   }
 }
 
-test("plan diagrams render Mermaid locally, including multiple types and escaped labels, without disturbing answers", async () => {
+test("plan diagrams render Mermaid locally, including multiple types and escaped labels", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     const external = []
@@ -65,10 +65,8 @@ test("plan diagrams render Mermaid locally, including multiple types and escaped
 <ia-diagram><pre>sequenceDiagram
   Board-&gt;&gt;Server: Check releases
   Server--&gt;&gt;Board: Ready
-</pre></ia-diagram>
-<ia-question name="notes" type="text" title="Notes?"></ia-question>`
+</pre></ia-diagram>`
     let frame = await openPlan(ui, content)
-    await frame.locator("input[name=notes]").fill("Keep this answer")
     await ready(frame, 2)
     assert.deepEqual(external, [], "Mermaid comes from the app, not a CDN")
     assert.equal(await frame.locator("ia-diagram > svg").count(), 0, "SVGs are displayed as inert images")
@@ -77,16 +75,14 @@ test("plan diagrams render Mermaid locally, including multiple types and escaped
     assert.match(decodeURIComponent(svg), /Restart \(server\)/)
     // Mermaid writes a label's line break as HTML (<br>), which an SVG image can't load (HA-80).
     assert.match(decodeURIComponent(svg), /Two<br \/>lines/)
-    assert.equal(await frame.locator("input[name=notes]").inputValue(), "Keep this answer")
     assert.ok(await frame.locator("ia-diagram > pre").first().isHidden())
 
-    // Source stays editable Mermaid, and rebuilding the sandbox restores both diagrams and unsent answers.
+    // Source stays Mermaid, and rebuilding the sandbox restores the diagrams.
     await ui.run(["click Source", "gone css=iframe"])
     assert.match(await page.locator("pre").innerText(), /sequenceDiagram/)
     await ui.run(["click Preview", "wait css=iframe"])
     frame = page.frames().find((f) => f.parentFrame() === page.mainFrame())
     await ready(frame, 2)
-    assert.equal(await frame.locator("input[name=notes]").inputValue(), "Keep this answer")
 
     // Exported plans contain the pictures and work without a running board or external libraries.
     await withDownload(page, async (exported, html) => {

@@ -73,7 +73,8 @@ export interface CheckpointsShape {
   /** A task's checkpoints once those asked for are taken (tests, and what waits for them). */
   readonly settled: (task: TaskId) => Effect.Effect<ReadonlyArray<Checkpoint>>
   /**
-   * Whether run `run` of `task` wrote or revised only its plan (HA-198): it has the plan label, wrote its plan and created
+   * Whether run `run` of `task` wrote or revised only its plan (HA-198): it has the plan label, published its plan (a
+   * docs `publish_document` call, HE-122) and created
    * no tasks, and works in a folder of its own, or in a worktree whose files and HEAD none of its turns changed (once
    * their checkpoints are taken). False when that can't be told.
    */
@@ -336,7 +337,7 @@ export class Checkpoints extends Context.Service<Checkpoints, CheckpointsShape>(
 
       const planOnly = Effect.fn("Checkpoints.planOnly")(function* (task: Task, run: StartedRun) {
         if (task.kind !== "task" || run.kind !== "prompt" || !task.labels.includes("plan")) return false
-        if (!(yield* repo.planWrittenSince(task.id, run.created_at)) || (yield* repo.createdTasksSince(task.id, run.created_at))) return false
+        if (!(yield* repo.publishedSince(task.id, run.created_at)) || (yield* repo.createdTasksSince(task.id, run.created_at))) return false
         // A task that works in its own folder has no code to change; one in its project's repository has no checkpoints.
         if (workDir(task) !== null) return true
         if ((yield* ownWorktree(task)) === null) return false

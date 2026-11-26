@@ -16,7 +16,7 @@ const PLAN: LabelInfo = {
   label: "Plan",
   icon: <ClipboardList size={12} />,
   file: "plan.html",
-  hint: "An HTML plan its agent writes and you iterate on together",
+  hint: "A plan its agent publishes with docs, and you iterate on together",
 }
 
 export const LABEL_INFO: LabelInfo[] = [
@@ -26,9 +26,9 @@ export const LABEL_INFO: LabelInfo[] = [
     label: "Artifact",
     icon: <Sparkles size={12} />,
     file: "artifact.html",
-    hint: "A designed HTML page: a document, explainer, dashboard or prototype, kept here rather than on claude.ai",
+    hint: "A designed page published with docs: a document, explainer, dashboard or prototype",
   },
-  { id: "diagram", label: "Diagram", icon: <Workflow size={12} />, file: "diagram.mmd", hint: "A Mermaid diagram" },
+  { id: "diagram", label: "Diagram", icon: <Workflow size={12} />, file: "diagram.mmd", hint: "A diagram published with docs" },
 ]
 
 /** A scratch task, which the new task dialog offers as a type: in no project (API 47), or in a project (API 51). */

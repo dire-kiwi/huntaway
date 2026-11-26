@@ -29,7 +29,7 @@ import { lastingOf } from "../../runs/finish.ts"
 const resolution = Resolution.annotate({ description: "How a done task ended. Only with status done; defaults to done." })
 const labels = Schema.Array(DocumentLabel).annotate({
   description:
-    "Documents the task's agent writes besides its other work, each shown in a tab of the task (get_task gives their files): 'plan', an HTML plan it writes first and iterates on with the user before doing the work; 'artifact', an HTML page (an explainer, dashboard or prototype); 'diagram', a Mermaid diagram. On update_task it replaces the task's labels; [] clears them.",
+    "Documents the task's agent makes besides its other work, each published with the docs server: 'plan', a plan it publishes first and iterates on with the user before doing the work; 'artifact', a designed page (an explainer, dashboard or prototype); 'diagram', a diagram. On update_task it replaces the task's labels; [] clears them.",
 })
 const dependsOnArg = Schema.Array(Schema.String).annotate({
   description:
