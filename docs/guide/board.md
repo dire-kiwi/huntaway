@@ -274,26 +274,33 @@ Any task can have **labels**: **Plan**, **Artifact** and **Diagram**, each askin
 agent for a document besides its other work. Add them in the _New task_ form by typing `/plan`,
 `/artifact` or `/diagram` (several at once work), in the task's _Details_ tab under _Labels_ (they can
 be added and taken off at any time; the agent hears of a change the next time it starts), or
-with `labels` on the `create_task` and `update_task` tools. The agent writes each in the task's
-own folder (`<data dir>/documents/<task id>`, which it can write in without asking, outside the
-repository), wherever it does the rest of its work: `plan.html`, an HTML plan to iterate on;
-`artifact.html`, a designed HTML page like a claude.ai artifact (the agent uses the
-`artifact-design` skill when it has it, but the page stays on the board); or `diagram.mmd`, a
-Mermaid diagram. With a plan, it writes the plan first and waits for you to approve it before it
-starts the work; once you do, it can carry it out in the task or break it into tasks, and the
-card shows how many of those are done. Each label gets a tab in the task, before the thread,
-showing its document as the agent writes it: HTML in a sandboxed frame (its scripts run, but it
-can't reach the board or other hosts: see below), a diagram drawn in the board with zoom, an SVG
-download and a button that sends a parse error back to the agent. Reply under the document to ask
-for changes. The board keeps a version from each turn that changed the file (the `tasks.document` RPC method, with
-`label`, and `version` for an earlier one), and the task opens on its first label's document once there's
-one to read. The board's _Type_ filter finds tasks by their labels too.
+with `labels` on the `create_task` and `update_task` tools. The agent publishes each with the
+**docs** server (the docs plugin's `publish_document`) and links it in the thread: a plan as a docs
+page, with its questions as form fields and an _Approval_ at the end, which you answer on the page
+and send to the task; an artifact, a designed page like a claude.ai artifact (the agent uses the
+`artifact-design` skill when it has it), as an HTML page; a diagram as an HTML page that draws it.
+Docs runs no scripts on its pages, so neither has any. Without the docs plugin there's nowhere to
+publish: the agent doesn't fall back to a file. With a plan, it publishes the plan first and waits
+for you to approve it before it starts the work; once you do, it can carry it out in the task or
+break it into tasks, and the card shows how many of those are done. A run that only published its
+plan leaves the task in _Needs attention_, waiting on you. The board's _Type_ filter finds tasks by
+their labels too.
+
+Before that, the agent wrote each label's document in the task's own folder
+(`<data dir>/documents/<task id>`: `plan.html`, `artifact.html` or `diagram.mmd`), and the board
+showed it in a tab of the task. A task that has such a document keeps its tab, before the thread,
+read only: the versions the board kept (one from each turn that changed the file; the
+`tasks.document` RPC method, with `label`, and `version` for an earlier one), its source, a download,
+and a diagram's zoom and SVG download. A plan's questions are shown but can't be answered, and the
+board no longer keeps the agent's changes to the file: it's told to start from the file in the docs
+document instead. Such a task opens on its first label's document. An old HTML document is shown in
+a sandboxed frame (its scripts run, but it can't reach the board or other hosts: see below).
 
 An HTML document's frame has a Content-Security-Policy that lets it load only scripts, styles and
 fonts from cdnjs, jsDelivr, unpkg and Google Fonts (no remote images, requests, frames or form
 posts), and no WebRTC (its policy also requires Trusted Types, which keeps a `javascript:` URL frame
 in it from getting WebRTC back), so a page an agent wrote (say, prompted by a poisoned issue) can't send
-what's in it, or your answers to it, somewhere else. Its links open in a new tab after your click in
+what's in it somewhere else. Its links open in a new tab after your click in
 the page; one it opens otherwise, the board asks you about first. In a browser, a page can still
 send data out in a hostname of its choosing, without a click (HA-269):
 
@@ -310,16 +317,8 @@ preconnect link, and it takes WebRTC away in every frame. Browsers other than Ch
 weren't checked.
 
 Before labels, the old board had plan, artifact and diagram as types of task whose agents made only the document,
-in the task's own folder, with no worktree, review or merge. Tasks made as one have it as their label since, and keep
+with no worktree, review or merge (they work in the task's own folder, and publish the document with docs now). Tasks made as one have it as their label since, and keep
 working that way: _Ready for merge_ marks them done.
-
-A plan's agent asks what it needs to know as questions in the plan (`<ia-question>`: a choice of
-one or several, a dropdown, or text, with an optional free-text _Other_, and any named form field
-in the plan counts too). Answer them in the plan; the bar above the composer counts the answered
-ones. Your answers are kept in this browser until you send them, so they last when the agent
-changes the plan, or the board is reloaded (_Reset_ puts back the plan's own). **Send answers**
-sends them to the agent as a message, each question with its answer, and it updates the plan
-with them. An earlier version's questions are shown but can't be answered.
 
 A **scratch task** (pick **Scratch** in the _New task_ form, or pass `type: "scratch"` to `create_task`) is for whatever
 you ask its agent: questions, trying things out, or planning and running work with the board tools. Its agent works in
