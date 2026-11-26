@@ -423,6 +423,40 @@ describe("translate", () => {
     assert.deepStrictEqual(call(again, "bg").subagent, { status: "running", background: true })
   })
 
+  it("a subagent continued by SendMessage runs again on its own call (HE-115)", () => {
+    const first = [
+      assistant(1, null, [{ type: "tool_use", id: "fg", name: "Agent", input: { description: "Publish", prompt: "Go" } }]),
+      task(2, { subtype: "task_started", task_type: "local_agent", task_id: "k1", tool_use_id: "fg", description: "Publish", is_backgrounded: false }),
+      task(3, { subtype: "task_updated", task_id: "k1", patch: { status: "completed" } }),
+      task(4, { subtype: "task_notification", task_id: "k1", tool_use_id: "fg", status: "completed" }),
+      results(5, null, [{ type: "tool_result", tool_use_id: "fg", content: "Report" }]),
+      // Claude Code says it started again, by the SendMessage call, and it reports how it gets on by that call too.
+      assistant(6, null, [{ type: "tool_use", id: "sm", name: "SendMessage", input: { to: "k1", message: "Again" } }]),
+      task(7, {
+        subtype: "task_started",
+        task_type: "local_agent",
+        task_id: "k1",
+        tool_use_id: "sm",
+        description: "Publish",
+        prompt: "Again",
+        is_backgrounded: true,
+      }),
+      results(8, null, [{ type: "tool_result", tool_use_id: "sm", content: "Resuming agent k1" }]),
+      task(9, { subtype: "task_progress", task_id: "k1", tool_use_id: "sm", description: "Reading a.md" }),
+    ]
+    const again = convert(first)
+    assert.deepStrictEqual(call(again, "fg").subagent, { status: "running", activity: "Reading a.md" })
+    // The SendMessage call stays a plain call, not a second subagent.
+    assert.deepStrictEqual([call(again, "sm").kind, call(again, "sm").subagent], ["other", undefined])
+    assert.deepStrictEqual(again.codes, [])
+    const done = convert([
+      ...first,
+      task(10, { subtype: "task_updated", task_id: "k1", patch: { status: "completed" } }),
+      task(11, { subtype: "task_notification", task_id: "k1", tool_use_id: "sm", status: "completed", usage: { tool_uses: 4 } }),
+    ])
+    assert.deepStrictEqual(call(done, "fg").subagent, { status: "completed", activity: "Reading a.md", ended_at: atOf(10), tool_uses: 4 })
+  })
+
   it("what the history doesn't say", () => {
     const long = "x".repeat(RESULT_MAX_BYTES + 5)
     const c = convert(

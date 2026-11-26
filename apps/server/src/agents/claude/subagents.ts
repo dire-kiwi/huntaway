@@ -40,6 +40,12 @@ export const subagentStarted = (s: SubagentState | undefined, line: TaskLine, mo
   }
 }
 
+/** Continued (with SendMessage) after it ended: running again, with no end or report yet. */
+export const subagentResumed = (s: SubagentState): SubagentState => {
+  const { summary: _summary, ended_at: _ended, ...rest } = s
+  return { ...rest, status: "running" }
+}
+
 /** A subagent after a task_progress, task_updated or task_notification about it, read `at`. */
 export const subagentTask = (s: SubagentState, line: TaskLine, at: Timestamp): SubagentState => {
   const running = s.status === "running"
@@ -51,10 +57,7 @@ export const subagentTask = (s: SubagentState, line: TaskLine, at: Timestamp): S
     }
     case "task_updated": {
       // Continued (with SendMessage) after it ended, it runs again.
-      if (line.patch?.status === "running") {
-        const { summary: _summary, ended_at: _ended, ...rest } = s
-        return { ...rest, status: "running" }
-      }
+      if (line.patch?.status === "running") return subagentResumed(s)
       const end = subagentEnd(line.patch?.status)
       return end !== undefined && running ? ended(s, end, at) : { ...s }
     }

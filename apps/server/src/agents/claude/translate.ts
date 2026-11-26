@@ -16,7 +16,7 @@ import {
   type UserLine,
 } from "./lines.ts"
 import { type Call, Draft, get, type ItemMeta, sameSession, type TranslateWarning, type TranslatorState } from "./state.ts"
-import { agentResultMeta, subagentResult, subagentStarted, subagentTask } from "./subagents.ts"
+import { agentResultMeta, subagentResult, subagentResumed, subagentStarted, subagentTask } from "./subagents.ts"
 import { isTruncated, jsonText, resultText, sameJson, str, toolFields, uint } from "./tools.ts"
 
 // Claude Code's lines to thread events (docs/plan/07-agents.md, The two drivers; inventory 08, section 3.5): the old
@@ -506,6 +506,18 @@ const job = (step: Step, line: TaskLine): void => {
       if (task) step.setJob(task, "shown")
       if (only !== undefined && task) step.putCall({ ...only, shownTasks: [...only.shownTasks, task] })
       if (type !== "local_bash") step.warn("unknown_task_type", `a background task of type ${jsonText(type)}`)
+      return
+    }
+    // A subagent the thread has, started again by another call (SendMessage continues one that ended, HE-115): its
+    // own call's subagent runs again, and that call stays what it is.
+    const known = task ? get(step.s.jobs, task) : undefined
+    if (known !== undefined && known !== "shown" && known.agent !== only?.item) {
+      const c = step.call(known.agent)
+      if (c?.subagent !== undefined && c.subagent.status !== "running") {
+        const next = subagentResumed(c.subagent)
+        step.putCall({ ...c, subagent: next })
+        step.update(c.item, { subagent: next })
+      }
       return
     }
     if (only === undefined) {
