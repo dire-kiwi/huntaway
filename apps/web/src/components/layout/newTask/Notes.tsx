@@ -45,8 +45,8 @@ export function Notes({
       )}
       {labelling && labels.length > 0 && (
         <div className="text-[12px] text-muted">
-          Besides its other work, its agent writes {labelList(labels)} in the task's own folder, each shown in a tab of the task.
-          {labels.includes("plan") && " It writes the plan first, for you to agree on before it starts the work."}
+          Besides its other work, its agent makes {labelList(labels)}, publishes {labels.length === 1 ? "it" : "each"} with docs and links it in the thread.
+          {labels.includes("plan") && " It publishes the plan first, for you to agree on before it starts the work."}
         </div>
       )}
       {intoNote && <div className="text-[12px] text-muted">{intoNote}</div>}

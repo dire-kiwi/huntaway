@@ -341,7 +341,7 @@ export function AutomationEditor({
               </div>
               <Field
                 label="Labels"
-                hint="Documents its agent writes besides its other work, each shown in a tab of the task: a plan it writes first, for you to agree on, an artifact (an HTML page) or a Mermaid diagram."
+                hint="Documents its agent makes besides its other work, each published with docs and linked in the thread: a plan it publishes first, for you to agree on, an artifact (a designed page) or a diagram."
               >
                 <div className="flex flex-wrap gap-1">
                   {LABELS.map((l) => (

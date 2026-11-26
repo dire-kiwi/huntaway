@@ -8,7 +8,7 @@ import { Section } from "./Section"
 // Where the agent writes each label's document (the old `api.document`'s `file`, a row per label) comes with task
 // documents (6.2).
 
-/** A task's labels, each a document its agent writes besides its other work, shown in a tab of the task: to add and
+/** A task's labels, each a document its agent makes besides its other work, published with docs (HE-122): to add and
  *  take off (API 71). */
 export function LabelsSection({ task }: { task: Task }) {
   const labels = taskLabels(task)
@@ -44,11 +44,10 @@ export function LabelsSection({ task }: { task: Task }) {
         </div>
         <div className="text-[12.5px] text-muted">
           {docsOnly
-            ? `Rather than changing code, its agent writes ${labels.length ? "a document for each label" : "a document for each label it's given"} in the task's own folder, reading the ${where}.`
+            ? `Rather than changing code, its agent makes ${labels.length ? "a document for each label" : "a document for each label it's given"}, reading the ${where}, and publishes it with docs.`
             : labels.length
-              ? "Besides its other work, its agent writes a document for each label in the task's own folder, shown in a tab here."
-              : "A label has its agent write a document besides its other work: a plan to agree on first, an artifact or a diagram, each shown in a tab here."}{" "}
-          {labels.length > 0 && "The board keeps a version from each turn."}
+              ? "Besides its other work, its agent makes a document for each label, publishes it with docs and links it in the thread."
+              : "A label has its agent make a document besides its other work: a plan to agree on first, an artifact or a diagram, published with docs and linked in the thread."}
           {task.running && " A label changed while its agent works reaches it the next time it starts."}
         </div>
         {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
