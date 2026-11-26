@@ -1681,18 +1681,25 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   only for what is theirs: a review round's fixes, a merge conflict, a message the user sends them. Those runs get the
   set's other worktrees too. Each is reviewed, approved and merged as any task is, once the lead's run has moved it.
 - **When the lead's run ends**: a column, a review and a pull request lookup follow only the task whose run ended
-  (`decideFinish`, the reactor's review on a move to In review, `PullRequests.findLater(run.task_id)`), so the lead's
-  run end does it for the others too (`RunEnds`, after the lead's own move). If `decideFinish` takes the lead to In
-  review, each other open task of the set in To do, with no run of its own going, is decided on its branch:
-  - with commits of its own (its branch ahead of its base) it moves to In review too, so its own reviewers start, and
-    its pull request is looked up on its own repository (`findLater` for that task);
+  (`decideFinish`; `ReviewDue` or the reactor's review on a move to In review; `PullRequests.findLater(run.task_id)`),
+  so the lead's run end does it for the others too (`RunEnds`, after the lead's own move). The trigger is **the lead's
+  run ending with its work finished**, wherever it would have gone to In review before HE-66's hold: `decideFinish`
+  gives In review, or holds it in In progress for its review (`decision.review`, HE-66; the default, as `auto_review`
+  is on by default), or hands it to its workflow column (`decision.workDone`). Then each other open task of the set in
+  To do, with no run of its own going, is decided on its branch:
+  - with commits of its own (its branch ahead of its base) it moves to In review, a board move from To do, so its own
+    reviews start as for any such move (the reactor's `reviews.reconcile`; a project that reviews holds it in In
+    progress while it's reviewed, `Reviews`), and its pull request is looked up on its own repository (`findLater` for
+    that task);
   - with none, it is closed as not done ("no changes in this repository"), which takes it out of the set's count; the
     lead's thread says so. Reopened, it is in the set again.
 
-  A lead that ends anywhere else (Needs attention, To do) moves none of them. A task already past To do, or with a run
-  of its own, is left alone: its own run's end moves it. Each later end of the lead's run in In review (after review
-  fixes, say) decides again for those still in To do. A pure function of the set's rows and their branches, with table
-  tests.
+  A lead run that ends any other way moves none of them: in Needs attention (a question, a plan only, an unfinished
+  todo list asked about once, a failure), held in In progress to finish its todo list, back in the merge queue, or in
+  To do or wherever a lasting thread stays. A task already past To do, or with a run of its own, is left alone: its own
+  run's end moves it. Each later lead run that ends with its work finished (after review fixes, held again for the next
+  round, say) decides again for those still in To do. A pure function of the lead's decision, the set's rows and their
+  branches, with table tests.
 - **Landing together**: a set's task in Ready for merge waits until every open task of its set is in Ready for merge,
   then each merges through its own project's queue. A task closed as not done or won't fix leaves the set's count. A
   merge that fails once others have merged is the lead's to settle, and the board tells the lead's thread.
