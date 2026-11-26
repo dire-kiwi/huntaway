@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react"
-import { type Board, boardAtom } from "@huntaway/client"
+import { type Board, boardAtom, type HostProject } from "@huntaway/client"
 import { Atom } from "effect/reactivity"
 import { load, save } from "./storage"
 import { registry } from "./registry"
@@ -43,3 +43,15 @@ export function startProfile(): void {
     if (name !== null && registry.get(pickedProfileAtom) === null) registry.set(pickedProfileAtom, name)
   })
 }
+
+/** The projects of profile `name` on every host (pure). */
+export const projectsOf = (b: Pick<Board, "profiles" | "projects">, name: string | null): ReadonlyArray<HostProject> => {
+  const ids = new Set(b.profiles.filter((p) => p.name === name).map((p) => `${p.host_id}/${p.id}`))
+  return b.projects.filter((p) => ids.has(`${p.host_id}/${p.profile_id}`))
+}
+
+/** A project across hosts: its host's id and its own. */
+export const projectKey = (p: Pick<HostProject, "host_id" | "id">): string => `${p.host_id}/${p.id}`
+
+/** The project the Tasks tab shows (its `projectKey`); null for every project of the profile. Kept while the app runs. */
+export const shownProjectAtom: Atom.Writable<string | null> = Atom.make<string | null>(null).pipe(Atom.keepAlive)

@@ -1,6 +1,7 @@
 // HE-60: which host answers a plugin's page. A plugin keeps its data per host, keyed by profile, and its paths name the
 // profile first (`/docs/<profile id>/d/<slug>/…`, `/notes/<profile id>`): such a page is that profile's host's. Through
 // a hub the page's own host is the hub, which has no such profile, so the docs plugin there said "no profile …".
+// Here (HE-99) for the web board and the phone app both.
 
 /**
  * The host for the plugin page at `path`: the host of the profile its first segment names (the page's own host first,

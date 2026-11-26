@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { pluginHost } from "../../src/components/plugins/pluginHost"
+import { pluginHost } from "@huntaway/client"
 
 // HE-60: a plugin's page whose path starts with a profile's id (a document's, `/docs/<profile id>/d/<slug>`) is that
 // profile's host's, so a document of a host the hub links opens there rather than on the hub, which has no such profile.

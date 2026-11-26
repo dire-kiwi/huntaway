@@ -1,14 +1,28 @@
 import type { Item, Snapshot, ThreadRequest, ToolCall } from "@huntaway/contracts"
+import { type DocRef, publishedDoc } from "./links"
 
 // What a thread shows on the phone (a smaller cut of the web's itemModel.ts, as the old app's thread.ts was): the
 // user's messages, the agent's text, each tool call in one line, the board's notices, a routine's report, a failed
 // turn, and the requests (prompts, questions, plans) after the call they are for. Subagents' own items, a window's
-// context items, reasoning and compactions are left out.
+// context items, reasoning and compactions are left out. HE-99: a run of tool calls is one row that opens
+// (`foldTools`), so a phone's screen shows what was said rather than what was run, and a document an agent published
+// is a row that opens it.
+
+/** A tool call, in one line. */
+export interface ToolRow {
+  readonly type: "tool"
+  readonly key: string
+  readonly name: string
+  readonly summary: string
+  readonly status: ToolCall["status"]
+}
 
 export type Row =
   | { readonly type: "user"; readonly key: string; readonly text: string }
   | { readonly type: "text"; readonly key: string; readonly text: string }
-  | { readonly type: "tool"; readonly key: string; readonly name: string; readonly summary: string; readonly status: ToolCall["status"] }
+  | ToolRow
+  /** A document the agent published (the docs plugin's `publish_document`), which opens in the app. */
+  | { readonly type: "doc"; readonly key: string; readonly doc: DocRef }
   | { readonly type: "notice"; readonly key: string; readonly level: "info" | "warning" | "error"; readonly text: string }
   | { readonly type: "report"; readonly key: string; readonly automation: string; readonly outcome: string; readonly text: string }
   | { readonly type: "failed"; readonly key: string; readonly text: string }
@@ -41,6 +55,16 @@ export const toolSummary = (t: Pick<ToolCall, "command" | "path" | "query" | "ur
   return firstLine(said)
 }
 
+/** A short view of what a prompt's tool would do, from what the agent asked with: its command, file, address… */
+export const inputText = (input: unknown): string => {
+  if (typeof input !== "object" || input === null) return ""
+  for (const f of ["command", "file_path", "path", "url", "query", "description", "prompt"]) {
+    const v: unknown = Reflect.get(input, f)
+    if (typeof v === "string" && v.trim() !== "") return v.length > 400 ? `${v.slice(0, 399)}…` : v
+  }
+  return ""
+}
+
 /** Whether a request is still waiting for its answer. */
 export const isOpen = (r: ThreadRequest): boolean => r.resolution === undefined
 
@@ -49,6 +73,9 @@ export const isOpen = (r: ThreadRequest): boolean => r.resolution === undefined
  * user's message (`threads.answerQuestion`), not as the agent's prompt (`permissions.answer`).
  */
 export const isBoardQuestion = (r: ThreadRequest): boolean => r.type === "question" && r.id.startsWith("legacy:")
+
+/** The docs plugin's tool that publishes a document, as an agent knows it. */
+const PUBLISH = "mcp__docs__publish_document"
 
 /** One item's row, if it has one. */
 function rowOf(it: Item): Row | null {
@@ -59,6 +86,8 @@ function rowOf(it: Item): Row | null {
       return it.text.trim() === "" || it.metadata?.["from_result"] === true ? null : { type: "text", key: it.id, text: it.text }
     case "tool_call": {
       const name = toolName(it)
+      const doc = name === PUBLISH && it.status === "completed" && it.result !== undefined ? publishedDoc(it.result.content) : null
+      if (doc !== null) return { type: "doc", key: it.id, doc }
       return { type: "tool", key: it.id, name, summary: toolSummary(it), status: it.status }
     }
     case "notice":
@@ -115,4 +144,35 @@ export function threadRows(snap: Pick<Snapshot, "items" | "requests" | "context"
   }
   for (const r of loose.slice(next)) out.push({ type: "request", key: r.id, request: r })
   return out
+}
+
+/** A thread's row as a phone draws it: a row, or a run of tool calls in one. */
+export type Shown = Exclude<Row, ToolRow> | { readonly type: "tools"; readonly key: string; readonly calls: ReadonlyArray<ToolRow> }
+
+/** A run of tool calls' key: its first call's, so a run that grows keeps the row it had (and whether it was open). */
+const runOf = (calls: ReadonlyArray<ToolRow>): Shown => ({ type: "tools", key: `tools:${calls[0]?.key ?? ""}`, calls })
+
+/** `rows` with every run of tool calls next to each other folded into one row (pure). */
+export function foldTools(rows: ReadonlyArray<Row>): ReadonlyArray<Shown> {
+  const out: Array<Shown> = []
+  let run: Array<ToolRow> = []
+  for (const row of rows) {
+    if (row.type === "tool") {
+      run.push(row)
+      continue
+    }
+    if (run.length > 0) out.push(runOf(run))
+    run = []
+    out.push(row)
+  }
+  if (run.length > 0) out.push(runOf(run))
+  return out
+}
+
+/** A run of tool calls in a few words: how many, how many failed, and whether one is still going. */
+export function toolsSummary(calls: ReadonlyArray<Pick<ToolRow, "status">>): { readonly label: string; readonly running: boolean; readonly failed: number } {
+  const failed = calls.filter((c) => c.status === "failed" || c.status === "denied").length
+  const running = calls.some((c) => c.status === "running" || c.status === "pending")
+  const label = `${calls.length} ${calls.length === 1 ? "step" : "steps"}${failed === 0 ? "" : `, ${failed} failed`}`
+  return { label, running, failed }
 }

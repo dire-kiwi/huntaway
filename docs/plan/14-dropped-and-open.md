@@ -37,7 +37,7 @@ variables `IA_TASK_KEY` and friends, the `ia.*` browser storage keys, tmux names
 
 **What the phone app has yet to get back** (the app itself is `apps/mobile` since HE-20; it pairs by PIN since HE-91):
 Expo push, answering a prompt from the lock screen (`/api/push-answer`), several boards,
-sharing in, attachments and dictation. The Jest set-up is not carried: the app's logic is tested with Vitest like the
+sharing in, attachments and voice notes (dictation is back, HE-99). The Jest set-up is not carried: the app's logic is tested with Vitest like the
 rest. The old app keeps working against machines that have not switched and cannot reach one that has. The list,
 a task each, is in [09-frontend.md](09-frontend.md#the-phone-app).
 

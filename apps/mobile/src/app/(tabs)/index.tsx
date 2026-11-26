@@ -1,34 +1,23 @@
 import { useAtomValue } from "@effect/atom-react"
-import { boardHosts, mutate, query, QUESTION_TOOLS } from "@huntaway/client"
+import { agentWorking, mutate, QUESTION_TOOLS } from "@huntaway/client"
 import { RequestId } from "@huntaway/contracts"
-import { AsyncResult, Atom } from "effect/reactivity"
 import { router } from "expo-router"
-import { FlatList, Pressable, Text, View } from "react-native"
-import { Button, Empty, ErrorText, s } from "../../components/ui"
-import { type HostPrompts, type InboxItem, inboxItems } from "../../logic/inbox"
-import { shortToolName } from "../../logic/thread"
+import { useMemo } from "react"
+import { Pressable, SectionList, Text, View } from "react-native"
+import { TaskCard } from "../../components/taskCard"
+import { Button, Empty, ErrorText, Icon, s, Section } from "../../components/ui"
+import { type InboxItem, needsAnswer } from "../../logic/inbox"
+import { inputText, shortToolName } from "../../logic/thread"
 import { useAction } from "../../state/action"
 import { useBoard } from "../../state/board"
-import { colors, STATUS_COLOR } from "../../theme"
-import { boardAtom } from "@huntaway/client"
+import { useNow } from "../../state/clock"
+import { inboxAtom } from "../../state/inbox"
+import { openTask } from "../../state/open"
+import { colors, space, tint } from "../../theme"
 
-// The Inbox: what waits on the user across the board's hosts. Prompts (Allow or Deny here; questions and plans open
-// their task) and the tasks in Needs attention. Prompts are no board event, so they are read again every few seconds
-// while the Inbox shows.
-
-const PROMPTS_EVERY = "5 seconds"
-
-const noPrompts: HostPrompts["prompts"] = []
-
-/** Every usable host's pending prompts, as each last answered. */
-const promptsAtom = Atom.make((get): ReadonlyArray<HostPrompts> =>
-  boardHosts(get(boardAtom).hosts).map((h) => ({
-    host_id: h.id,
-    prompts: AsyncResult.getOrElse(get(query("permissions.pending", h.id, {}, { refresh: PROMPTS_EVERY })), () => noPrompts),
-  })),
-)
-
-const openTask = (host: string, id: string) => router.push({ pathname: "/task/[host]/[id]", params: { host, id } })
+// The Inbox: what waits on the user across the board's hosts (state/inbox.ts). First what waits on an answer: prompts
+// (Allow or Deny here; questions and plans open their task) and the tasks in Needs attention. Then what waits on a look:
+// the tasks new in In review (HE-99). Above them, how many agents are at work.
 
 function PromptCard({ item }: { readonly item: Extract<InboxItem, { type: "prompt" }> }) {
   const [{ busy, error }, run] = useAction()
@@ -36,55 +25,98 @@ function PromptCard({ item }: { readonly item: Extract<InboxItem, { type: "promp
   // A question or a plan has its own card in the thread.
   const answersHere = !QUESTION_TOOLS.includes(prompt.tool_name) && prompt.tool_name !== "ExitPlanMode"
   const decide = (decision: "allow" | "deny") => run(mutate("permissions.answer", host_id, { id: RequestId.make(prompt.id), answer: { decision } }))
+  const said = answersHere ? inputText(prompt.input) : ""
   return (
-    <Pressable style={[s.card, { borderColor: colors.amber }]} onPress={() => openTask(host_id, prompt.task_id)}>
-      <Text style={s.faint}>{task === undefined ? prompt.task_id : `${task.key} · ${task.title}`}</Text>
-      <Text style={s.title}>{answersHere ? `Allow ${shortToolName(prompt.tool_name)}?` : "A question for you"}</Text>
+    <Pressable
+      style={[s.card, { borderColor: tint(colors.amber, 0.6) }]}
+      accessibilityRole="link"
+      accessibilityLabel={task === undefined ? "A prompt" : `${task.key} ${task.title}`}
+      onPress={() => openTask(host_id, prompt.task_id)}
+    >
+      <Text style={s.faint} numberOfLines={1}>
+        {task === undefined ? prompt.task_id : `${task.key} · ${task.title}`}
+      </Text>
+      <View style={s.row}>
+        <Icon name={answersHere ? "shield-half-outline" : "help-circle-outline"} size={18} color={colors.amber} />
+        <Text style={[s.title, { flex: 1 }]}>
+          {answersHere ? `Allow ${shortToolName(prompt.tool_name)}?` : prompt.tool_name === "ExitPlanMode" ? "A plan to approve" : "A question for you"}
+        </Text>
+      </View>
+      {said !== "" && (
+        <Text style={[s.muted, { fontFamily: "monospace", fontSize: 13 }]} numberOfLines={3}>
+          {said}
+        </Text>
+      )}
       {answersHere ? (
-        <View style={s.row}>
-          <Button title="Allow" kind="primary" small busy={busy} onPress={() => decide("allow")} />
-          <Button title="Deny" kind="danger" small disabled={busy} onPress={() => decide("deny")} />
+        <View style={[s.row, { paddingTop: 2 }]}>
+          <Button title="Allow" kind="primary" icon="checkmark" busy={busy} style={{ flex: 1 }} onPress={() => decide("allow")} />
+          <Button title="Deny" kind="danger" icon="close" disabled={busy} style={{ flex: 1 }} onPress={() => decide("deny")} />
         </View>
       ) : (
-        <Button title="Answer" small onPress={() => openTask(host_id, prompt.task_id)} />
+        <Button title="Open to answer" icon="chatbubble-ellipses-outline" onPress={() => openTask(host_id, prompt.task_id)} />
       )}
       {error !== null && <ErrorText>{error}</ErrorText>}
     </Pressable>
   )
 }
 
-function AttentionCard({ item }: { readonly item: Extract<InboxItem, { type: "attention" }> }) {
-  const { task } = item
+/** How many agents are at work, which takes you to them. */
+function Working() {
+  const working = useBoard((b) => Object.values(b.tasks).filter((t) => t.kind === "task" && agentWorking(t)).length)
+  if (working === 0) return null
   return (
-    <Pressable style={s.card} accessibilityRole="link" onPress={() => openTask(task.host_id, task.id)}>
-      <View style={s.row}>
-        <View style={[s.dot, { backgroundColor: STATUS_COLOR[task.status] }]} />
-        <Text style={s.faint}>{task.key}</Text>
-      </View>
-      <Text style={s.title} numberOfLines={2}>
-        {task.title}
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={`${working} ${working === 1 ? "agent" : "agents"} working`}
+      onPress={() => router.navigate("/tasks")}
+      style={({ pressed }) => [s.row, { marginHorizontal: space.md, marginBottom: space.xs, paddingHorizontal: space.md, height: 44 }, pressed && s.pressed]}
+    >
+      <Icon name="pulse" size={18} color={colors.blue} />
+      <Text style={[s.muted, { flex: 1 }]}>
+        {working} {working === 1 ? "agent" : "agents"} working
       </Text>
-      {task.attention_reason !== null && (
-        <Text style={s.muted} numberOfLines={3}>
-          {task.attention_reason}
-        </Text>
-      )}
+      <Icon name="chevron-forward" size={15} color={colors.faint} />
     </Pressable>
   )
 }
 
 export default function InboxScreen() {
-  const tasks = useBoard((b) => b.tasks)
   const loaded = useBoard((b) => b.loaded)
-  const prompts = useAtomValue(promptsAtom)
-  const items = inboxItems(Object.values(tasks), prompts)
+  const projects = useBoard((b) => b.projects)
+  const items = useAtomValue(inboxAtom)
+  const now = useNow(60_000)
+  const names = useMemo(() => new Map(projects.map((p) => [`${p.host_id}/${p.id}`, p.name])), [projects])
+  const sections = useMemo(
+    () =>
+      [
+        { title: "Waiting on you", data: items.filter(needsAnswer) },
+        { title: "New in review", data: items.filter((it) => !needsAnswer(it)) },
+      ].filter((section) => section.data.length > 0),
+    [items],
+  )
   return (
-    <FlatList
+    <SectionList
       style={s.screen}
-      data={items}
+      sections={sections}
       keyExtractor={(it) => it.key}
-      ListEmptyComponent={<Empty title={loaded ? "Nothing waits on you." : "Loading the board…"} />}
-      renderItem={({ item }) => (item.type === "prompt" ? <PromptCard item={item} /> : <AttentionCard item={item} />)}
+      stickySectionHeadersEnabled={false}
+      contentContainerStyle={{ paddingBottom: space.xl, flexGrow: 1 }}
+      ListHeaderComponent={<Working />}
+      ListEmptyComponent={
+        loaded ? (
+          <Empty icon="checkmark-circle-outline" title="Nothing waits on you." hint="Prompts, questions and finished work show here." />
+        ) : (
+          <Empty title="Loading the board…" />
+        )
+      }
+      renderSectionHeader={({ section }) => <Section title={section.title} count={section.data.length} />}
+      renderItem={({ item }) =>
+        item.type === "prompt" ? (
+          <PromptCard item={item} />
+        ) : (
+          <TaskCard task={item.task} project={names.get(`${item.task.host_id}/${item.task.project_id}`)} now={now} />
+        )
+      }
     />
   )
 }

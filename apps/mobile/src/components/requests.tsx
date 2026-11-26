@@ -2,11 +2,11 @@ import { mutate } from "@huntaway/client"
 import { type PermissionAnswer, RequestId, TaskId, type ThreadRequest } from "@huntaway/contracts"
 import { useState } from "react"
 import { Text, TextInput, View } from "react-native"
-import { isBoardQuestion, isOpen, shortToolName } from "../logic/thread"
+import { inputText, isBoardQuestion, isOpen, shortToolName } from "../logic/thread"
 import { useAction } from "../state/action"
-import { colors } from "../theme"
+import { colors, space, tint } from "../theme"
 import { Markdown } from "./markdown"
-import { Button, Chip, ErrorText, s } from "./ui"
+import { Button, Chip, ErrorText, Icon, s } from "./ui"
 
 // The cards of a thread's requests (the old app's prompts.tsx, on the thread's own requests): a prompt answered Allow
 // or Deny, the agent's questions (options, several at once, a typed answer), a plan approved or sent back, and the
@@ -24,34 +24,33 @@ const outcomeText = (r: ThreadRequest): string => {
 }
 
 const requestTitle = (r: ThreadRequest): string => {
-  if (r.type === "permission") return r.title ?? shortToolName(r.name)
+  if (r.type === "permission") return `Allow ${shortToolName(r.name)}?`
   if (r.type === "plan") return "The agent has a plan"
   return r.questions.length === 1 ? (r.questions[0]?.header ?? "A question") : `${r.questions.length} questions`
 }
 
-/** A short view of what a prompt's tool would do. */
-const inputText = (input: unknown): string => {
-  if (typeof input !== "object" || input === null) return ""
-  const fields = ["command", "file_path", "path", "url", "query", "description", "prompt"]
-  for (const f of fields) {
-    const v: unknown = Reflect.get(input, f)
-    if (typeof v === "string" && v.trim() !== "") return v.length > 400 ? `${v.slice(0, 399)}…` : v
-  }
-  return ""
-}
-
 export function RequestCard({ host, taskId, request }: { readonly host: string; readonly taskId: string; readonly request: ThreadRequest }) {
-  if (!isOpen(request))
+  if (!isOpen(request)) {
+    const refused = request.resolution?.outcome === "deny"
     return (
-      <View style={[s.card, { paddingVertical: 8 }]}>
-        <Text style={s.faint}>
+      <View style={[s.row, { paddingHorizontal: space.lg, paddingVertical: 4 }]}>
+        <Icon name={refused ? "close-circle-outline" : "checkmark-circle-outline"} size={14} color={colors.faint} />
+        <Text style={[s.faint, { flex: 1, fontSize: 13 }]} numberOfLines={1}>
           {requestTitle(request)} · {outcomeText(request)}
         </Text>
       </View>
     )
+  }
   return (
-    <View style={[s.card, { borderColor: colors.amber }]}>
-      <Text style={s.title}>{requestTitle(request)}</Text>
+    <View style={[s.card, { borderColor: tint(colors.amber, 0.6), padding: space.lg, gap: space.sm }]}>
+      <View style={s.row}>
+        <Icon
+          name={request.type === "permission" ? "shield-half-outline" : request.type === "plan" ? "map-outline" : "help-circle-outline"}
+          size={18}
+          color={colors.amber}
+        />
+        <Text style={[s.title, { flex: 1 }]}>{requestTitle(request)}</Text>
+      </View>
       {request.type === "permission" && <PermissionBody host={host} request={request} />}
       {request.type === "plan" && <PlanBody host={host} request={request} />}
       {request.type === "question" && <QuestionBody host={host} taskId={taskId} request={request} />}
@@ -64,19 +63,43 @@ const answer = (host: string, id: string, a: PermissionAnswer) => mutate("permis
 
 function PermissionBody({ host, request }: { readonly host: string; readonly request: Extract<ThreadRequest, { type: "permission" }> }) {
   const [{ busy, error }, run] = useAction()
-  const said = inputText(request.input)
+  // What it would do: its command, file or address, else the agent's own words for it.
+  const said = inputText(request.input) || (request.title ?? "")
   return (
     <>
       {said !== "" && (
-        <Text style={[s.muted, { fontFamily: "monospace", fontSize: 13 }]} numberOfLines={8}>
+        <Text
+          style={[s.muted, { fontFamily: "monospace", fontSize: 13, padding: space.sm, borderRadius: 8, backgroundColor: colors.raised }]}
+          numberOfLines={8}
+        >
           {said}
         </Text>
       )}
       <View style={s.row}>
-        <Button title="Allow" kind="primary" small busy={busy} onPress={() => run(answer(host, request.id, { decision: "allow" }))} />
-        <Button title="Always" small disabled={busy} onPress={() => run(answer(host, request.id, { decision: "allow_always" }))} />
-        <Button title="Deny" kind="danger" small disabled={busy} onPress={() => run(answer(host, request.id, { decision: "deny" }))} />
+        <Button
+          title="Allow"
+          kind="primary"
+          icon="checkmark"
+          busy={busy}
+          style={{ flex: 1 }}
+          onPress={() => run(answer(host, request.id, { decision: "allow" }))}
+        />
+        <Button
+          title="Deny"
+          kind="danger"
+          icon="close"
+          disabled={busy}
+          style={{ flex: 1 }}
+          onPress={() => run(answer(host, request.id, { decision: "deny" }))}
+        />
       </View>
+      <Button
+        title="Always allow in this thread"
+        kind="ghost"
+        small
+        disabled={busy}
+        onPress={() => run(answer(host, request.id, { decision: "allow_always" }))}
+      />
       {error !== null && <ErrorText>{error}</ErrorText>}
     </>
   )
@@ -90,14 +113,15 @@ function PlanBody({ host, request }: { readonly host: string; readonly request: 
       <Markdown text={request.plan} />
       {feedback === null ? (
         <View style={s.wrap}>
-          <Button title="Approve" kind="primary" small busy={busy} onPress={() => run(answer(host, request.id, { decision: "allow", mode: "default" }))} />
           <Button
-            title="Approve, accept edits"
-            small
-            disabled={busy}
-            onPress={() => run(answer(host, request.id, { decision: "allow", mode: "acceptEdits" }))}
+            title="Approve"
+            kind="primary"
+            icon="checkmark"
+            busy={busy}
+            onPress={() => run(answer(host, request.id, { decision: "allow", mode: "default" }))}
           />
-          <Button title="Keep planning" small disabled={busy} onPress={() => setFeedback("")} />
+          <Button title="Approve, accept edits" disabled={busy} onPress={() => run(answer(host, request.id, { decision: "allow", mode: "acceptEdits" }))} />
+          <Button title="Keep planning" kind="ghost" disabled={busy} onPress={() => setFeedback("")} />
         </View>
       ) : (
         <>
@@ -113,11 +137,10 @@ function PlanBody({ host, request }: { readonly host: string; readonly request: 
             <Button
               title="Send back"
               kind="primary"
-              small
               busy={busy}
               onPress={() => run(answer(host, request.id, { decision: "deny", feedback: feedback.trim() }))}
             />
-            <Button title="Cancel" small kind="ghost" onPress={() => setFeedback(null)} />
+            <Button title="Cancel" kind="ghost" onPress={() => setFeedback(null)} />
           </View>
         </>
       )}
@@ -190,9 +213,9 @@ function QuestionBody({
         )
       })}
       <View style={s.row}>
-        <Button title="Send" kind="primary" small busy={busy} disabled={answers.some((a) => a.length === 0)} onPress={() => send(answers)} />
+        <Button title="Send" kind="primary" icon="arrow-up" busy={busy} disabled={answers.some((a) => a.length === 0)} onPress={() => send(answers)} />
         {!board && (
-          <Button title="Dismiss" small kind="ghost" disabled={busy} onPress={() => run(answer(host, request.id, { decision: "deny", message: DISMISSED }))} />
+          <Button title="Dismiss" kind="ghost" disabled={busy} onPress={() => run(answer(host, request.id, { decision: "deny", message: DISMISSED }))} />
         )}
       </View>
       {error !== null && <ErrorText>{error}</ErrorText>}

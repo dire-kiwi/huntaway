@@ -87,7 +87,7 @@ plugin's (HE-42), at the paths the built-in documents had, so the links agents w
 
 A page is the page's own host's, except one whose path starts with a profile's id (`/docs/<profile id>/…`, as every
 document's does): that is the host's that has the profile (the page's own first, where two have one id;
-`components/plugins/pluginHost.ts`, HE-60). So a document of a host the hub links opens there, not on the hub, which
+`pluginHost` in `packages/client/src/logic/plugins.ts`, HE-60). So a document of a host the hub links opens there, not on the hub, which
 has no such profile. Until the board is loaded, a path naming a profile no host has shown yet waits.
 
 A plugin's page opened from another of the board's pages (a task's link to a document, the sidebar from a board) has
@@ -95,6 +95,39 @@ A plugin's page opened from another of the board's pages (a task's link to a doc
 task's key, project's or profile's name, or "Back". It is the page before the first of the plugin's pages, kept while
 moving between them and by their redirects, in the history entries' state (`router.ts`' `cameFrom`, `state/route.ts`'
 `useCameFrom`), so a reload or the browser's back and forward keep it; a page opened from outside the board has none.
+
+## On the phone
+
+HE-99: the phone app (`apps/mobile`, [09-frontend.md](09-frontend.md#the-phone-app)) shows a plugin's pages too: the
+`page` slot as a screen of its own (`app/page.tsx`; the docs plugin's home is the Docs tab), the `task` slot in a
+task's Details, and not `settings`. `components/pluginFrame.tsx` is the web's `PluginFrame` over again: `plugins.page`
+on `pluginHost`'s host (now in `packages/client/src/logic/plugins.ts`, for both apps), read again on the plugin's
+events, and the same bridge (`call`, `navigate`, `openTask`, `onEvent`, `context`).
+
+- **The frame** is a web view (`react-native-webview`, `components/frameView.tsx`) given the page as text, at
+  `about:blank`: no origin, and no storage, cookies, cache, files, geolocation or second window. The page is built by
+  `logic/frame.ts`' `frameDocument`: `FRAME_CSP` before anything else (so the network is held as in the board's
+  frames), then WebRTC taken away and Trusted Types' default policy, the bridge, the theme (`theme.ts`' `frameVars`,
+  the board's `--color-*` and `--font-*`) and a `viewport`. The scripts are text there, not functions turned to text
+  as in `frameSource.ts`: Hermes keeps bytecode, so `String(fn)` has no source. A change to the bridge or to
+  `htmlFrame.ts`' `noWebRtc` is made in both.
+- **The bridge's transport**: the page posts JSON text through `ReactNativeWebView.postMessage`, and the app answers
+  with `injectJavaScript` calling `__huntawayDeliver`. On the app's web build (a check on a computer; the web view has
+  no web) the frame is a sandboxed `<iframe>` and the same script uses `postMessage` (`frameView.web.tsx`).
+- **Nothing the page loads goes anywhere**: the web view is asked about every load (`originWhitelist` is `*`, since
+  the library hands an address off its list to the browser) and allows only `about:blank` and `about:srcdoc` (a
+  mockup's frame), and `setSupportMultipleWindows` is off, since a new window would open in the browser.
+- **Links** reach the app as messages, resolved by the page against its address on the board under an origin that is
+  nobody's (`http://board.invalid/<plugin>/<path>`, `logic/links.ts`), so a relative link is the plugin's and an
+  absolute path the board's. A plugin's page and `/t/<id>` open in the app; a profile's `/docs/<profile id>` is the
+  Docs tab, on that profile; the board's other pages and other sites go to the browser, **asked about first** (a
+  sheet with the whole address): the app can't tell the user's tap in a web view from a script's, as the board does
+  with `userActivation`, and a page could put what it shows into an address. A page may move the app at most once in
+  700 ms.
+- **A page loaded again keeps its place**: a plugin's event that says `reload` (an answer saved, a comment added) gives
+  the frame a new page, so a page that fills its frame says where it is scrolled to and the next one starts there
+  (`frameDocument`'s `y`, as `htmlFrame.ts`' `keepPlace`); answering a form's fields down a long document would
+  otherwise go back to its top each time.
 
 ## Calls and events
 
@@ -198,4 +231,4 @@ itself, HE-63 and HE-114: check that the lockfile has it, and that it matches.)
 - `@huntaway/plugin` published as a tarball on releases, so a plugin outside this repository has its types.
 - A plugin's pages on another host than
   the page's own other than by a profile's id in the path (the frame takes a `host`; the menu shows the page's own
-  host's), plugins in backups, and the phone app.
+  host's), plugins in backups, and a plugin's Settings section on the phone.

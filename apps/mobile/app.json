@@ -40,6 +40,14 @@
       "expo-router",
       "expo-secure-store",
       [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Huntaway listens when you tap a microphone, to write what you say into a message.",
+          "speechRecognitionPermission": "Huntaway turns what you say into text, for the message you are writing.",
+          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox", "com.google.android.tts", "com.google.android.as"]
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",

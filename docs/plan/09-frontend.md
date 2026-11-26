@@ -1232,21 +1232,68 @@ shape and its state modules are gone: `serverUrlAtom` and `tokenAtom` are set fr
   this board unpairs the phone first (`hub.devices.unpair`; a board token's `Invalid` is ignored). iOS asks for the
   local network (`NSLocalNetworkUsageDescription`). Plain HTTP to another machine is allowed with a warning (boards are reached over
   Tailscale and the like), so a release build allows cleartext (`expo-build-properties`, `NSAllowsArbitraryLoads`).
-- **Inbox**: every usable host's `permissions.pending` (read every 5 s while it shows: a prompt is no board event),
-  Allow or Deny in place, a question or plan opening its task; and the tasks in Needs attention with no prompt.
+- **The shape of it** (HE-99, a redesign for use on a phone): five tabs with icons (`@expo/vector-icons`' Ionicons),
+  Inbox, Tasks, Assistant, Docs and Board; a task and a plugin's page pushed over them. Menus, pickers and forms are
+  bottom sheets (`components/ui.tsx`' `Sheet`), buttons have a thumb's reach, and the colours are the web board's own
+  (`theme.ts`, index.css's `--color-*`). The profile shown is in the header of the screens that show one profile's
+  things (Tasks, Assistant, Docs), where it is changed. A note over the bottom of every screen says when the app is
+  finding the board again, or was turned down (`components/connection.tsx`).
+- **Inbox** (`state/inbox.ts`, `logic/inbox.ts`): every usable host's `permissions.pending` (read every 5 s while it or
+  its tab's count shows: a prompt is no board event), Allow or Deny in place with what the tool would do, a question or
+  plan opening its task; the tasks in Needs attention with no prompt; then the tasks new in In review (HE-65's mark).
+  Its tab counts what waits on an answer, and its top says how many agents are at work.
 - **Assistant**: the shown profile's, found with `assistantHome` and opened with `assistant.get` (`here`).
-- **Projects** and **a project**: the shown profile's projects on every host; a project's tasks by status, what needs
-  the user first, Done the latest 20; New task (`tasks.create` with `start`).
-- **A task**: Stop (`tasks.stop`), Start (an empty `tasks.send`), Move (`optimisticMove`), its thread (`threadAtom`,
-  `threadPreviewAtom`, `olderPage`) as rows (`src/logic/thread.ts`, a smaller cut of the web's `itemModel.ts`), its
-  requests' cards (`permissions.answer`; a board question's `threads.answerQuestion`), and the composer
-  (`sendMessage`).
-- **Board**: the board's sessions, its hosts, the profile shown (merged by name, kept), connecting another, forgetting.
+- **Tasks** (in place of Projects and a project's own screen): the shown profile's tasks by status, what needs the
+  user first, across its projects or in the one picked at the top (a sheet, with how much is going on in each); a
+  search by key and title; Backlog and Done folded until tapped (Done the latest 20); each task with its project, when
+  it last moved, its agent's state, a pull request's failed or running checks and why it needs attention; New task from
+  the + (`tasks.create` with `start`), for any of the profile's projects.
+- **A task**: its title, its status (a tap moves it: `optimisticMove`, run by the app and not by the sheet it was
+  picked in, which closes at the tap and would take a move the host is slow to answer with it, leaving the board on
+  its guess: `logic/mounted.ts`, as the web's `startMove`; a move the agent's unfinished todo list holds back is asked
+  about first, as on the board, and one the host refuses says why), its agent, its pull request with its checks,
+  and its agent's todo count; its thread (`threadAtom`, `threadPreviewAtom`, `olderPage`) as rows (`src/logic/thread.ts`,
+  a smaller cut of the web's `itemModel.ts`), where a run of tool calls is one line that opens (`foldTools`), a
+  document the agent published (`mcp__docs__publish_document`'s result) is a card that opens it, and a button comes
+  back to the latest; its requests' cards (`permissions.answer`; a board question's `threads.answerQuestion`); and the
+  composer (`sendMessage`), whose one button sends what is typed and, with nothing typed, stops the running agent
+  (`tasks.stop`), with the queued message above it. The button does nothing while a message is on its way and stays
+  Send for a second after, so a second tap meant for Send neither sends twice nor stops the agent just messaged.
+  While the agent is in a turn a message would steer, a clock button beside it queues what is typed for the turn's end
+  instead (HE-113's `queue`). Behind ⋯: Start (an empty `tasks.send`) or Stop, Move, Details (the
+  description, the branch, the todo list, and the task's section of each plugin: the documents it published), the pull
+  request and the task on the web. A link in the description that opens a document or a task closes Details, which
+  would otherwise stay over the screen it opened.
+- **Docs, and any plugin's page** (HE-99; [15-plugins.md](15-plugins.md#on-the-phone)): the Docs tab is the docs
+  plugin's home page for the shown profile (on the host that has it; a profile on several hosts says which), and
+  `app/page.tsx` is any page of a plugin's, `/<plugin>/<path>` on the board, on `pluginHost`'s host. The page is the
+  plugin's own HTML in a frame (`components/pluginFrame.tsx`), so a document reads, is commented on, answered and
+  sent as on the board. A link to a document or a task in a message, in a page or in a tool's result opens in the app
+  (`logic/links.ts`, `state/open.ts`); a link out of the app that a page asked for is asked about first.
+- **Board**: the board's sessions, its hosts, the profile shown (merged by name, kept), its plugins' other pages,
+  connecting another, forgetting (asked about first).
+- **Dictation** (HE-99; `state/dictation.ts`, `logic/dictation.ts`, `components/mic.tsx`): a microphone in a task's
+  and the assistant's composer and in New task's description. **Decided** (the user's choice, for now): the phone's own speech
+  recognition (`expo-speech-recognition`: Android's recogniser, iOS's, a browser's on the web build), not the board's
+  `speech.transcribe` (HE-89), which stays a later choice. A tap dictates after what the field holds, in the phone's
+  language, the words showing as they are heard (a stretch being said, then the finished one); another tap stops and
+  keeps the last words. It listens on the phone itself where the phone says it can, and tries the phone's service
+  once when the phone has no model for the language (`language-not-supported`, `service-not-allowed`): that service
+  may send the sound to its maker. It goes on until stopped, but ends after one stretch on Android before 13. One
+  dictation for the app, owned by the field that started it: typing in the field, sending, or leaving the screen gives
+  it up (the text stays as it is), and no other begins until the recogniser says it has ended (or 3 s pass), so a late
+  end isn't taken for the next one's. A field has no microphone on a phone with no recogniser. The old app's voice
+  notes (a recording attached) wait for attachments. Android asks for `RECORD_AUDIO`, iOS for the microphone and
+  speech recognition (the config plugin in `app.json`, which also lets the app see Google's recognition services).
 
 Checked: its pure logic in `pnpm test` (`apps/mobile/tests`); the type check and lint in `pnpm check`; the screens on
 its web build (`pnpm --filter huntaway-mobile export:web`, served on a free port, driven by `scripts/ui-check.mjs`)
 against a test server with the fake agent; `expo export --platform android` (Hermes bytecode); a release build on an
-Android phone (HE-98).
+Android phone (HE-98). HE-99's screens and its documents were driven on the web build, where a plugin's page is a
+sandboxed `<iframe>`; the web view a phone shows it in (`components/frameView.tsx`) bundles and has not run on one.
+Dictation was driven on the web build with a stand-in for the browser's recogniser (words arriving, stopping, an
+edit, a send, a failure, leaving the screen), and the Android release build compiles with its native module; it has
+not listened on a phone.
 
 What is left, a task each:
 
@@ -1257,9 +1304,10 @@ What is left, a task each:
 3. **Several boards**: one atom registry per board (the client's atoms are per registry), an Inbox across them.
 4. **Expo push** and **answering from the lock screen**: the server's `expo` subscriptions are kept and not pushed to
    (6.8); with them, `push_answer_tokens` and the notification's Allow and Deny.
-5. **Sharing into the app, attachments, dictation**: the old app's share intent, photos and files
-   (`attachments.upload`), voice notes. The web's dictation (HE-89, below) has the server transcribe
-   (`speech.transcribe`), which the phone can send its recording to as well, rather than the platform's recogniser.
+5. **Sharing into the app, attachments, voice notes**: the old app's share intent, photos and files
+   (`attachments.upload`), and a recording attached to a message. Dictation is back with the phone's recogniser
+   (HE-99, above); the web's (HE-89, below) has the server transcribe (`speech.transcribe`), which the phone could
+   send a recording to as well, for a board whose owner wants nothing said to leave their machines.
 6. **One thread model**: the web's `itemModel.ts` and the phone's `thread.ts` moved into `packages/client`, so the two
    apps draw a thread from the same rows.
 
