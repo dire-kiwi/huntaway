@@ -1655,7 +1655,8 @@ whole, which the user messages, and which the levels' agents are told to hand st
 
 ## Work across repositories (HE-116)<a id="work-across-repositories"></a>
 
-Planned, not built. One piece of work that changes several repositories (an API and its client, say) is **one task per
+Sets themselves are built (HE-117, [below](#sets-as-built-in-he-117)); the lead's runs, landing together and the web are
+planned. One piece of work that changes several repositories (an API and its client, say) is **one task per
 repository, made together as a set**, with one branch name in all of them. This is the first of the three ways compared
 in HE-116's research on T3 Code's projects with several repositories (pingdotgg/t3code#35925): it leaves review, the merge queue,
 `merges_into`, stacks and pull request watching as they are, because each repository is still its own task. A project
@@ -1719,3 +1720,52 @@ that covers several repositories, as in T3 Code, would make all of those per rep
 - **The web**: the New task dialog's "Also in" picker (projects of the profile); a set's card shows "1 of 3" and opens
   a "Set" section in Details listing the others; the lead's Changes tab stays its own repository's.
 - **Tasks**: in [13-milestones.md](13-milestones.md#after-the-port-work-across-repositories).
+
+### Sets as built in HE-117<a id="sets-as-built-in-he-117"></a>
+
+- **The row**: `tasks.lead_id` and `tasks.set_branch` (migration `2026-11-27-task-sets`, `lead_id` with a partial
+  index), on `TaskRow` and on the wire `Task` as `lead_id?: TaskId | null` and `set_branch?: string | null` (absent
+  from older servers). No foreign key, as `merges_into` has none: what
+  happens when a lead goes is HE-119's. `TaskRepo.inSet(lead)` reads a set, its lead first.
+- **Asking for one**: `NewTask.also_in` (ids, keys or former keys of the lead's profile's other projects) on
+  `tasks.create`, and `also_in` on `create_task`. `Tasks.create` hands it to `createSet`. The refusals are
+  `tasks/sets.ts` `checkSet`'s (`Invalid` on `also_in`, each saying why): a scratch or group task, a task in no
+  project, `use_worktree: false`, a non-blank `merges_into` or `start_from`, more than seven others, and (not in the
+  design above) **a set needs a title**, since its tasks and its pen are named after it and a generated title would be
+  each task's own. Review and stack threads can't be asked for through `NewTask` at all. Then the projects: one not on
+  the board, the lead's own, one named twice, one whose task would have no worktree (not a git repository, or
+  worktrees off), or **two on the same repository** (their common git folder, canonical: one project's folder can be
+  another's, or inside it), whose two worktrees can't both be on the set's branch, is refused. `create_task` passes
+  `also_in` on every path, so a scratch task in no project is refused too.
+- **What each task gets**: the lead is made from the request as any task is. The others get its title, description,
+  labels, links, model and effort, but their own project's default config, no dependencies, no fan-out id (`Fanout`
+  takes every task with the id for an alternative, so picking the lead would close its own followers), and To do where
+  the lead is asked for In progress. `start` (and `create_task`'s default start) starts only the lead's agent.
+- **The pen**: `NewTask.pen` is new (a pen by name, made if the profile has none by it, as `TaskPatch.pen`), and
+  `create_task` now passes its `pen` there rather than updating the task after. A set without one goes in the pen
+  named after its title (cut to 60 characters), which is the profile's existing pen of that name if it has one.
+- **The branch**: written to every task's `set_branch` when the set is made. `branch` stays null until a worktree's
+  setup makes the branch, since everything else reads `branch !== null` as "git has it" (a task merging into a set's
+  task sets that one up first, an unstarted one has nothing to merge, a failed first setup leaves its settings open).
+  `Worktrees.setup` makes a task's worktree on its `set_branch` when it has no `branch`, from its own project's base,
+  and writes `branch` as it always does. Its folder is named after the branch, not the title, so a renamed task finds
+  its worktree again: the lead's as for any branch of its project (`<number>-<slug>`), a follower's
+  `<own number>-<the branch without ia/>` (`folderName`).
+  The name is `ia/<lead's key, lowercase>-<slug of the title, 40>`, the lead's own branch as it would have been,
+  else `-2` … `-50` (`freeBranchName`, a pure function with table tests in `tasks/sets.test.ts`); all fifty taken is a
+  `Conflict` (`duplicate_name`). Taken means a local branch or a remote-tracking one (its remote's name taken off) in
+  any of the set's repositories, or a `branch` or `set_branch` on a task of those projects, that is the same name
+  or one a folder of the other. The git area reads the repositories (`git for-each-ref refs/heads refs/remotes` and
+  `git remote`, with `git rev-parse --git-common-dir` for which repository it is, `git/branchNames.ts`) and registers that reader with the tasks area's `RepoBranches`, as the merge
+  area registers `MergeFacts`, since the tasks area can't call git. `slugify` moved to `platform/slug.ts` for it.
+- **One transaction**: the branches are read first; then every task is decided, the lead inserted (which gives its
+  number, so the name), the name picked, the pen made and every other task inserted in one `db.tx`. Any refusal in
+  there undoes all of it, the lead's number and the pen included. Events and the reactor's changes follow the commit.
+- **What agents see**: `list_tasks` and `get_task` give a set's task `set`, its tasks (key, title, status, merged,
+  project, `lead`), the lead first, and `set_branch` until it has a `branch`.
+- **Tests**: `tasks/sets.test.ts` (the free name's table, the base name, the pen's name, every refusal),
+  `git/branchNames.test.ts` (the branch names of `for-each-ref`'s refs; on real repositories, a set over three whose
+  name is taken locally, as a remote's folder and locally again, with its worktrees set up on it; all or none when no
+  name is free; the refused projects, two on one repository among them; a task merging into an unstarted set's task, an
+  unstarted one moved to Ready for merge, and a failed first setup's settings changed), and `create_task`'s case in
+  `mcp/tools/tasks.test.ts` (a scratch task in no project among the refusals).

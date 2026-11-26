@@ -368,6 +368,11 @@ export const Task = Schema.Struct({
   fanout_id: Schema.NullOr(Schema.String),
   /** The task whose agent created this one. */
   created_by: Schema.NullOr(TaskId),
+  /**
+   * The lead of the set it was made in, one task per repository on one branch (HE-117, `also_in`): null for the lead and
+   * for every task not in a set. Absent from older servers.
+   */
+  lead_id: Schema.optional(Schema.NullOr(TaskId)),
   /** Order within (project, status, kind). */
   position: Schema.Finite,
   /** Where its agent works when not where its kind and project say: absolute, or relative to the data folder. */
@@ -409,6 +414,11 @@ export const Task = Schema.Struct({
   worktree_error: Schema.NullOr(Schema.String),
   branch: Schema.NullOr(Schema.String),
   base_branch: Schema.NullOr(Schema.String),
+  /**
+   * A set's task (HE-117): the branch its worktree is to be made on, the same in every repository of the set. `branch`
+   * stays null until the worktree's setup makes it. Null for every task not in a set. Absent from older servers.
+   */
+  set_branch: Schema.optional(Schema.NullOr(Schema.String)),
   start_from: Schema.NullOr(StartFrom),
   /** The task in the same project whose branch this one merges into. Kept once done and when the target is deleted. */
   merges_into: Schema.NullOr(TaskId),
@@ -577,6 +587,15 @@ export const NewTask = Schema.Struct({
   start_from: Schema.optional(Schema.NullOr(StartFromInput)),
   /** A task's id or key in the project; it also starts from that task's branch unless `start_from` is given. */
   merges_into: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Into the profile's pen by this name (made if it has none by it); null or blank is none. */
+  pen: Schema.optional(Schema.NullOr(Schema.String)),
+  /**
+   * A set across repositories (HE-117): other projects of the profile (ids or keys, seven at most), each given a task
+   * with the same title and description. This one is the set's lead; all of them get one branch name, free in every
+   * repository, and go in one pen (`pen`, else one named after the title). Only for a task in a project with a worktree,
+   * and not with `merges_into` or `start_from`.
+   */
+  also_in: Schema.optional(Schema.Array(Schema.String)),
 })
 export interface NewTask extends Schema.Schema.Type<typeof NewTask> {}
 

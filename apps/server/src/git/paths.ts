@@ -38,23 +38,6 @@ export const samePath = (a: string, b: string): boolean => trimSlashes(a) === tr
 /** "" for one, "s" for any other count given as text (git's counts come as text). */
 export const plural = (n: string): string => (n === "1" ? "" : "s")
 
-/** A title as a folder or branch name: lowercase ASCII letters and digits, a dash between runs of anything else, at most `max` long. */
-export const slugify = (s: string, max: number): string => {
-  let out = ""
-  let dash = false
-  for (const c of s) {
-    if (/^[A-Za-z0-9]$/.test(c)) {
-      out += c.toLowerCase()
-      dash = false
-    } else if (!dash && out.length > 0) {
-      out += "-"
-      dash = true
-    }
-    if (out.length >= max) break
-  }
-  return out.replace(/^-+|-+$/g, "")
-}
-
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 

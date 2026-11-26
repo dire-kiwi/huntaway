@@ -203,16 +203,18 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
         yield* g.run(dir, ["worktree", "prune"]).pipe(Effect.ignore)
         const hasBranch = (b: string) => Effect.map(g.run(dir, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]), (o) => o.ok)
         const key = project.key.toLowerCase()
-        let name = folderName(project, task)
+        // HE-117: a set's task is made on the set's branch, picked free in all its repositories when the set was made.
+        const planned = task.branch ?? (task.set_branch === undefined || task.set_branch === "" ? null : task.set_branch)
+        let name = folderName(project, { branch: planned, title: task.title, number: task.number, set_branch: task.set_branch ?? null })
         // A task with no branch yet whose name is taken by a branch with no worktree here isn't given it: that's another
         // task's (a project deleted with its branches kept, then added again with its numbers starting over, or another
         // profile's project with the same key), with its commits. Its own from a setup cut short has its worktree.
-        if (task.branch === null) {
+        if (planned === null) {
           const first = name
           for (let n = 2; (yield* hasBranch(`ia/${key}-${name}`).pipe(Effect.mapError(fromGit))) && !(yield* exists(`${root}/${name}`)); n++)
             name = `${first}-${n}`
         }
-        const branch = task.branch ?? `ia/${key}-${name}`
+        const branch = planned ?? `ia/${key}-${name}`
         const wt = `${root}/${name}`
         const branchExists = yield* hasBranch(branch).pipe(Effect.mapError(fromGit))
         yield* write(id, { worktree_state: "setting_up", worktree_error: null })

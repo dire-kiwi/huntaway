@@ -130,6 +130,7 @@ export const TaskRow = Schema.Struct({
   parent_id: Schema.NullOr(TaskId),
   group_name: Text,
   created_by: Schema.NullOr(TaskId),
+  lead_id: Schema.NullOr(TaskId),
   task_type: Schema.NullOr(TaskType),
   labels: JsonColumn(Schema.Array(DocumentLabel), []),
   work_dir: Text,
@@ -163,6 +164,7 @@ export const TaskRow = Schema.Struct({
   worktree_path: Text,
   branch: Text,
   base_branch: Text,
+  set_branch: Text,
   worktree_state: WorktreeState,
   worktree_error: Text,
   start_from: JsonColumn(Schema.NullOr(StartFrom), null),
@@ -359,6 +361,8 @@ export interface TaskRepoShape {
   readonly list: (filter: TaskFilter) => Effect.Effect<ReadonlyArray<Task>>
   /** A project's tasks (not its review threads), in board order. */
   readonly projectTasks: (project: ProjectId) => Effect.Effect<ReadonlyArray<Task>>
+  /** A set across repositories (HE-117): its lead `lead`, then the tasks that name it in `lead_id` in the order they were made. */
+  readonly inSet: (lead: TaskId) => Effect.Effect<ReadonlyArray<Task>>
   /** The review, summary and workflow-step threads under a task. */
   readonly reviewThreads: (id: TaskId) => Effect.Effect<ReadonlyArray<Task>>
   /** A project's task by number (its key's `n`), or a profile's projectless task by family and number. */
@@ -468,6 +472,10 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
             AND (${assistant} OR t.task_type IS NOT 'assistant') AND t.task_type IS NOT 'routine'
             AND (${pens} OR t.task_type IS NOT 'pens') AND (${penThreads} OR t.task_type IS NOT 'pen')
             ORDER BY t.position`,
+      )
+      const set = taskRows(
+        Schema.String,
+        (lead) => sql`${select} WHERE t.id = ${lead} OR t.lead_id = ${lead} ORDER BY t.lead_id IS NOT NULL, t.created_at, t.rowid`,
       )
       const reviews = taskRows(Schema.String, (id) => sql`${select} WHERE t.parent_id = ${id} AND t.kind = 'review' ORDER BY t.created_at`)
       const numbered = taskRows(
@@ -612,6 +620,7 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
         takeSteers,
         get: (id) => first(byId(id)),
         exists: (id) => Effect.map(count(sql`SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ${id}) AS n`), (n) => n === 1),
+        inSet: set,
         getMany: (ids) => (ids.length === 0 ? Effect.succeed([]) : byIds(ids)),
         all: everything(undefined),
         unstackedPrProjects: Effect.map(

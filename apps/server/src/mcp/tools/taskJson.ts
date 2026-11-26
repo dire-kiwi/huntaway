@@ -291,6 +291,13 @@ export const makeTaskJson = (reach: Reach) =>
         const pen = yield* pens.get(t.pen_id)
         if (pen !== null) v["pen"] = pen.name
       }
+      // HE-117: a set across repositories, one task per repository on one branch: its lead first.
+      const set = t.kind === "task" ? yield* repo.inSet(t.lead_id ?? t.id) : []
+      // Until its worktree's setup makes it, the branch it's to be made on.
+      if (t.branch === null && typeof t.set_branch === "string") v["set_branch"] = t.set_branch
+      if (set.length > 1) {
+        v["set"] = set.map((x) => Object.assign(brief(x), { project_id: x.project_id, lead: x.lead_id === null || x.lead_id === undefined }))
+      }
       return v
     })
 

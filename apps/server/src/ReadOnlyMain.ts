@@ -193,6 +193,7 @@ import { Attachments } from "./tasks/Attachments.ts"
 import { Dependencies } from "./tasks/Dependencies.ts"
 import { Leftovers } from "./tasks/Leftovers.ts"
 import { MergeFacts } from "./tasks/MergeFacts.ts"
+import { RepoBranches } from "./tasks/RepoBranches.ts"
 import { PenRepo } from "./tasks/PenRepo.ts"
 import { Pens } from "./tasks/Pens.ts"
 import { StackThreads } from "./tasks/StackThreads.ts"
@@ -253,7 +254,7 @@ const ProfilesArea = Layer.mergeAll(Profiles.layer, Usage.layer).pipe(
 )
 const TasksArea = Layer.merge(Pens.layer, StackThreads.layer).pipe(
   Layer.provideMerge(Layer.mergeAll(Tasks.layer, TaskRefs.layer, Attachments.layer, TaskTmp.layer)),
-  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer, MergeFacts.layer)),
+  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer, MergeFacts.layer, RepoBranches.layer)),
   Layer.provideMerge(Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesArea))),
 )
 const GitArea = Restack.layer.pipe(
