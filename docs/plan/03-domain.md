@@ -107,6 +107,7 @@ export const Task = Schema.Struct({
   worktree_error: Schema.NullOr(Schema.String),
   branch: Schema.NullOr(Schema.String),
   base_branch: Schema.NullOr(Schema.String),
+  set_branch: Schema.optional(Schema.NullOr(Schema.String)), // HE-117: the branch a set's task is to be made on, until `branch` is
   start_from: Schema.NullOr(StartFrom),
   merges_into: Schema.NullOr(TaskId),
   lead_id: Schema.optional(Schema.NullOr(TaskId)), // HE-117: a set across repositories' lead; null for the lead and every other task

@@ -407,6 +407,8 @@ export const taskTools = Effect.gen(function* () {
         ...(params.labels === undefined ? {} : { labels: params.labels }),
         // Made in the pen it's given; else in the caller's own, after (a set is in one of its own, made with it).
         ...(penName === null ? {} : { pen: penName.success }),
+        // On every path, so that a set asked for where there can't be one is refused (by `Tasks.create`), saying why.
+        ...(params.also_in === undefined ? {} : { also_in: params.also_in }),
       }
       const sp = given(params.subproject)
       let input: NewTask
@@ -415,7 +417,7 @@ export const taskTools = Effect.gen(function* () {
         const boards = yield* reach.pickBoards(caller, profile)
         const board = profile === null ? (boards.find((b) => b.id === caller.profile.id) ?? boards[0]) : boards[0]
         if (board === undefined) return yield* ToolError.notFound("your profile's board")
-        input = { ...fields, profile_id: board.id }
+        input = { ...fields, profile_id: board.id, task_type: "scratch" }
       } else {
         if (sp !== null && sp !== "none") return yield* subproject(caller, sp, profile)
         const project = yield* reach.projectOrOwn(caller, given(params.project_id), profile)
@@ -429,12 +431,11 @@ export const taskTools = Effect.gen(function* () {
           ...(dependsOn === undefined ? {} : { depends_on: dependsOn }),
           ...(params.start_from === undefined ? {} : { start_from: params.start_from }),
           ...(into === undefined ? {} : { merges_into: into }),
-          ...(params.also_in === undefined ? {} : { also_in: params.also_in }),
         }
       }
       let t = yield* tasks.create(input, agent(caller))
       if (Object.keys(marks).length > 0) t = yield* tasks.update(t.id, marks, agent(caller))
-      if (penName === null && params.also_in === undefined) t = yield* intoPen(caller, t, params.pen, profile)
+      if (penName === null && (params.also_in ?? []).length === 0) t = yield* intoPen(caller, t, params.pen, profile)
       // Its agent starts (or it's queued for what it depends on). Refused, the task is made all the same and the agent
       // told why it didn't start, rather than given an error it might make the task again for.
       let note: string | null = null

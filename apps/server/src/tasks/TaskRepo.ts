@@ -164,6 +164,7 @@ export const TaskRow = Schema.Struct({
   worktree_path: Text,
   branch: Text,
   base_branch: Text,
+  set_branch: Text,
   worktree_state: WorktreeState,
   worktree_error: Text,
   start_from: JsonColumn(Schema.NullOr(StartFrom), null),

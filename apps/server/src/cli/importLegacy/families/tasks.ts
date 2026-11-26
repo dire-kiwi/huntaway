@@ -321,6 +321,7 @@ export const convertTask = (
     created_by: t.created_by,
     // HE-117: the old board had no sets.
     lead_id: null,
+    set_branch: null,
     task_type: taskType,
     labels,
     work_dir: workDir === null ? null : absolutePath(workDir, facts.oldDataDir),

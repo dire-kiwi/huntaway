@@ -404,12 +404,19 @@ describe("task tools", () => {
         { key: "API-1", title: "Rename the field", status: "todo", merged: false, project_id: lead["project_id"], lead: true },
         { key: "WEB-1", title: "Rename the field", status: "todo", merged: false, project_id: other["project_id"], lead: false },
       ]
-      for (const t of [lead, other]) assert.deepStrictEqual([t["branch"], t["pen"], t["set"]], ["ia/api-1-rename-the-field", "Rename the field", set])
+      // No branch until a worktree's setup makes it: the one it's to be made on.
+      for (const t of [lead, other]) {
+        assert.deepStrictEqual([t["branch"], t["set_branch"], t["pen"], t["set"]], [null, "ia/api-1-rename-the-field", "Rename the field", set])
+      }
       // What can't be a set is refused, and says why.
-      assert.include(err(yield* call(me, "create_task", { title: "Notes", project_id: "API", type: "scratch", also_in: ["WEB"] })), "a scratch task can't be")
+      // A scratch task can't be one, in a project or in none.
+      for (const where of [{ project_id: "API" }, {}]) {
+        assert.include(err(yield* call(me, "create_task", { title: "Notes", type: "scratch", also_in: ["WEB"], ...where })), "a scratch task can't be")
+      }
       assert.include(err(yield* call(me, "create_task", { title: "Part", project_id: "API", merges_into: "API-1", also_in: ["WEB"] })), "can't merge into")
       assert.include(err(yield* call(me, "create_task", { title: "Here", project_id: "API", use_worktree: false, also_in: ["WEB"] })), "leave use_worktree on")
       assert.strictEqual(list(yield* call(me, "list_tasks", { project_id: "WEB" })).length, 1)
+      assert.strictEqual(list(yield* call(me, "list_tasks", { project_id: "all" })).length, 2)
     }).pipe(Effect.provide(TestMcp())),
   )
 

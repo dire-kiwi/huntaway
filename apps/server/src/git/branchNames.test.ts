@@ -1,10 +1,10 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect } from "effect"
-import type { FileSystem, Scope } from "effect"
+import { Effect, Exit, FileSystem } from "effect"
+import type { Scope } from "effect"
 import type { ChildProcessSpawner } from "effect/process"
 import type { SqlClient } from "effect/sql"
 import { git, gitRepo, tempDir, TestBoard } from "@huntaway/testing"
-import type { NewTask, Project, Task } from "@huntaway/contracts"
+import type { NewTask, Project, Task, TaskPatch } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { Projects } from "../projects/Projects.ts"
@@ -40,7 +40,9 @@ const projectTasks = (project: Project) => Effect.flatMap(Tasks, (tasks) => task
 /** The one task of a project. */
 const only = (project: Project) =>
   Effect.flatMap(projectTasks(project), (list) => (list.length === 1 && list[0] !== undefined ? Effect.succeed(list[0]) : Effect.die(`${list.length} tasks`)))
-const view = (t: Task) => [t.key, t.title, t.description, t.status, t.branch, t.lead_id ?? null, t.use_worktree]
+const view = (t: Task) => [t.key, t.title, t.description, t.status, t.branch, t.set_branch ?? null, t.lead_id ?? null, t.use_worktree]
+const get = (t: Task) => Effect.flatMap(Tasks, (tasks) => tasks.get(t.id)).pipe(Effect.orDie)
+const update = (t: Task, patch: TaskPatch) => Effect.flatMap(Tasks, (tasks) => tasks.update(t.id, patch, Actor.user))
 const reason = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.map(Effect.flip(effect), (e) =>
     "detail" in e && typeof e.detail === "string" ? e.detail : "reason" in e && typeof e.reason === "string" ? e.reason : e._tag,
@@ -83,11 +85,12 @@ describe("a set of tasks across repositories", () => {
           start: false,
         })
         const [l, x, y] = [yield* only(a.project), yield* only(b.project), yield* only(c.project)]
+        // The branch it's to be made on; `branch` is git's, once a worktree's setup has made it.
         assert.deepStrictEqual([lead, l, x, y].map(view), [
-          ["API-1", "API and client", "Both ends", "todo", `${base}-4`, null, true],
-          ["API-1", "API and client", "Both ends", "todo", `${base}-4`, null, true],
-          ["WEB-1", "API and client", "Both ends", "todo", `${base}-4`, lead.id, true],
-          ["DOC-1", "API and client", "Both ends", "todo", `${base}-4`, lead.id, true],
+          ["API-1", "API and client", "Both ends", "todo", null, `${base}-4`, null, true],
+          ["API-1", "API and client", "Both ends", "todo", null, `${base}-4`, null, true],
+          ["WEB-1", "API and client", "Both ends", "todo", null, `${base}-4`, lead.id, true],
+          ["DOC-1", "API and client", "Both ends", "todo", null, `${base}-4`, lead.id, true],
         ])
         // One pen, named after the title, made with it.
         const pen = lead.pen_id === null ? null : yield* (yield* PenRepo).get(lead.pen_id)
@@ -101,14 +104,14 @@ describe("a set of tasks across repositories", () => {
           [x, b.repo],
         ] as const) {
           const set = yield* worktrees.setup(t.id)
-          assert.strictEqual(set.branch, `${base}-4`)
+          assert.deepStrictEqual([set.branch, set.worktree_path?.endsWith(t.id === lead.id ? "/1-api-and-client-4" : "/1-api-and-client")], [`${base}-4`, true])
           assert.strictEqual(yield* git(set.worktree_path ?? "", ["rev-parse", "--abbrev-ref", "HEAD"]), `${base}-4`)
           assert.strictEqual(yield* git(repo, ["rev-parse", `${base}-4`]), yield* git(repo, ["rev-parse", "main"]))
         }
 
         // A set made later in the same projects is given a name of its own, and the pen it's given.
         const second = yield* create({ project_id: a.project.id, title: "API and client", also_in: ["WEB"], pen: "Shared" })
-        assert.strictEqual(second.branch, "ia/api-2-api-and-client")
+        assert.strictEqual(second.set_branch, "ia/api-2-api-and-client")
         const shared = second.pen_id === null ? null : yield* (yield* PenRepo).get(second.pen_id)
         assert.strictEqual(shared?.name, "Shared")
       }),
@@ -144,7 +147,55 @@ describe("a set of tasks across repositories", () => {
           "api is the set's own project: name only the others",
         )
         assert.strictEqual(yield* reason(create({ project_id: a.project.id, title: "Two", also_in: ["WEB", "web"] })), "web is named twice")
+        // Two projects on one repository (from its folder, or one inside it) would put two worktrees on one branch.
+        yield* Effect.flatMap(FileSystem.FileSystem, (fs) => fs.makeDirectory(`${b.repo}/sub`)).pipe(Effect.orDie)
+        for (const [key, path] of [
+          ["SAME", b.repo],
+          ["INSIDE", `${b.repo}/sub`],
+        ] as const) {
+          yield* (yield* Projects).create({ profile_id: a.project.profile_id, name: key.toLowerCase(), key, repo_path: path }).pipe(Effect.orDie)
+          assert.strictEqual(
+            yield* reason(create({ project_id: a.project.id, title: "Two", also_in: ["WEB", key] })),
+            `web and ${key.toLowerCase()} are on the same repository, and a set has one task per repository: leave one out`,
+          )
+        }
         assert.strictEqual((yield* projectTasks(b.project)).length, 0)
+      }),
+    ),
+  )
+
+  it.live("has its tasks as unstarted as any until their worktrees are set up", () =>
+    run(
+      Effect.gen(function* () {
+        const { a, b } = yield* board
+        const worktrees = yield* Worktrees
+        const lead = yield* create({ project_id: a.project.id, title: "API and client", also_in: ["WEB"] })
+        const other = yield* only(b.project)
+        const branch = "ia/api-1-api-and-client"
+
+        // A task merging into a set's task that has no worktree yet sets that one up first, on the set's branch.
+        const child = yield* create({ project_id: b.project.id, title: "Child", merges_into: other.id })
+        const set = yield* worktrees.setup(child.id)
+        assert.deepStrictEqual([set.branch, set.base_branch, (yield* get(other)).branch], ["ia/web-2-child", branch, branch])
+
+        // Moved to Ready for merge before it has a branch, it has nothing to merge, as an ordinary task.
+        const plain = yield* create({ project_id: a.project.id, title: "Plain" })
+        const moved = [yield* update(plain, { status: "ready_for_merge" }), yield* update(lead, { status: "ready_for_merge" })]
+        assert.deepStrictEqual(
+          moved.map((t) => [t.status, t.merging]),
+          [
+            ["done", false],
+            ["done", false],
+          ],
+        )
+
+        // A first setup that failed before git made its branch leaves its worktree settings open to change.
+        const next = yield* create({ project_id: a.project.id, title: "Next", also_in: ["WEB"] })
+        yield* update(next, { base_branch: "nowhere" })
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(worktrees.setup(next.id))))
+        assert.strictEqual((yield* get(next)).worktree_state, "error")
+        yield* update(next, { base_branch: "main" })
+        assert.strictEqual((yield* worktrees.setup(next.id)).branch, "ia/api-3-next")
       }),
     ),
   )

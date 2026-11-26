@@ -260,7 +260,19 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
         const leadProject = input.project_id === undefined ? null : yield* repo.project(input.project_id)
         if (leadProject === null) return yield* new ProjectNotFound({ id: input.project_id ?? "" })
         const projects = [leadProject, ...(yield* setProjects(leadProject, also))]
-        const fromGit = (yield* Effect.forEach(projects, (p) => branches.taken(p.id), { concurrency: 1 })).flat()
+        const repos = yield* Effect.forEach(projects, (p) => branches.read(p.id), { concurrency: 1 })
+        // One task per repository: two projects on one would have two worktrees on one branch, which git refuses.
+        for (const [i, r] of repos.entries()) {
+          const j = repos.findIndex((o) => o.repository === r.repository)
+          const [first, second] = [projects[j], projects[i]]
+          if (j < i && first !== undefined && second !== undefined) {
+            return yield* new Invalid({
+              field: "also_in",
+              reason: `${first.name} and ${second.name} are on the same repository, and a set has one task per repository: leave one out`,
+            })
+          }
+        }
+        const fromGit = repos.flatMap((r) => r.branches)
         const at = yield* now
         const createdBy = by._tag === "Agent" && by.task_id !== null ? { created_by: by.task_id } : {}
         const made = yield* db.tx(
@@ -286,10 +298,10 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
             if (first === undefined) return yield* Effect.die("a set with no lead")
             yield* repo.insert(first.id, first.row, at)
             const lead = yield* load(first.id).pipe(Effect.orDie)
-            // Free in every repository, and of the branches the board has given these projects' tasks and not made yet.
+            // Free in every repository, and of the branches these projects' tasks have or are to be made on.
             const given = (yield* Effect.forEach(projects, (p) => repo.projectTasks(p.id), { concurrency: 1 }))
               .flat()
-              .flatMap((t) => (t.branch === null ? [] : [t.branch]))
+              .flatMap((t) => [t.branch, t.set_branch].filter((b): b is string => typeof b === "string" && b !== ""))
             const base = setBranchBase(lead.key, lead.title)
             const branch = freeBranchName(base, [...fromGit, ...given])
             if (branch === null) {
@@ -297,8 +309,9 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
             }
             const penName = (yield* newTaskPen(lead, input.pen)) ?? (yield* Effect.fromResult(checkPenName(setPenName(lead.title))))
             const pen_id = yield* penNamed(lead.profile_id, penName, at)
-            yield* repo.write(lead.id, { branch, pen_id }, at)
-            for (const { id, row } of rest) yield* repo.insert(id, { ...row, columns: { ...row.columns, lead_id: lead.id, branch, pen_id } }, at)
+            // Not `branch`, which says git has it: each worktree's setup makes it (`Worktrees.setup`), and writes that.
+            yield* repo.write(lead.id, { set_branch: branch, pen_id }, at)
+            for (const { id, row } of rest) yield* repo.insert(id, { ...row, columns: { ...row.columns, lead_id: lead.id, set_branch: branch, pen_id } }, at)
             const all = yield* Effect.forEach(planned, ({ id }) => load(id).pipe(Effect.orDie), { concurrency: 1 })
             for (const task of all) yield* events.emit({ type: "task", task })
             return { lead: yield* load(lead.id).pipe(Effect.orDie), all }

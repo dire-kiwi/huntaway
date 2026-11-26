@@ -414,6 +414,11 @@ export const Task = Schema.Struct({
   worktree_error: Schema.NullOr(Schema.String),
   branch: Schema.NullOr(Schema.String),
   base_branch: Schema.NullOr(Schema.String),
+  /**
+   * A set's task (HE-117): the branch its worktree is to be made on, the same in every repository of the set. `branch`
+   * stays null until the worktree's setup makes it. Null for every task not in a set. Absent from older servers.
+   */
+  set_branch: Schema.optional(Schema.NullOr(Schema.String)),
   start_from: Schema.NullOr(StartFrom),
   /** The task in the same project whose branch this one merges into. Kept once done and when the target is deleted. */
   merges_into: Schema.NullOr(TaskId),
