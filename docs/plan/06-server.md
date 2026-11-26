@@ -953,7 +953,8 @@ and renders no Mermaid) and gives the user its URL, rather than writing a file i
 `planFormat.ts` (the board's own plan components) is gone. There's no fallback when the docs plugin isn't installed.
 The documents older tasks have stay as they were, to read: nothing registers `follow` and `turnEnded` as `TurnHooks` any
 more, so a run's edit of the file keeps no version, and its agent is told to start from the file, if it's there, and
-leave it as it is. The task view shows a label's tab only on a task with a document (`document_at`), and `get_task` its
+leave it as it is. The task view shows a label's tab only on a task with a document (`document_at`), read only (a plan's
+questions can't be answered or sent, and there's no "Ask for changes"; `task/Document.tsx`), and `get_task` its
 `documents` paths only then. A plan-only run (`Checkpoints.planOnly`, `PLAN_READY`) is one with a `publish_document`
 call recorded done in `mcp_calls` since it started (`CheckpointRepo.publishedSince`), in place of a new plan version.
 What follows is 6.2 as it was built.
