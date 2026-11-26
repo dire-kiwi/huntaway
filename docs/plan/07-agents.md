@@ -1738,7 +1738,8 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   another's, or inside it), whose two worktrees can't both be on the set's branch, is refused. `create_task` passes
   `also_in` on every path, so a scratch task in no project is refused too.
 - **What each task gets**: the lead is made from the request as any task is. The others get its title, description,
-  labels, links, fanout id, model and effort, but their own project's default config, no dependencies, and To do where
+  labels, links, model and effort, but their own project's default config, no dependencies, no fan-out id (`Fanout`
+  takes every task with the id for an alternative, so picking the lead would close its own followers), and To do where
   the lead is asked for In progress. `start` (and `create_task`'s default start) starts only the lead's agent.
 - **The pen**: `NewTask.pen` is new (a pen by name, made if the profile has none by it, as `TaskPatch.pen`), and
   `create_task` now passes its `pen` there rather than updating the task after. A set without one goes in the pen
@@ -1746,8 +1747,10 @@ that covers several repositories, as in T3 Code, would make all of those per rep
 - **The branch**: written to every task's `set_branch` when the set is made. `branch` stays null until a worktree's
   setup makes the branch, since everything else reads `branch !== null` as "git has it" (a task merging into a set's
   task sets that one up first, an unstarted one has nothing to merge, a failed first setup leaves its settings open).
-  `Worktrees.setup` makes a task's worktree on its `set_branch` when it has no `branch` (its folder named after it, as
-  for a branch), from its own project's base, and writes `branch` as it always does.
+  `Worktrees.setup` makes a task's worktree on its `set_branch` when it has no `branch`, from its own project's base,
+  and writes `branch` as it always does. Its folder is named after the branch, not the title, so a renamed task finds
+  its worktree again: the lead's as for any branch of its project (`<number>-<slug>`), a follower's
+  `<own number>-<the branch without ia/>` (`folderName`).
   The name is `ia/<lead's key, lowercase>-<slug of the title, 40>`, the lead's own branch as it would have been,
   else `-2` … `-50` (`freeBranchName`, a pure function with table tests in `tasks/sets.test.ts`); all fifty taken is a
   `Conflict` (`duplicate_name`). Taken means a local branch or a remote-tracking one (its remote's name taken off) in

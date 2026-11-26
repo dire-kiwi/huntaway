@@ -40,6 +40,12 @@ const projectTasks = (project: Project) => Effect.flatMap(Tasks, (tasks) => task
 /** The one task of a project. */
 const only = (project: Project) =>
   Effect.flatMap(projectTasks(project), (list) => (list.length === 1 && list[0] !== undefined ? Effect.succeed(list[0]) : Effect.die(`${list.length} tasks`)))
+/** The task of project `project` that `lead` leads. */
+const followerIn = (project: Project, lead: Task) =>
+  Effect.flatMap(projectTasks(project), (list) => {
+    const found = list.find((t) => t.lead_id === lead.id)
+    return found === undefined ? Effect.die(`no task of ${project.key} has ${lead.key} for its lead`) : Effect.succeed(found)
+  })
 const view = (t: Task) => [t.key, t.title, t.description, t.status, t.branch, t.set_branch ?? null, t.lead_id ?? null, t.use_worktree]
 const get = (t: Task) => Effect.flatMap(Tasks, (tasks) => tasks.get(t.id)).pipe(Effect.orDie)
 const update = (t: Task, patch: TaskPatch) => Effect.flatMap(Tasks, (tasks) => tasks.update(t.id, patch, Actor.user))
@@ -104,7 +110,10 @@ describe("a set of tasks across repositories", () => {
           [x, b.repo],
         ] as const) {
           const set = yield* worktrees.setup(t.id)
-          assert.deepStrictEqual([set.branch, set.worktree_path?.endsWith(t.id === lead.id ? "/1-api-and-client-4" : "/1-api-and-client")], [`${base}-4`, true])
+          assert.deepStrictEqual(
+            [set.branch, set.worktree_path?.endsWith(t.id === lead.id ? "/1-api-and-client-4" : "/1-api-1-api-and-client-4")],
+            [`${base}-4`, true],
+          )
           assert.strictEqual(yield* git(set.worktree_path ?? "", ["rev-parse", "--abbrev-ref", "HEAD"]), `${base}-4`)
           assert.strictEqual(yield* git(repo, ["rev-parse", `${base}-4`]), yield* git(repo, ["rev-parse", "main"]))
         }
@@ -189,13 +198,30 @@ describe("a set of tasks across repositories", () => {
           ],
         )
 
+        // A follower renamed after its worktree was made (its setup script failing) finds it again: its folder is the branch's.
+        yield* (yield* Projects).update(b.project.id, { setup_script: "exit 1" }).pipe(Effect.orDie)
+        const renamed = yield* create({ project_id: a.project.id, title: "Rename me", also_in: ["WEB"] })
+        const follower = yield* followerIn(b.project, renamed)
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(worktrees.setup(follower.id))))
+        const folder = `/${follower.number}-${(renamed.set_branch ?? "").slice("ia/".length)}`
+        assert.deepStrictEqual([renamed.set_branch, (yield* get(follower)).worktree_path?.endsWith(folder)], ["ia/api-3-rename-me", true])
+        yield* (yield* Projects).update(b.project.id, { setup_script: "" }).pipe(Effect.orDie)
+        yield* update(follower, { title: "Client side" })
+        const again = yield* worktrees.setup(follower.id)
+        assert.deepStrictEqual([again.worktree_state, again.branch, again.worktree_path?.endsWith(folder)], ["ready", "ia/api-3-rename-me", true])
+
+        // A set given a fan-out id is one alternative: only its lead has the id, so picking it keeps its followers.
+        const fan = yield* create({ project_id: a.project.id, title: "Fanned", also_in: ["WEB"], fanout_id: "fan1" })
+        const fanned = (yield* projectTasks(b.project)).find((t) => t.lead_id === fan.id)
+        assert.deepStrictEqual([fan.fanout_id, fanned?.fanout_id], ["fan1", null])
+
         // A first setup that failed before git made its branch leaves its worktree settings open to change.
         const next = yield* create({ project_id: a.project.id, title: "Next", also_in: ["WEB"] })
         yield* update(next, { base_branch: "nowhere" })
         assert.isTrue(Exit.isFailure(yield* Effect.exit(worktrees.setup(next.id))))
         assert.strictEqual((yield* get(next)).worktree_state, "error")
         yield* update(next, { base_branch: "main" })
-        assert.strictEqual((yield* worktrees.setup(next.id)).branch, "ia/api-3-next")
+        assert.strictEqual((yield* worktrees.setup(next.id)).branch, "ia/api-5-next")
       }),
     ),
   )

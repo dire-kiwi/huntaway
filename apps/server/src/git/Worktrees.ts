@@ -205,7 +205,7 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
         const key = project.key.toLowerCase()
         // HE-117: a set's task is made on the set's branch, picked free in all its repositories when the set was made.
         const planned = task.branch ?? (task.set_branch === undefined || task.set_branch === "" ? null : task.set_branch)
-        let name = folderName(project, { branch: planned, title: task.title, number: task.number })
+        let name = folderName(project, { branch: planned, title: task.title, number: task.number, set_branch: task.set_branch ?? null })
         // A task with no branch yet whose name is taken by a branch with no worktree here isn't given it: that's another
         // task's (a project deleted with its branches kept, then added again with its numbers starting over, or another
         // profile's project with the same key), with its commits. Its own from a setup cut short has its worktree.

@@ -118,6 +118,10 @@ describe("Worktrees", () => {
     // A re-made worktree gets its folder back, whatever the task is called now or the project's key was.
     assert.strictEqual(folderName(project, { branch: "ia/old-3-first-name", title: "Renamed", number: 3 }), "3-first-name")
     assert.strictEqual(folderName(project, { branch: "ia/web-feature/x", title: "Y", number: 4 }), "4-y")
+    // HE-117: a set's task, named after the set's branch whether git has it yet or not; a follower's from another key.
+    assert.strictEqual(folderName(project, { branch: null, set_branch: "ia/web-5-the-set-2", title: "Renamed", number: 5 }), "5-the-set-2")
+    assert.strictEqual(folderName(project, { branch: null, set_branch: "ia/api-2-the-set", title: "Renamed", number: 9 }), "9-api-2-the-set")
+    assert.strictEqual(folderName(project, { branch: "ia/api-2-the-set", set_branch: "ia/api-2-the-set", title: "Renamed", number: 9 }), "9-api-2-the-set")
   })
 
   it.live("sets a worktree up on a branch of its own that tracks nothing, and says so", () =>
