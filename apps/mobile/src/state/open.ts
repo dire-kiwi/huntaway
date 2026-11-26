@@ -58,9 +58,14 @@ export function openTarget(target: Target, options: { readonly ask: boolean; rea
 /** A route's parameter as text (expo-router gives a repeated one as a list). */
 export const param = (v: string | ReadonlyArray<string> | undefined): string => (typeof v === "string" ? v : (v?.[0] ?? ""))
 
-/** Opens a link the user tapped in a message: a document or a task of this board in the app, anything else in the browser. */
-export function openMessageLink(link: string): void {
+/**
+ * Opens a link the user tapped in a message: a document or a task of this board in the app, anything else in the
+ * browser. True when it went somewhere in the app: a sheet the link was in is then over the screen it opened.
+ */
+export function openMessageLink(link: string): boolean {
   const connection = registry.get(connectionAtom)
   const target = messageLink(link, connection._tag === "board" ? connection.link.url : "")
-  if (target !== null) openTarget(target, { ask: false })
+  if (target === null) return false
+  openTarget(target, { ask: false })
+  return target.kind === "task" || target.kind === "page"
 }

@@ -1,11 +1,12 @@
 import { useAtom, useAtomValue } from "@effect/atom-react"
 import { type ComposerDraft, mutate, sendingAtom, sendMessage } from "@huntaway/client"
 import { TaskId } from "@huntaway/contracts"
-import { Cause } from "effect"
+import { Cause, Effect } from "effect"
 import { AsyncResult, Atom } from "effect/reactivity"
+import { useEffect, useState } from "react"
 import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
-import { errorText, useAction } from "../state/action"
+import { errorText, runExit, useAction } from "../state/action"
 import { useDictation } from "../state/dictation"
 import { colors, radius, space } from "../theme"
 import { MicButton } from "./mic"
@@ -15,7 +16,13 @@ import { ErrorText, Icon, s } from "./ui"
 // running one, or is queued. A send outlives the screen that started it, and only what it took comes off the draft, so
 // text typed meanwhile stays. The draft is kept per task while the app runs. HE-99: its one button sends what is
 // typed, and with nothing typed stops the agent while it runs; a message waiting for the run to end shows above it.
+// The button never turns from Send into Stop under a thumb: it does nothing while a message is on its way, and stays
+// Send (with nothing to send) for a moment after, so a second tap meant for Send can't stop the agent just messaged or
+// send the message twice.
 // Its microphone dictates into the field with the phone's speech recognition (state/dictation.ts).
+
+/** How long after a message went the button waits before it can be Stop. */
+const STOP_AFTER_SEND = "1 second"
 
 const draftByKey = Atom.family((_key: string) => Atom.make<ComposerDraft | null>(null).pipe(Atom.keepAlive))
 
@@ -49,12 +56,27 @@ export function Composer({
   const dictation = useDictation(write)
   const typed = text.trim() !== ""
   const failed = AsyncResult.isFailure(result) && !Cause.hasInterruptsOnly(result.cause) ? errorText(Cause.squash(result.cause)) : null
-  const stops = running && !typed
+  // A message was sent from here, and the moment after it hasn't passed.
+  const [sent, setSent] = useState(false)
+  useEffect(() => {
+    if (!sent || sending) return undefined
+    let shown = true
+    runExit(Effect.sleep(STOP_AFTER_SEND), () => {
+      if (shown) setSent(false)
+    })
+    return () => {
+      shown = false
+    }
+  }, [sent, sending])
+  const stops = running && !typed && !sending && !sent
+  const sends = typed && !sending
   const go = () => {
     if (stops) return stop(mutate("tasks.stop", host, { id: TaskId.make(taskId) }))
     // What is sent is what the field holds now: words still on their way would land in the next message.
     dictation.drop()
-    if (typed) send({ body: text.trim(), sent: text, files: [], draft: draftAtom })
+    if (!sends) return
+    setSent(true)
+    send({ body: text.trim(), sent: text, files: [], draft: draftAtom })
   }
   const busy = sending || stopping.busy
   return (
@@ -97,8 +119,8 @@ export function Composer({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={stops ? "Stop the agent" : "Send"}
-          accessibilityState={{ disabled: !stops && !typed, busy }}
-          disabled={(!stops && !typed) || stopping.busy}
+          accessibilityState={{ disabled: !stops && !sends, busy }}
+          disabled={(!stops && !sends) || stopping.busy}
           onPress={go}
           style={({ pressed }) => [
             {
@@ -110,7 +132,7 @@ export function Composer({
               backgroundColor: stops ? colors.raised : colors.accentStrong,
             },
             stops && { borderWidth: 1, borderColor: colors.lineStrong },
-            !stops && !typed && s.disabled,
+            !stops && !sends && s.disabled,
             pressed && s.pressed,
           ]}
         >

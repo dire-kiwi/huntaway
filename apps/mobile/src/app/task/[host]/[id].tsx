@@ -242,7 +242,7 @@ function Details({ host, task, onClose }: { readonly host: string; readonly task
   return (
     <Sheet title="Details" onClose={onClose}>
       <View style={{ paddingHorizontal: space.sm, gap: space.sm }}>
-        {task.description.trim() === "" ? <Text style={s.faint}>No description.</Text> : <Markdown text={task.description} />}
+        {task.description.trim() === "" ? <Text style={s.faint}>No description.</Text> : <Markdown text={task.description} onLeave={onClose} />}
         {task.branch !== null && (
           <View style={s.row}>
             <Icon name="git-branch-outline" size={15} />

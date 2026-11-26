@@ -1196,9 +1196,11 @@ shape and its state modules are gone: `serverUrlAtom` and `tokenAtom` are set fr
   document the agent published (`mcp__docs__publish_document`'s result) is a card that opens it, and a button comes
   back to the latest; its requests' cards (`permissions.answer`; a board question's `threads.answerQuestion`); and the
   composer (`sendMessage`), whose one button sends what is typed and, with nothing typed, stops the running agent
-  (`tasks.stop`), with the queued message above it. Behind ⋯: Start (an empty `tasks.send`) or Stop, Move, Details (the
+  (`tasks.stop`), with the queued message above it. The button does nothing while a message is on its way and stays
+  Send for a second after, so a second tap meant for Send neither sends twice nor stops the agent just messaged. Behind ⋯: Start (an empty `tasks.send`) or Stop, Move, Details (the
   description, the branch, the todo list, and the task's section of each plugin: the documents it published), the pull
-  request and the task on the web.
+  request and the task on the web. A link in the description that opens a document or a task closes Details, which
+  would otherwise stay over the screen it opened.
 - **Docs, and any plugin's page** (HE-99; [15-plugins.md](15-plugins.md#on-the-phone)): the Docs tab is the docs
   plugin's home page for the shown profile (on the host that has it; a profile on several hosts says which), and
   `app/page.tsx` is any page of a plugin's, `/<plugin>/<path>` on the board, on `pluginHost`'s host. The page is the

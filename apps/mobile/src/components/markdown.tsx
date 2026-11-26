@@ -2,7 +2,7 @@ import type { Nodes, Parents, Root, RootContent } from "mdast"
 import { fromMarkdown } from "mdast-util-from-markdown"
 import { gfmFromMarkdown } from "mdast-util-gfm"
 import { gfm } from "micromark-extension-gfm"
-import { memo, type ReactNode } from "react"
+import { createContext, memo, type ReactNode, useContext } from "react"
 import { Platform, ScrollView, StyleSheet, Text, View } from "react-native"
 import { openMessageLink } from "../state/open"
 import { colors } from "../theme"
@@ -10,6 +10,23 @@ import { colors } from "../theme"
 // Markdown as React Native views (the old app's markdown.tsx): parsed with mdast-util-from-markdown (GitHub's flavour),
 // as the web board's is, and drawn here, so there is no web view or HTML. Images aren't fetched; a link to one of the
 // board's documents or tasks opens in the app (HE-99), any other in the browser.
+
+/** What the text is in, when that is over the screen (a sheet): closed when a link opens something in the app under it. */
+const Leave = createContext<(() => void) | undefined>(undefined)
+
+function Link({ url, children }: { readonly url: string; readonly children: ReactNode }) {
+  const leave = useContext(Leave)
+  return (
+    <Text
+      style={st.link}
+      onPress={() => {
+        if (openMessageLink(url)) leave?.()
+      }}
+    >
+      {children}
+    </Text>
+  )
+}
 
 export function parseMarkdown(text: string): Root {
   try {
@@ -39,9 +56,9 @@ function inlineNode(n: Nodes, k: string): ReactNode {
     )
   if (n.type === "link")
     return (
-      <Text key={k} style={st.link} onPress={() => openMessageLink(n.url)}>
+      <Link key={k} url={n.url}>
         {inline(n.children, k)}
-      </Text>
+      </Link>
     )
   const style = n.type === "strong" ? st.strong : n.type === "emphasis" ? st.em : n.type === "delete" ? st.del : undefined
   return style === undefined ? (
@@ -120,9 +137,13 @@ function blocks(parent: Parents, key: string): Array<ReactNode> {
   return parent.children.map((c, i) => block(c, `${key}.${i}`))
 }
 
-/** Markdown text, drawn. */
-export const Markdown = memo(function Markdown({ text }: { readonly text: string }) {
-  return <View style={st.root}>{blocks(parseMarkdown(text), "md")}</View>
+/** Markdown text, drawn. `onLeave`: a link in it opened a document or a task in the app (a sheet it is in closes). */
+export const Markdown = memo(function Markdown({ text, onLeave }: { readonly text: string; readonly onLeave?: () => void }) {
+  return (
+    <Leave.Provider value={onLeave}>
+      <View style={st.root}>{blocks(parseMarkdown(text), "md")}</View>
+    </Leave.Provider>
+  )
 })
 
 const st = StyleSheet.create({
