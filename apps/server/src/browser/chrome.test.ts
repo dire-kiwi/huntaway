@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem, Stream } from "effect"
-import { str } from "./cdp.ts"
+import { Effect, FileSystem, Option, Stream } from "effect"
+import { nextEvent, pageOf, str } from "./cdp.ts"
 import { lastSaid, splitMessages, startChrome } from "./chrome.ts"
 import { systemChrome } from "@huntaway/testing"
 
@@ -49,7 +49,12 @@ describe.skipIf(systemChrome === null)("startChrome", () => {
         const { targetId } = yield* chrome.cdp.send("Target.createTarget", { url: "about:blank" })
         const attached = yield* chrome.cdp.send("Target.attachToTarget", { targetId, flatten: true })
         const sessionId = str(attached, "sessionId")
+        // Page.navigate answers before the new document has loaded (HE-121): its load is waited for.
+        const events = yield* chrome.cdp.subscribe
+        yield* chrome.cdp.send("Page.enable", {}, sessionId)
         yield* chrome.cdp.send("Page.navigate", { url: "data:text/html,<title>Hi</title><p>there</p>" }, sessionId)
+        const loaded = yield* nextEvent(pageOf(chrome.cdp, sessionId), events, (e) => e.method === "Page.loadEventFired", "15 seconds")
+        assert.isTrue(Option.isSome(loaded), "the page loaded")
         const r = yield* chrome.cdp.send("Runtime.evaluate", { expression: "document.title", returnByValue: true }, sessionId)
         assert.deepStrictEqual(r["result"], { type: "string", value: "Hi" })
       }),

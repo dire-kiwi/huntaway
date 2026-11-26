@@ -927,4 +927,8 @@ const main = (): number => {
   }
 }
 
+// A call its caller stops (the board interrupting gh calls run together once one fails) is sent SIGTERM, whose default
+// ends Node at once: one holding the state's lock would leave it held, and every later call would fail on it (HE-121).
+// Listened to, the signal waits for `main`, which is synchronous, to return, its lock released.
+process.on("SIGTERM", () => process.exit(143))
 process.exitCode = main()
