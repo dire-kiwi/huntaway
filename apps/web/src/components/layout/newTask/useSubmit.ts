@@ -52,7 +52,7 @@ export function useSubmit(p: {
   const { pending, setPending, runs, fanout, labelling, labels, text, taskType, deps, dependsOn } = p.tok
   const { runEfforts, pickedEffort, untoken, harnessOf, effortList, runLabel, named, tokens, startFrom, fromTask, codeTask, mergesInto } = p.tok
   const { attach, links, setLinks, hasContent, linking } = p.kept
-  const { start, worktree, addAnother, setStartPref, setWorktree } = p.options
+  const { start, worktree, addAnother, setStartPref, setWorktree, alsoIn, setAlsoIn, alsoInTitle, setAlsoInTitle } = p.options
   const { submitBlock, modelsLoading } = p.blocks
   const [{ busy }, run] = useAction()
   const [err, setErr] = useState<string | null>(null)
@@ -76,6 +76,7 @@ export function useSubmit(p: {
       setConfigPref(localStorage.getItem(configKey(prefId)) ?? "")
       setStartPref(localStorage.getItem(startKey(prefId)) === "1")
       setWorktree(null)
+      setAlsoIn([])
       setCreated(null)
       setPending(null)
       switched.current = true
@@ -151,6 +152,8 @@ export function useSubmit(p: {
           ...(deps && dependsOn.length ? { depends_on: dependsOn } : {}),
           ...(startFrom !== undefined && codeTask ? { start_from: fromTask ? `task:${fromTask.id}` : startFrom } : {}),
           ...(mergesInto ? { merges_into: mergesInto.id } : {}),
+          // HE-120: a set across repositories, this one its lead.
+          ...(alsoIn.length ? { also_in: alsoIn, title: alsoInTitle.trim() } : {}),
         },
       }).pipe(Effect.map(on(project.host_id)))
     }
@@ -186,6 +189,7 @@ export function useSubmit(p: {
       // Where it went is where the next one starts, where there's a choice.
       if (projects?.length) localStorage.setItem(PROJECT_KEY, prefId)
       localStorage.removeItem(draft)
+      setAlsoInTitle("")
       if (!addAnother) {
         onClose()
         return

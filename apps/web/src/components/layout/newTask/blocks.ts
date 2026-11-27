@@ -10,7 +10,12 @@ export type Blocks = ReturnType<typeof submitBlocks>
 const configNames = (cs: { name: string }[]) => cs.map((c) => c.name).join(", ")
 
 /** What stops the task being created as the text has it, and the Codex models it waits for. */
-export function submitBlocks({ asGroup, inProject, host }: Where, { config, configs, efforts, discovery }: AgentChoice, tok: Tokens, { worktree }: Options) {
+export function submitBlocks(
+  { asGroup, inProject, host }: Where,
+  { config, configs, efforts, discovery }: AgentChoice,
+  tok: Tokens,
+  { worktree, alsoIn, alsoInTitle }: Options,
+) {
   const { fanout, docType, labels, tokens, harnessVocab, harnessConfigs, pickedEffort, runs, harnessOf } = tok
   // What can't be made a task for each of several harnesses. A group task coordinates its group's work, so it takes one,
   // unless it has labels: then they write documents to compare.
@@ -70,7 +75,9 @@ export function submitBlocks({ asGroup, inProject, host }: Where, { config, conf
     : failedFor.length
       ? `Couldn't load ${configNames(failedFor.map((f) => f.config))}'s models (${failedFor[0]?.error}), so there's no telling ${unknown(failedFor.map((f) => f.config))}: take ${takeOut(failedFor.map((f) => f.config))}, or open the dialog again to try again.`
       : null
+  // A set's tasks, branch and pen are named after its title, so it needs one (the field says so).
+  const setBlock = alsoIn.length > 0 && !alsoInTitle.trim() ? "A set needs a title." : null
   // While they're loading, creating it waits for them (see whenLoaded).
-  const submitBlock = labelBlock ?? fanoutBlock ?? (modelsLoading ? null : modelsBlock)
-  return { fanoutBlock, labelBlock, modelsLoading, modelsBlock, submitBlock }
+  const submitBlock = labelBlock ?? fanoutBlock ?? setBlock ?? (modelsLoading ? null : modelsBlock)
+  return { fanoutBlock, labelBlock, modelsLoading, modelsBlock, setBlock, submitBlock }
 }

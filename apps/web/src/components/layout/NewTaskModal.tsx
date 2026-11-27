@@ -7,6 +7,7 @@ import { submitBlocks } from "./newTask/blocks"
 import { Editor, Legend } from "./newTask/Editor"
 import { Footer } from "./newTask/Footer"
 import { Notes } from "./newTask/Notes"
+import { AlsoIn } from "./newTask/AlsoIn"
 import { OptionsRow } from "./newTask/OptionsRow"
 import { ReadsAs } from "./newTask/ReadsAs"
 import { useAgentChoice } from "./newTask/useAgentChoice"
@@ -106,6 +107,7 @@ export function NewTaskModal({
         <ReadsAs opened={opened} origin={origin} where={place} agent={agent} tok={tok} />
         <Legend completion={completion} />
         <OptionsRow where={place} tok={tok} options={options} agent={agent} kept={kept} ed={ed} />
+        <AlsoIn where={place} options={options} />
         <Notes opened={opened} origin={origin} where={place} tok={tok} worktree={options.worktree} blocks={blocks} whenLoaded={submission.whenLoaded} />
         <Footer submission={submission} options={options} tok={tok} kept={kept} blocks={blocks} onClose={onClose} />
       </form>

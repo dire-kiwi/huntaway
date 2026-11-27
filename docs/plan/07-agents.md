@@ -1655,8 +1655,8 @@ whole, which the user messages, and which the levels' agents are told to hand st
 
 ## Work across repositories (HE-116)<a id="work-across-repositories"></a>
 
-Sets themselves are built (HE-117, [below](#sets-as-built-in-he-117)); the lead's runs, landing together and the web are
-planned. One piece of work that changes several repositories (an API and its client, say) is **one task per
+Sets themselves are built (HE-117, [below](#sets-as-built-in-he-117)), and so is the web (HE-120,
+[below](#sets-in-the-web-as-built-in-he-120)); the lead's runs and landing together are planned. One piece of work that changes several repositories (an API and its client, say) is **one task per
 repository, made together as a set**, with one branch name in all of them. This is the first of the three ways compared
 in HE-116's research on T3 Code's projects with several repositories (pingdotgg/t3code#35925): it leaves review, the merge queue,
 `merges_into`, stacks and pull request watching as they are, because each repository is still its own task. A project
@@ -1718,7 +1718,8 @@ that covers several repositories, as in T3 Code, would make all of those per rep
 - **Leaving the set**: the lead deleted or closed hands the set to the next open task by creation (its `lead_id`
   cleared, the others' moved to it). A set down to one task is an ordinary task.
 - **The web**: the New task dialog's "Also in" picker (projects of the profile); a set's card shows "1 of 3" and opens
-  a "Set" section in Details listing the others; the lead's Changes tab stays its own repository's.
+  a "Set" section in Details listing the others; the lead's Changes tab stays its own repository's. As built:
+  [below](#sets-in-the-web-as-built-in-he-120).
 - **Tasks**: in [13-milestones.md](13-milestones.md#after-the-port-work-across-repositories).
 
 ### Sets as built in HE-117<a id="sets-as-built-in-he-117"></a>
@@ -1769,3 +1770,29 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   name is free; the refused projects, two on one repository among them; a task merging into an unstarted set's task, an
   unstarted one moved to Ready for merge, and a failed first setup's settings changed), and `create_task`'s case in
   `mcp/tools/tasks.test.ts` (a scratch task in no project among the refusals).
+
+### Sets in the web as built in HE-120<a id="sets-in-the-web-as-built-in-he-120"></a>
+
+- **New task**: an "Also in other projects" switch in the options row (`layout/newTask/OptionsRow.tsx`) opens the picker
+  under it (`AlsoIn.tsx`): a button for each other project of the task's profile on its host whose tasks get a worktree
+  (`worktreesOn`), the others greyed once seven are picked. The state is `useOptions`' (`alsoIn`, `setProjects`). It is
+  offered only for a code task in a project with its worktree on, and (not in the design above) not for one made with
+  several models (`!opus !sonnet`), which would make a set for each. A `from:` or an `into:`, a scratch type, the
+  worktree switched off or an `in:` elsewhere clear what's picked and hide it; taking the token out again doesn't bring
+  them back. `useSubmit` sends `also_in` with the project ids.
+- **The title** (not in the design above): the dialog has only a description, whose title the server writes later, but a
+  set needs its title when it's made (its tasks, branch and pen are named after it, HE-117). So once a project is
+  picked the picker asks for "The set's title", sent as `title`, and Create waits for it (`blocks.ts`' `setBlock`).
+- **The card** (`board/Sets.tsx`, in `TaskBadges` beside the fan-out badge, so the list view's rows have it too):
+  `1 of 3`, its place in the set (the lead first, then the others by creation and, as a set's are made at once, by key: `TaskRepo.inSet`'s order by row isn't on the wire) and the
+  set's size, with a crown and (on a wide card) "lead" for the lead, a stack icon for the others; its tooltip names
+  every task of the set with its project. The sets are worked out once per change of the board's tasks
+  (`setsOf`), by `lead_id` on the same host; a task of an archived project isn't on the board, so isn't counted.
+- **Details and the key items** (`task/view/details/TaskLists.tsx`' `SetSection`, in both as Same prompt is): "Set",
+  "N repositories", and each task of the set with its status icon, key, project, "lead" for the lead and its column,
+  this one marked, each a button that opens it; then the branch they share (`branch`, else `set_branch`).
+- **Changes**: nothing new. The Changes tab reads the task's own worktree (`git.status` and `git.taskDiff` on the task's
+  id), so the lead's shows its own repository's, and each other's is on its own card.
+- **Checks**: `tests/ui/sets.test.mjs` (three projects of a profile and one of another: the picker's projects, a
+  `from:` clearing it, the title it waits for, the set made and its `lead_id`s, `1 of 3` and `3 of 3` with their
+  tooltips, the Set section's rows and opening one from there; not offered without a worktree or for a scratch task).
