@@ -4,6 +4,7 @@ import { Tokens } from "../agents/Tokens.ts"
 import { WorkflowFacts } from "../agents/WorkflowFacts.ts"
 import type { FinishDue } from "../agents/WorkflowFacts.ts"
 import { Checkpoints } from "../git/Checkpoints.ts"
+import { TaskBase } from "../git/TaskBase.ts"
 import { PullRequests } from "../github/PullRequests.ts"
 import { Changes } from "../platform/Changes.ts"
 import type { Actor, Change } from "../platform/Changes.ts"
@@ -20,6 +21,7 @@ import { deriveColumns } from "../tasks/decide.ts"
 import type { TaskColumns } from "../tasks/decide.ts"
 import { heldReasonOf } from "../tasks/lanes.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
+import { Tasks } from "../tasks/Tasks.ts"
 import { ThreadReaders } from "../threads/ThreadReaders.ts"
 import { Threads } from "../threads/Threads.ts"
 import { AgentRequests } from "./AgentRequests.ts"
@@ -32,6 +34,7 @@ import { RunRepo } from "./RunRepo.ts"
 import { Runs } from "./Runs.ts"
 import { RunWaits } from "./RunWaits.ts"
 import { TurnHooks } from "./TurnHooks.ts"
+import { awaitsLead, decideFollowers, isLead, NO_CHANGES } from "./sets.ts"
 
 // What the reactor does with `RunExited` (docs/plan/07-agents.md, When a run ends; inventory 01, section 9): under the
 // task's lock, the run's outcome, the run recorded as exited, the steers it never took in queued again ahead of what
@@ -83,6 +86,9 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       const workflowFacts = yield* WorkflowFacts
       const projects = yield* ProjectRepo
       const config = yield* ServerConfig
+      // HE-118: a set's lead's run's end moves the set's tasks it worked in.
+      const taskService = yield* Tasks
+      const taskBase = yield* TaskBase
 
       const board: Actor = { _tag: "Board" }
 
@@ -199,6 +205,57 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         return task === null ? false : yield* checkpoints.planOnly(task, run)
       })
 
+      /**
+       * HE-118: the end of a set's lead's run lets the set's tasks it held go: what was queued for them meanwhile is sent
+       * (a run of the lead started since holds again those it was given).
+       */
+      const releaseFollowers = Effect.fnUntraced(function* (leadId: TaskId) {
+        const lead = yield* tasks.get(leadId)
+        if (lead === null || !isLead(lead)) return
+        for (const f of (yield* tasks.inSet(lead.id)).slice(1)) {
+          if (f.status === "done" || f.running || (yield* tasks.queued(f.id)).length === 0) continue
+          yield* runs
+            .sendQueued(f.id)
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.andThen(
+                  Effect.logWarning(`task=${f.id}: sending what was queued while its lead worked failed`, cause),
+                  threads.notice(f.id, "error", `Couldn't send the queued message: ${Cause.pretty(cause).split("\n")[0] ?? "it failed"}`).pipe(Effect.ignore),
+                ),
+              ),
+            )
+        }
+      })
+
+      /**
+       * HE-118: a set's lead's run that ended with its work finished (`decideFollowers`) moves each of the set's tasks
+       * waiting for it: with work (`TaskBase.hasWorkToMerge`) to In review, else closed as not done; the lead's thread
+       * says what it did. Each move is under the task's lock, and only for one still waiting.
+       */
+      const settleFollowers = Effect.fnUntraced(function* (leadId: TaskId, decision: FinishDecision) {
+        const lead = yield* tasks.get(leadId)
+        if (lead === null || !isLead(lead)) return
+        const waiting = (yield* tasks.inSet(lead.id)).slice(1).filter(awaitsLead)
+        const facts = yield* Effect.forEach(waiting, (task) => Effect.map(taskBase.hasWorkToMerge(task), (work) => ({ task, work })), { concurrency: 1 })
+        for (const move of decideFollowers(decision, facts)) {
+          const key = waiting.find((t) => t.id === move.task)?.key ?? move.task
+          const review = move._tag === "Review"
+          const after = yield* taskService
+            .change(move.task, (t) => (!awaitsLead(t) ? null : review ? { status: "in_review" } : { status: "done", resolution: "not_done" }), board)
+            .pipe(Effect.catchTag("TaskNotFound", () => Effect.succeed(null)))
+          if (after === null || after.status === "todo") continue
+          if (review) {
+            yield* threads
+              .notice(lead.id, "info", `Moved ${key} to In review: it has changes in its repository, reviewed and merged as its own task`)
+              .pipe(Effect.ignore)
+            yield* pullRequests.findLater(move.task)
+          } else {
+            yield* threads.notice(lead.id, "info", `Closed ${key} as not done: ${NO_CHANGES}`).pipe(Effect.ignore)
+            yield* threads.notice(move.task, "info", `Closed as not done when ${lead.key}'s run ended: ${NO_CHANGES}`).pipe(Effect.ignore)
+          }
+        }
+      })
+
       const ended = Effect.fn("RunEnds.ended")(function* (change: RunExited) {
         // 6.2: what a stopped or failed run had written of its documents, kept as its turn's (before the plan rule reads them).
         yield* turnHooks.turnEnded(change.task)
@@ -221,6 +278,8 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
           const outcome = outcomeOf(run, change.exit, change.errorTail)
           yield* changes.offer({ _tag: "ReviewFinished", thread: run.task_id, run: run.id, outcome, attention: run.attention })
         }
+        // HE-118: a lead's run lets the set's tasks it held go.
+        yield* releaseFollowers(run.task_id)
         if (later) return
         // 4.5: the pull request its agent may have opened, looked up in the background for a task with a branch and none.
         yield* pullRequests.findLater(run.task_id)
@@ -250,6 +309,8 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
             mergeFinished: decision.mergeFinished,
           })
         }
+        // HE-118: after the lead's own move, the set's tasks it worked in follow it.
+        yield* settleFollowers(run.task_id, decision)
       })
 
       return RunEnds.of({ ended })

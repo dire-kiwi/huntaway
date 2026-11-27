@@ -442,6 +442,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
                 },
           agents: !config.noAgents,
           unmet: yield* unmetOf(task),
+          heldBy: task.lead_id != null && live === null ? ((yield* tasks.heldBy(task.id))?.key ?? null) : null,
         })
         const at = yield* nowTimestamp
         const labelled = (t: Task) => (plan ? planLabel(t, at) : Effect.succeed(t))
@@ -476,6 +477,23 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
             Effect.gen(function* () {
               yield* tasks.enqueue(id, rowOf(message), at)
               yield* labelled(task)
+              return yield* publish(id)
+            }),
+          )
+        }
+        // HE-118: its lead's run works in its worktree: the message waits, the task in To do, until that run ends.
+        if (decision._tag === "HoldForLead") {
+          if (message === null) return task
+          return yield* db.tx(
+            Effect.gen(function* () {
+              const first = (yield* tasks.queued(id)).length === 0
+              yield* tasks.enqueue(id, rowOf(message), at)
+              yield* labelled(task)
+              if (first) {
+                yield* threads
+                  .notice(id, "info", `Queued until ${decision.lead}'s run ends: its lead is working in this task's worktree`)
+                  .pipe(Effect.catchTag("TaskNotFound", () => Effect.void))
+              }
               return yield* publish(id)
             }),
           )

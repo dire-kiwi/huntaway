@@ -112,6 +112,13 @@ export interface RunRepoShape {
    * are its, for their cost (the old `routines.taken_in`), whether it started with them or was steered them.
    */
   readonly chargeAutomationRuns: (run: RunId, automationRuns: ReadonlyArray<string>) => Effect.Effect<void>
+  /**
+   * HE-118: a set's lead's run is given the worktree of `task` (a follower's): while the run is live, the follower's own
+   * agent doesn't start and it stays in To do (`TaskRepo.heldBy`).
+   */
+  readonly grant: (run: RunId, task: TaskId) => Effect.Effect<void>
+  /** HE-118: the tasks whose worktrees the run was given, in the order they were. */
+  readonly granted: (run: RunId) => Effect.Effect<ReadonlyArray<TaskId>>
 }
 
 export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-server/runs/RunRepo") {
@@ -232,6 +239,12 @@ export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-
           automationRuns.length === 0
             ? Effect.void
             : sql`UPDATE automation_runs SET agent_run_id = ${run} WHERE ${sql.in("id", automationRuns)}`.pipe(Effect.asVoid, Effect.orDie),
+        grant: (run, task) => sql`INSERT OR IGNORE INTO run_grants (run_id, task_id) VALUES (${run}, ${task})`.pipe(Effect.asVoid, Effect.orDie),
+        granted: (run) =>
+          sql<{ readonly task_id: TaskId }>`SELECT task_id FROM run_grants WHERE run_id = ${run} ORDER BY rowid`.pipe(
+            Effect.map((rows) => rows.map((r) => r.task_id)),
+            Effect.orDie,
+          ),
       })
     }),
   )

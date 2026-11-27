@@ -168,6 +168,11 @@ export type SendDecision =
   | { readonly _tag: "Steer" }
   /** Queued for when the live run ends. */
   | { readonly _tag: "Queue" }
+  /**
+   * HE-118: queued, the task left in To do, until its set's lead's run that has its worktree ends (`RunEnds` sends it
+   * then): no two agents work in one worktree.
+   */
+  | { readonly _tag: "HoldForLead"; readonly lead: string }
   /** Queued, the task waiting in In progress for its dependencies to be merged. */
   | { readonly _tag: "WaitForDependencies"; readonly unmet: ReadonlyArray<string> }
   | { readonly _tag: "Start"; readonly kind: RunKind; readonly take: Take }
@@ -198,6 +203,8 @@ export interface SendFacts {
   readonly agents: boolean
   /** The keys of what it depends on that isn't merged. */
   readonly unmet: ReadonlyArray<string>
+  /** HE-118: the key of its set's lead whose live run was given its worktree (`TaskRepo.heldBy`); null for none. */
+  readonly heldBy?: string | null | undefined
 }
 
 /** The lasting threads whose first prompt is the user's message (the assistant, the pens threads, a stack's thread). */
@@ -220,6 +227,8 @@ export const decideSend = (f: SendFacts): SendDecision => {
   // HE-105: a conversation has nothing to start on but a message (its first prompt is the message alone).
   const conversation = f.task.kind === "task" && f.task.task_type !== null && CONVERSATIONS.has(f.task.task_type)
   if (conversation && f.live === null && f.task.session_id === null && text === "" && (f.task.queued_message ?? "").trim() === "") return { _tag: "Nothing" }
+  // HE-118: its lead's run works in its worktree: its own agent waits for that run to end (as for dependencies, below).
+  if (f.heldBy != null && f.live === null) return { _tag: "HoldForLead", lead: f.heldBy }
   if (!auto && f.live !== null) {
     if (text === "") return { _tag: "Nothing" }
     const run = f.live

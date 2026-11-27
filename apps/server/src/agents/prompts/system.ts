@@ -60,6 +60,7 @@ const ownPrompt: { readonly [Tag in ThreadKind["_tag"]]: (kind: ThreadKind, c: P
       ghTools: c.ghTools,
       boardPr: c.boardPr,
       stack: c.stackLevel,
+      set: c.set,
     }),
   Document: (kind, c) =>
     documentsOnly({

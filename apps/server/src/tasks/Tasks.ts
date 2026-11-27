@@ -134,6 +134,7 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
         const project: ProjectRef | null = before.project_id === null ? null : yield* repo.project(before.project_id)
         const links = patch.depends_on !== undefined || patch.merges_into !== undefined || patch.start_from !== undefined
         const merge = patch.status === "ready_for_merge"
+        const leaves = before.status === "todo" && patch.status !== undefined && patch.status !== "todo"
         const facts: UpdateFacts = {
           project,
           running: before.running,
@@ -141,6 +142,8 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
           tasks: links || merge ? yield* linkable(before.project_id, namedBy(patch)) : [],
           ...git,
           endOfMergeQueue: merge ? yield* repo.endPosition(before.project_id, "ready_for_merge") : 0,
+          // HE-118: a set's task whose lead's run has its worktree doesn't leave To do.
+          leadHolds: leaves && before.lead_id != null ? ((yield* repo.heldBy(before.id))?.key ?? null) : null,
         }
         return facts
       })
