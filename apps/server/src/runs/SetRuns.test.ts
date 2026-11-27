@@ -320,6 +320,45 @@ describe("while a lead's run has a follower's worktree", () => {
       }),
     ),
   )
+  it.live("lets go only the tasks it held, each of them waiting for its dependencies as it would have", () =>
+    run(
+      Effect.gen(function* () {
+        const { projects } = yield* board(["API", "WEB", "DOC"])
+        const { lead, followers } = yield* makeSet(projects, "in_progress")
+        const web = nth(followers, 0)
+        const doc = nth(followers, 1)
+        const tasks = yield* Tasks
+        // Each depends on a task of its own project that isn't merged.
+        for (const [f, i] of [
+          [web, 1],
+          [doc, 2],
+        ] as const) {
+          const dep = yield* tasks.create({ project_id: nth(projects, i).project.id, title: "Before it", start: false }, Actor.user).pipe(Effect.orDie)
+          yield* tasks.update(f.id, { depends_on: [dep.id] }, Actor.user).pipe(Effect.orDie)
+        }
+        const worktrees = yield* Worktrees
+        for (const t of [lead, web, doc]) yield* worktrees.setup(t.id).pipe(Effect.orDie)
+        // WEB's Start waits for its dependency before the lead's run; DOC's is held by the run, which was given DOC only.
+        const waiting = yield* send(web.id, "")
+        assert.deepStrictEqual([waiting.status, waiting.waiting], ["in_progress", true])
+        const { finish } = yield* leadRun(lead, [doc])
+        assert.deepStrictEqual([(yield* send(doc.id, "")).status, (yield* get(doc.id)).waiting], ["todo", false])
+
+        yield* finish
+        // Neither has started a run: WEB still waits, and DOC, let go, waits for its dependency now.
+        const [w, d] = [yield* get(web.id), yield* get(doc.id)]
+        assert.deepStrictEqual(
+          [w, d].map((t) => [t.status, t.waiting, t.running]),
+          [
+            ["in_progress", true, false],
+            ["in_progress", true, false],
+          ],
+        )
+        for (const t of [web, doc]) assert.isTrue(Option.isNone(yield* (yield* RunRepo).latest(t.id)), t.key)
+        assert.include((yield* notices(doc.id)).join("\n"), "Queued until DOC-2 is merged")
+      }),
+    ),
+  )
 })
 
 describe("the end of a lead's run with its work finished", () => {

@@ -206,20 +206,19 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       })
 
       /**
-       * HE-118: the end of a set's lead's run lets the set's tasks it held go: what was queued for them meanwhile is sent
-       * (a run of the lead started since holds again those it was given).
+       * HE-118: the end of a set's lead's run lets go the tasks it held (`RunRepo.granted`, only those): what was queued for
+       * one meanwhile, still in To do, is sent as any message is, so it waits for its dependencies or a usage limit as it
+       * would have (a run of the lead started since holds again those it was given).
        */
-      const releaseFollowers = Effect.fnUntraced(function* (leadId: TaskId) {
-        const lead = yield* tasks.get(leadId)
-        if (lead === null || !isLead(lead)) return
-        for (const f of (yield* tasks.inSet(lead.id)).slice(1)) {
-          if (f.status === "done" || f.running) continue
+      const releaseFollowers = Effect.fnUntraced(function* (run: Run) {
+        for (const id of yield* repo.granted(run.id)) {
+          const f = yield* tasks.get(id)
+          if (f === null || f.status !== "todo" || f.running) continue
           const queued = yield* tasks.queued(f.id)
           if (queued.length === 0) continue
-          // Only blank rows (a Start held for it) start it as `Runs.startWaiting` does: `sendQueued` would have nothing to send.
-          const start = queued.every((q) => q.text.trim() === "")
-            ? Effect.andThen(runs.dropQueued(f.id), runs.send(f.id, { text: "", source: "board", auto: true }))
-            : runs.sendQueued(f.id)
+          // Only blank rows (a Start held for it), which `sendQueued` has nothing to send for: a Start again, not the board's
+          // own (`auto`, which skips the dependencies' wait), which takes the blank rows with it.
+          const start = queued.every((q) => q.text.trim() === "") ? runs.send(f.id, { text: "", source: "board" }) : runs.sendQueued(f.id)
           yield* start.pipe(
             Effect.catchCause((cause) =>
               Effect.andThen(
@@ -285,7 +284,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
           yield* changes.offer({ _tag: "ReviewFinished", thread: run.task_id, run: run.id, outcome, attention: run.attention })
         }
         // HE-118: a lead's run lets the set's tasks it held go.
-        yield* releaseFollowers(run.task_id)
+        yield* releaseFollowers(run)
         if (later) return
         // 4.5: the pull request its agent may have opened, looked up in the background for a task with a branch and none.
         yield* pullRequests.findLater(run.task_id)

@@ -1798,9 +1798,10 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   - `decideUpdate` refuses a held follower's move out of To do: `Invalid` on `status`, "its lead is working in it:
     KEY's run has its worktree, so move it once that run ends" (`UpdateFacts.leadHolds`, read only for such a move).
   - `RunEnds.ended`, as any run of a lead ends (and before it carries on a later run's start, which may take the
-    followers again), sends each open, not running follower's queue (`Runs.sendQueued`), or, when it holds only blank
-    rows (a Start), drops them and starts it as `Runs.startWaiting` does (a blank board message): its own agent starts
-    then, and it's that run's end that moves it.
+    followers again), lets go the tasks that run held (`RunRepo.granted`, only those): each still in To do and not
+    running has its queue sent (`Runs.sendQueued`), or, when that holds only blank rows (a Start), a blank board message
+    that isn't `auto` (which takes them), so each waits for its dependencies or a usage limit as any message does. Its
+    own agent starts then, and it's that run's end that moves it.
   - `Worktrees.agentInWorktree` counts the hold, so a held follower's worktree isn't set up again or torn down by hand
     (`AgentInWorktree`), restacked, or counted idle by `Fanout`; a rewind is refused (`Checkpoints`' busy check: "Its
     set's lead, KEY, is working in its worktree…").
@@ -1827,7 +1828,8 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   follower in To do and one in In review (the whole set set up; only the first given, as `--add-dir` or writable root;
   the prompt), a follower's own launch given nothing, a follower's setup script failing the lead's launch, a held
   follower's message queued, its move, teardown and rewind refused (another follower moving freely), then sent as the
-  lead's run ends, and a held Start starting its follower then; the Codex lead's writable roots with the follower's
+  lead's run ends, and a held Start starting its follower then; only the held tasks let go, a held Start waiting for its
+  follower's dependency then and another follower's Start left waiting for its own; the Codex lead's writable roots with the follower's
   repository's git directory;
   the end of a finished lead's run with a follower with a commit, one with only an uncommitted file, one with neither
   and one in Backlog; and a stopped lead's run moving none.
