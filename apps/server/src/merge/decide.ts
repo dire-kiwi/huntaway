@@ -2,6 +2,7 @@ import type { Task } from "@huntaway/contracts"
 import { isMerged } from "../tasks/checks.ts"
 import { activeMerge, mergeLanes, queuedMerges, stackedBelow, stackRunLanes, stackRuns, stackRunTasks, stackWaits } from "../tasks/lanes.ts"
 import type { Rows } from "../tasks/lanes.ts"
+import { setOf, setWaitsFor } from "../tasks/sets.ts"
 
 // What the merge queue does next (docs/plan/06-server.md, Merge; inventory 04, sections 2.14–2.16; huntaway's
 // agent/runner/merge.ts `start_next_merge`, `settle_stack_runs`, `awaits_approvals` and review/merge_gate.ts
@@ -55,6 +56,11 @@ export interface LaneFacts {
   readonly archived: boolean
   /** Its merges wait for the user's approval (its `merge_approval`, else its profile's). */
   readonly approvalRequired: boolean
+  /**
+   * HE-119: the tasks of the sets across repositories that the project's tasks are in, whichever project each is in. A
+   * set's task merges only once every open task of its set is in Ready for merge.
+   */
+  readonly sets: Rows
 }
 
 /** What the merge queue does now. */
@@ -70,8 +76,9 @@ export interface LanePlan {
 /**
  * The old `start_next_merge`: each lane with tasks queued whose slot is free gives its first queued task in column order
  * the merge, unless a stack's run under way holds the lane for its own levels, or the task's run still waits for
- * approvals; tasks needing approval are summarised regardless of the slot, and so are a run's levels waiting for the one
- * below (which aren't queued yet).
+ * approvals, or the task's set (HE-119) waits for others of its tasks to be in Ready for merge; tasks needing approval
+ * are summarised regardless of the slot (a set's too, so the user approves each before any merges), and so are a run's
+ * levels waiting for the one below (which aren't queued yet).
  */
 export const decideLanes = (f: LaneFacts): LanePlan => {
   const leaveRun = settleStackRuns(f.tasks)
@@ -93,7 +100,15 @@ export const decideLanes = (f: LaneFacts): LanePlan => {
     let next: Task | null = null
     for (const t of queuedMerges(rows, lane, f.archived)) {
       if (needsSummary(t, f.approvalRequired)) summarise.push(t)
-      else if (free && next === null && (run === undefined || t.stack_run === run) && !awaitsApprovals(rows, t, f.approvalRequired)) next = t
+      else if (
+        free &&
+        next === null &&
+        (run === undefined || t.stack_run === run) &&
+        !awaitsApprovals(rows, t, f.approvalRequired) &&
+        setWaitsFor(setOf(f.sets, t), t).length === 0
+      ) {
+        next = t
+      }
     }
     if (next !== null) start.push(next)
   }

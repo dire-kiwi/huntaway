@@ -14,7 +14,7 @@ import { ServerConfig } from "../platform/ServerConfig.ts"
 import { canBeInPen, checkPenName, nextPenColor, penWanted } from "./penChecks.ts"
 import { PenRepo } from "./PenRepo.ts"
 import { RepoBranches } from "./RepoBranches.ts"
-import { checkSet, freeBranchName, setBranchBase, setPenName } from "./sets.ts"
+import { checkSet, closedUnmerged, freeBranchName, handOnSet, leadOf, setBranchBase, setPenName } from "./sets.ts"
 import type { CreateFacts, NewRow, TaskColumns, UpdateFacts } from "./decide.ts"
 import { TaskRepo } from "./TaskRepo.ts"
 import type { ProjectRef } from "./TaskRepo.ts"
@@ -205,6 +205,24 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
         return after
       })
 
+      /**
+       * HE-119: a set's lead deleted or closed (`gone`, as it is now) hands its set on (`handOnSet`), in the transaction
+       * that deleted or closed it. What it changed, for the reactor.
+       */
+      const handOn = Effect.fnUntraced(function* (gone: Task, how: "deleted" | "closed", at: Timestamp) {
+        if (gone.kind !== "task" || (gone.lead_id !== null && gone.lead_id !== undefined)) return []
+        const out: Array<Changed> = []
+        for (const { id, lead_id } of handOnSet(yield* repo.inSet(leadOf(gone)), gone, how)) {
+          // In this transaction, a row of the set just read.
+          const before = yield* load(id).pipe(Effect.orDie)
+          out.push({ before, after: yield* commit(before, { lead_id }, at) })
+        }
+        return out
+      })
+      /** `handOn` for a change that closed `after` without merging it. */
+      const handOnClosed = (before: Task, after: Task, at: Timestamp) =>
+        !closedUnmerged(before) && closedUnmerged(after) ? handOn(after, "closed", at) : Effect.succeed<ReadonlyArray<Changed>>([])
+
       const get = Effect.fn("Tasks.get")(function* (id: TaskId) {
         return yield* load(id)
       })
@@ -347,7 +365,7 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
                 const pen = yield* resolvePen(before, patch, at)
                 const decision = yield* Effect.fromResult(decideUpdate(before, patch, { ...(yield* updateFacts(before, patch, git)), pen }, by, at))
                 // Nothing to write: nothing changed, and nothing is told.
-                if (Object.keys(decision.columns).length === 0) return { before, after: null, notes: [] }
+                if (Object.keys(decision.columns).length === 0) return { before, after: null, notes: [], set: [] }
                 const notes: Array<ChangeNote> = decision.notes.map((text) => ({ level: "info", text }))
                 if (decision.columns.merging === true && !before.merging && config.noAgents) {
                   notes.push({
@@ -355,11 +373,13 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
                     text: "Agents can't run on this host yet (no Claude Code or Codex found), so the task waits in the merge queue until they can",
                   })
                 }
-                return { before, after: yield* commit(before, decision.columns, at), notes }
+                const after = yield* commit(before, decision.columns, at)
+                return { before, after, notes, set: yield* handOnClosed(before, after, at) }
               }),
             )
             if (done.after === null) return done.before
             yield* offer(by, [done], done.notes)
+            yield* offer(by, done.set)
             return done.after
           }),
         )
@@ -373,13 +393,14 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
               Effect.gen(function* () {
                 const before = yield* load(id)
                 const columns = decide(before)
-                if (columns === null) return { before, after: null }
+                if (columns === null) return { before, after: null, set: [] }
                 const project = before.project_id === null || columns.pr_url === undefined ? null : yield* repo.project(before.project_id)
-                return { before, after: yield* commit(before, deriveColumns(before, columns, at, project?.pr_preview_url ?? null), at) }
+                const after = yield* commit(before, deriveColumns(before, columns, at, project?.pr_preview_url ?? null), at)
+                return { before, after, set: yield* handOnClosed(before, after, at) }
               }),
             )
             if (done.after === null) return done.before
-            yield* offer(cause, [done])
+            yield* offer(cause, [done, ...done.set])
             return done.after
           }),
         )
@@ -406,6 +427,8 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
                 }
                 // HE-105: its stack's thread, when no level is left to take it, goes with it (the row cascades).
                 const threads = siblings.filter((t) => t.task_type === "stack" && t.parent_id === id && !changed.some((c) => c.before?.id === t.id))
+                // HE-119: a set's lead hands its set on.
+                changed.push(...(yield* handOn(gone, "deleted", at)))
                 yield* repo.delete(id)
                 for (const r of [...reviews, ...threads, gone]) yield* events.emit({ type: "task_deleted", id: r.id, project_id: r.project_id })
                 changed.push({ before: gone, after: null })

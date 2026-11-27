@@ -205,6 +205,7 @@ export function ProfileBoard({ profile }: { profile: string }) {
       lanes={lanes}
       onOpenPen={pickTab}
       onCreated={onCreated}
+      pen={tab?.name}
       renderHeader={({ controls, newTask }) => (
         <>
           <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:gap-2 narrow:px-3">

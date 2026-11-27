@@ -1656,7 +1656,8 @@ whole, which the user messages, and which the levels' agents are told to hand st
 ## Work across repositories (HE-116)<a id="work-across-repositories"></a>
 
 Sets themselves are built (HE-117, [below](#sets-as-built-in-he-117)), and so are the lead's runs (HE-118,
-[below](#set-runs-as-built-in-he-118)); landing together and the web are planned. One piece of work that changes several repositories (an API and its client, say) is **one task per
+[below](#set-runs-as-built-in-he-118)), landing together (HE-119, [below](#landing-together-as-built-in-he-119)) and the
+web (HE-120, [below](#sets-in-the-web-as-built-in-he-120)). One piece of work that changes several repositories (an API and its client, say) is **one task per
 repository, made together as a set**, with one branch name in all of them. This is the first of the three ways compared
 in HE-116's research on T3 Code's projects with several repositories (pingdotgg/t3code#35925): it leaves review, the merge queue,
 `merges_into`, stacks and pull request watching as they are, because each repository is still its own task. A project
@@ -1714,11 +1715,13 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   branches, with table tests.
 - **Landing together**: a set's task in Ready for merge waits until every open task of its set is in Ready for merge,
   then each merges through its own project's queue. A task closed as not done or won't fix leaves the set's count. A
-  merge that fails once others have merged is the lead's to settle, and the board tells the lead's thread.
+  merge that fails once others have merged is the lead's to settle, and the board tells the lead's thread. As built:
+  [below](#landing-together-as-built-in-he-119).
 - **Leaving the set**: the lead deleted or closed hands the set to the next open task by creation (its `lead_id`
   cleared, the others' moved to it). A set down to one task is an ordinary task.
 - **The web**: the New task dialog's "Also in" picker (projects of the profile); a set's card shows "1 of 3" and opens
-  a "Set" section in Details listing the others; the lead's Changes tab stays its own repository's.
+  a "Set" section in Details listing the others; the lead's Changes tab stays its own repository's. As built:
+  [below](#sets-in-the-web-as-built-in-he-120).
 - **Tasks**: in [13-milestones.md](13-milestones.md#after-the-port-work-across-repositories).
 
 ### Sets as built in HE-117<a id="sets-as-built-in-he-117"></a>
@@ -1833,3 +1836,78 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   repository's git directory;
   the end of a finished lead's run with a follower with a commit, one with only an uncommitted file, one with neither
   and one in Backlog; and a stopped lead's run moving none.
+
+### Landing together as built in HE-119<a id="landing-together-as-built-in-he-119"></a>
+
+- **The rule** is `tasks/sets.ts` `setWaitsFor(set, t)`: the other tasks of `t`'s set that are open and not ready to
+  land. Ready to land (`readyToLand`) is in Ready for merge and not waiting for the user's approval
+  (`merge_approval: "pending"`): queued, merging, or handed to a workflow once merged. Not ready: any other column, a
+  merge waiting for approval (it may yet be denied), a failed merge (Needs attention, still merging), a task that stepped
+  out to make changes. Done tasks don't count, merged or closed (not done, won't fix). `setOf(rows, t)` is `t`'s set
+  among rows of any project (`leadOf`: `lead_id`, else its own id).
+- **The queue**: `decideLanes` takes `sets`, the rows of the sets of the project's tasks waiting in Ready for merge
+  (`Merges.reconcileLane` reads each with `TaskRepo.inSet`), and doesn't start a set's task that waits; the next task
+  queued in its lane goes instead, so a waiting set doesn't hold its lane. A waiting task's merge is still summarised for
+  approval when its project wants one, so the user approves each of the set before any merges. Once none waits, each
+  merges in its own project's queue, at its turn there; the queue doesn't hold one project's merge back for another's
+  lane to be free. A set's task changing what the queue reads (`lead_id` joined `laneColumns`) has the queues of every
+  project of its set looked at again (`Merges.taskChanged`).
+- **Why it waits**: as a task of a set reaches Ready for merge and waits, its thread says so (`merge/sets.ts`
+  `setWaitText`: "Waits for the rest of its set before it merges: WEB-1 (In review)…"). The web works it out from the
+  board's tasks as the stack's wait is (`setMergeWaits` in `@huntaway/client`, `board/SetWait.tsx` `useSetWait`): the
+  card's "waits for its set" badge (in place of "queued to merge") and the note in Details' Status.
+- **A message** to a set's task waiting for the rest takes it out of Ready for merge while its agent works (In progress,
+  `remerge`), as one to a waiting stack level does (`Runs`' `outOfStackWait`); it rejoins the queue when its run ends.
+- **A merge failing** after others of its set merged (`merge/sets.ts` `mergeFailed`: it was merging, not waiting on the
+  user, and now needs attention there, not for approval, or it left the merge unmerged without stepping out; not a
+  merge handed to its project's workflow, which waits in Ready for merge out of the merge, `isHandoff`) is told
+  to the lead's thread as a warning notice, with the failed task, its reason (its `attention_reason`, else the column
+  it went to) and the tasks merged: `setMergeFailedText`. A notice, not a message: the lead's agent isn't started by it,
+  and the lead may be merged and done. The rest of the set not merged yet wait for the failed one again.
+- **Leaving the set** is `tasks/sets.ts` `handOnSet(set, gone, how)`, a pure function with table tests, run by
+  `Tasks` in the transaction that deletes the lead (`Tasks.delete`) or closes it (`Tasks.update` and `Tasks.change`, a
+  move into Done unmerged), each task it changes emitted and offered to the reactor. The heir is the next open task by
+  creation (the order `inSet` reads); a deleted lead with no open task left hands it to the next task all the same, a
+  closed lead with none keeps it. The heir's `lead_id` is cleared and every other task names it, **a closed lead
+  included**: it stays in the set as a follower, so reopened it counts again, as a follower closed by HE-118 does. A set
+  down to one task leaves that task with `lead_id` null. A merged lead stays the lead (the thread a failure is told to).
+- **Not handled**: deleting a whole project cascades its tasks in `ProjectRepo` without `Tasks.delete`, so a set whose
+  lead was in it keeps followers naming a missing lead. That still reads as a set (`inSet` of the missing id finds
+  them), lands together and has no lead's thread to tell (the failed task's own is told instead).
+- **Tests**: `merge/decide.test.ts` (the table: who waits for what, closed and merged tasks out of the count, approval
+  still summarised, the lane left to the next task, a follower whose lead is in another project), `tasks/sets.test.ts`
+  (`handOnSet`'s table, `setWaitsFor`, `setOf`), `merge/sets.test.ts` (`mergeFailed`'s table, the workflow's handoff
+  among its rows), `@huntaway/client`'s `setMergeWaits`, and `merge/SetsLanding.test.ts` on the
+  board and real repositories (two and three): the lead waits and says why, both merge once the follower comes, one
+  closed doesn't count; a failure after two merged told to the lead's thread; a message taking a waiting task out; the
+  lead closed, then deleted, then a follower deleted; a set of two whose lead is deleted.
+
+### Sets in the web as built in HE-120<a id="sets-in-the-web-as-built-in-he-120"></a>
+
+- **New task**: an "Also in other projects" switch in the options row (`layout/newTask/OptionsRow.tsx`) opens the picker
+  under it (`AlsoIn.tsx`): a button for each other project of the task's profile on its host whose tasks get a worktree
+  (`worktreesOn`), the others greyed once seven are picked. The state is `useOptions`' (`alsoIn`, `setProjects`). It is
+  offered only for a code task in a project with its worktree on, and (not in the design above) not for one made with
+  several models (`!opus !sonnet`), which would make a set for each. A `from:` or an `into:`, a scratch type, the
+  worktree switched off or an `in:` elsewhere clear what's picked and hide it; taking the token out again doesn't bring
+  them back. `useSubmit` sends `also_in` with the project ids.
+- **The title** (not in the design above): the dialog has only a description, whose title the server writes later, but a
+  set needs its title when it's made (its tasks, branch and pen are named after it, HE-117). So once a project is
+  picked the picker asks for "The set's title", sent as `title`, and Create waits for it (`blocks.ts`' `setBlock`).
+- **The pen**: opened on a pen's tab or in a pen's row, the dialog sends that pen's name as `pen` with `also_in`
+  (`NewTaskModal`'s `pen`, from `TaskBoard`), so the whole set goes in it. The board's own move into the pen after a
+  create (`onCreated`) hears only of the lead, which is all `tasks.create` answers, so without it the others went in a
+  new pen named after the title. Opened anywhere else, the set gets that pen named after its title.
+- **The card** (`board/Sets.tsx`, in `TaskBadges` beside the fan-out badge, so the list view's rows have it too):
+  `1 of 3`, its place in the set (the lead first, then the others by creation and, as a set's are made at once, by key: `TaskRepo.inSet`'s order by row isn't on the wire) and the
+  set's size, with a crown and (on a wide card) "lead" for the lead, a stack icon for the others; its tooltip names
+  every task of the set with its project. The sets are worked out once per change of the board's tasks
+  (`setsOf`), by `lead_id` on the same host; a task of an archived project isn't on the board, so isn't counted.
+- **Details and the key items** (`task/view/details/TaskLists.tsx`' `SetSection`, in both as Same prompt is): "Set",
+  "N repositories", and each task of the set with its status icon, key, project, "lead" for the lead and its column,
+  this one marked, each a button that opens it; then the branch they share (`branch`, else `set_branch`).
+- **Changes**: nothing new. The Changes tab reads the task's own worktree (`git.status` and `git.taskDiff` on the task's
+  id), so the lead's shows its own repository's, and each other's is on its own card.
+- **Checks**: `tests/ui/sets.test.mjs` (three projects of a profile and one of another: the picker's projects, a
+  `from:` clearing it, the title it waits for, the set made and its `lead_id`s, a set made on a pen's tab all in that pen, `1 of 3` and `3 of 3` with their
+  tooltips, the Set section's rows and opening one from there; not offered without a worktree or for a scratch task).

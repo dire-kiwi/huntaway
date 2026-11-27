@@ -15,7 +15,7 @@ import { PluginSections } from "./PluginSections"
 import { Section } from "./Section"
 import { StatusNotes } from "./StatusSection"
 import { SubagentsSection } from "./SubagentsSection"
-import { CreatedTasksSection, FanoutSection } from "./TaskLists"
+import { CreatedTasksSection, FanoutSection, SetSection } from "./TaskLists"
 import { taskFacts } from "./taskFacts"
 import { TodosSection } from "./TodosSection"
 import { TrackedWork } from "./TrackedWork"
@@ -94,6 +94,8 @@ export function KeyItems({ task, className, onReveal }: { task: Task; className:
       <PluginSections task={task} />
 
       {task.fanout_id && <FanoutSection task={task} />}
+
+      <SetSection task={task} />
 
       {(groupTask || taskLabels(task).includes("plan")) && <CreatedTasksSection task={task} />}
 

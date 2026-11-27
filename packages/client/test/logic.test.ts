@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
-import { type Host, HostId, LinkId, ProfileId, PROTOCOL, Timestamp } from "@huntaway/contracts"
+import { type Host, HostId, LinkId, ProfileId, PROTOCOL, TaskId, Timestamp } from "@huntaway/contracts"
 import {
   afterSend,
   AGENTS,
@@ -12,6 +12,7 @@ import {
   isArchived,
   listsModels,
   outOfUsage,
+  setMergeWaits,
   splitAttachments,
   usableHost,
   withAttachments,
@@ -124,5 +125,31 @@ describe("agents", () => {
       "",
     ])
     expect([askerName("claude"), askerName("codex"), askerName("acp"), askerName(undefined)]).toEqual(["Claude", "Codex", "The agent", "Claude"])
+  })
+})
+
+/** Task `id`, following set A. */
+const setFollower = (id: string, more: Parameters<typeof task>[0]) => task({ id: TaskId.make(id), key: id, lead_id: TaskId.make("a"), ...more })
+const setLead = (more: Parameters<typeof task>[0] = {}) => task({ id: TaskId.make("a"), key: "API-1", status: "ready_for_merge", merging: true, ...more })
+
+describe("setMergeWaits (HE-119)", () => {
+  const lead = setLead()
+  const follower = setFollower
+  const set = [
+    lead,
+    follower("b", { status: "in_review" }),
+    follower("c", { status: "ready_for_merge", merging: true }),
+    follower("d", { status: "ready_for_merge", merging: true, merge_approval: "pending" }),
+    follower("e", { status: "done", resolution: "not_done" }),
+    task({ id: TaskId.make("x"), status: "todo" }),
+  ]
+  it("the open tasks of its set not in Ready for merge, or waiting there for approval", () => {
+    expect(setMergeWaits(lead, set).map((t) => t.id)).toEqual(["b", "d"])
+    expect(setMergeWaits(follower("c", { status: "ready_for_merge", merging: true }), set).map((t) => t.id)).toEqual(["b", "d"])
+  })
+  it("none while it isn't queued to merge, or for a task in no set", () => {
+    expect(setMergeWaits(setLead({ running: true }), set)).toEqual([])
+    expect(setMergeWaits(setLead({ status: "in_review" }), set)).toEqual([])
+    expect(setMergeWaits(task({ id: TaskId.make("y"), status: "ready_for_merge", merging: true }), set)).toEqual([])
   })
 })
