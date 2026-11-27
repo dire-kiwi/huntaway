@@ -1,10 +1,21 @@
-import type { Task } from "@huntaway/contracts"
+import type { Status, Task } from "@huntaway/contracts"
 import { isMerged } from "../tasks/checks.ts"
-import { statusLabel } from "../workflows/graph.ts"
 
 // Sets across repositories landing together (HE-119; docs/plan/07-agents.md, Work across repositories): what the merge
 // queue tells a set's threads, as plain functions. Whether a set's task waits is `tasks/sets.ts` `setWaitsFor`, which
 // `decideLanes` reads.
+
+/** A column's name on the board (`workflows/graph.ts` has it too, above this area). */
+const COLUMNS: Readonly<Record<Status, string>> = {
+  backlog: "Backlog",
+  todo: "To do",
+  in_progress: "In progress",
+  needs_attention: "Needs attention",
+  in_review: "In review",
+  ready_for_merge: "Ready for merge",
+  done: "Done",
+}
+const statusLabel = (s: Status) => COLUMNS[s]
 
 const listed = (tasks: ReadonlyArray<Task>) =>
   tasks.map((t) => `${t.key} (${t.status === "ready_for_merge" ? "waiting for approval" : statusLabel(t.status)})`).join(", ")

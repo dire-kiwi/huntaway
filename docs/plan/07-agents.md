@@ -1655,8 +1655,8 @@ whole, which the user messages, and which the levels' agents are told to hand st
 
 ## Work across repositories (HE-116)<a id="work-across-repositories"></a>
 
-Sets themselves are built (HE-117, [below](#sets-as-built-in-he-117)); the lead's runs, landing together and the web are
-planned. One piece of work that changes several repositories (an API and its client, say) is **one task per
+Sets themselves are built (HE-117, [below](#sets-as-built-in-he-117)), and so is landing together (HE-119,
+[below](#landing-together-as-built-in-he-119)); the lead's runs and the web are planned. One piece of work that changes several repositories (an API and its client, say) is **one task per
 repository, made together as a set**, with one branch name in all of them. This is the first of the three ways compared
 in HE-116's research on T3 Code's projects with several repositories (pingdotgg/t3code#35925): it leaves review, the merge queue,
 `merges_into`, stacks and pull request watching as they are, because each repository is still its own task. A project
@@ -1714,7 +1714,8 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   branches, with table tests.
 - **Landing together**: a set's task in Ready for merge waits until every open task of its set is in Ready for merge,
   then each merges through its own project's queue. A task closed as not done or won't fix leaves the set's count. A
-  merge that fails once others have merged is the lead's to settle, and the board tells the lead's thread.
+  merge that fails once others have merged is the lead's to settle, and the board tells the lead's thread. As built:
+  [below](#landing-together-as-built-in-he-119).
 - **Leaving the set**: the lead deleted or closed hands the set to the next open task by creation (its `lead_id`
   cleared, the others' moved to it). A set down to one task is an ordinary task.
 - **The web**: the New task dialog's "Also in" picker (projects of the profile); a set's card shows "1 of 3" and opens
@@ -1769,3 +1770,46 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   name is free; the refused projects, two on one repository among them; a task merging into an unstarted set's task, an
   unstarted one moved to Ready for merge, and a failed first setup's settings changed), and `create_task`'s case in
   `mcp/tools/tasks.test.ts` (a scratch task in no project among the refusals).
+
+### Landing together as built in HE-119<a id="landing-together-as-built-in-he-119"></a>
+
+- **The rule** is `tasks/sets.ts` `setWaitsFor(set, t)`: the other tasks of `t`'s set that are open and not ready to
+  land. Ready to land (`readyToLand`) is in Ready for merge and not waiting for the user's approval
+  (`merge_approval: "pending"`): queued, merging, or handed to a workflow once merged. Not ready: any other column, a
+  merge waiting for approval (it may yet be denied), a failed merge (Needs attention, still merging), a task that stepped
+  out to make changes. Done tasks don't count, merged or closed (not done, won't fix). `setOf(rows, t)` is `t`'s set
+  among rows of any project (`leadOf`: `lead_id`, else its own id).
+- **The queue**: `decideLanes` takes `sets`, the rows of the sets of the project's tasks waiting in Ready for merge
+  (`Merges.reconcileLane` reads each with `TaskRepo.inSet`), and doesn't start a set's task that waits; the next task
+  queued in its lane goes instead, so a waiting set doesn't hold its lane. A waiting task's merge is still summarised for
+  approval when its project wants one, so the user approves each of the set before any merges. Once none waits, each
+  merges in its own project's queue, at its turn there; the queue doesn't hold one project's merge back for another's
+  lane to be free. A set's task changing what the queue reads (`lead_id` joined `laneColumns`) has the queues of every
+  project of its set looked at again (`Merges.taskChanged`).
+- **Why it waits**: as a task of a set reaches Ready for merge and waits, its thread says so (`merge/sets.ts`
+  `setWaitText`: "Waits for the rest of its set before it merges: WEB-1 (In review)…"). The web works it out from the
+  board's tasks as the stack's wait is (`setMergeWaits` in `@huntaway/client`, `board/SetWait.tsx` `useSetWait`): the
+  card's "waits for its set" badge (in place of "queued to merge") and the note in Details' Status.
+- **A message** to a set's task waiting for the rest takes it out of Ready for merge while its agent works (In progress,
+  `remerge`), as one to a waiting stack level does (`Runs`' `outOfStackWait`); it rejoins the queue when its run ends.
+- **A merge failing** after others of its set merged (`merge/sets.ts` `mergeFailed`: it was merging, not waiting on the
+  user, and now needs attention there, not for approval, or it left the merge unmerged without stepping out) is told
+  to the lead's thread as a warning notice, with the failed task, its reason (its `attention_reason`, else the column
+  it went to) and the tasks merged: `setMergeFailedText`. A notice, not a message: the lead's agent isn't started by it,
+  and the lead may be merged and done. The rest of the set not merged yet wait for the failed one again.
+- **Leaving the set** is `tasks/sets.ts` `handOnSet(set, gone, how)`, a pure function with table tests, run by
+  `Tasks` in the transaction that deletes the lead (`Tasks.delete`) or closes it (`Tasks.update` and `Tasks.change`, a
+  move into Done unmerged), each task it changes emitted and offered to the reactor. The heir is the next open task by
+  creation (the order `inSet` reads); a deleted lead with no open task left hands it to the next task all the same, a
+  closed lead with none keeps it. The heir's `lead_id` is cleared and every other task names it, **a closed lead
+  included**: it stays in the set as a follower, so reopened it counts again, as a follower closed by HE-118 does. A set
+  down to one task leaves that task with `lead_id` null. A merged lead stays the lead (the thread a failure is told to).
+- **Not handled**: deleting a whole project cascades its tasks in `ProjectRepo` without `Tasks.delete`, so a set whose
+  lead was in it keeps followers naming a missing lead. That still reads as a set (`inSet` of the missing id finds
+  them), lands together and has no lead's thread to tell (the failed task's own is told instead).
+- **Tests**: `merge/decide.test.ts` (the table: who waits for what, closed and merged tasks out of the count, approval
+  still summarised, the lane left to the next task, a follower whose lead is in another project), `tasks/sets.test.ts`
+  (`handOnSet`'s table, `setWaitsFor`, `setOf`), `@huntaway/client`'s `setMergeWaits`, and `merge/Sets.test.ts` on the
+  board and real repositories (two and three): the lead waits and says why, both merge once the follower comes, one
+  closed doesn't count; a failure after two merged told to the lead's thread; a message taking a waiting task out; the
+  lead closed, then deleted, then a follower deleted; a set of two whose lead is deleted.

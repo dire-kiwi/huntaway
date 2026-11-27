@@ -1,5 +1,5 @@
 import { clsx } from "clsx"
-import { Clock, Ellipsis, Folder, GitMerge, Hourglass, ShieldQuestionMark } from "lucide-react"
+import { Boxes, Clock, Ellipsis, Folder, GitMerge, Hourglass, ShieldQuestionMark } from "lucide-react"
 import { memo, type KeyboardEvent, type MouseEvent, type ReactNode } from "react"
 import {
   agentWaiting,
@@ -25,6 +25,7 @@ import { FanoutBadge } from "./Fanout"
 import { IncomingBadge, MergesIntoBadge } from "./MergesInto"
 // HE-51
 import { MergeWorkMark } from "./MergeWork"
+import { useSetWait } from "./SetWait"
 import { LevelsBadge, StackedOnBadge, useStackWait } from "./StackedOn"
 import { TaskMarks } from "../task/Reminders"
 import { TaskTypeBadge } from "../task/documentInfo"
@@ -156,11 +157,18 @@ function TaskBadges({
   const words = (text: string) => (compact ? <Wide>{text}</Wide> : text)
   // A stack level waits for the one below it instead (its own badge says so).
   const stackWait = useStackWait(task, project)
+  // HE-119: a set's task waits for the rest of its set instead.
+  const setWait = useSetWait(task)
   return (
     <>
       {isGroupTask(task) && <GroupTaskBadge progress={progress} compact={compact} />}
       <TypeBadges task={task} progress={progress} compact={compact} />
-      {mergeQueued(task) && !stackWait && (
+      {setWait && (
+        <span className={badge} title={setWait}>
+          <Boxes size={11} /> {words("waits for its set")}
+        </span>
+      )}
+      {mergeQueued(task) && !stackWait && !setWait && (
         <span className={badge} title="Queued to merge: waits for the merge in progress in this project">
           <Clock size={11} /> {words("queued to merge")}
         </span>
