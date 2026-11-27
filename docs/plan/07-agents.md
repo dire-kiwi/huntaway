@@ -1811,7 +1811,7 @@ that covers several repositories, as in T3 Code, would make all of those per rep
 - **Tests**: `merge/decide.test.ts` (the table: who waits for what, closed and merged tasks out of the count, approval
   still summarised, the lane left to the next task, a follower whose lead is in another project), `tasks/sets.test.ts`
   (`handOnSet`'s table, `setWaitsFor`, `setOf`), `merge/sets.test.ts` (`mergeFailed`'s table, the workflow's handoff
-  among its rows), `@huntaway/client`'s `setMergeWaits`, and `merge/Sets.test.ts` on the
+  among its rows), `@huntaway/client`'s `setMergeWaits`, and `merge/SetsLanding.test.ts` on the
   board and real repositories (two and three): the lead waits and says why, both merge once the follower comes, one
   closed doesn't count; a failure after two merged told to the lead's thread; a message taking a waiting task out; the
   lead closed, then deleted, then a follower deleted; a set of two whose lead is deleted.
