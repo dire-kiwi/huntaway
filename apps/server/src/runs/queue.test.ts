@@ -107,6 +107,20 @@ describe("decideSend", () => {
     assert.deepStrictEqual(decideSend(facts({ unmet, agents: false })), { _tag: "Refuse", refusal: { _tag: "NoAgents" } })
   })
 
+  it("holds a set's task its lead's run works in, whatever it's sent, until that run ends (HE-118)", () => {
+    const held = { _tag: "HoldForLead", lead: "API-1" } as const
+    assert.deepStrictEqual(decideSend(facts({ heldBy: "API-1" })), held)
+    assert.deepStrictEqual(decideSend(facts({ heldBy: "API-1", message: null, task: { ...facts().task, queued_message: "go" } })), held)
+    assert.deepStrictEqual(decideSend(facts({ heldBy: "API-1", message: { text: "/compact", source: "user" } })), held)
+    assert.deepStrictEqual(decideSend(facts({ heldBy: "API-1", message: { text: "go", source: "board", auto: true } })), held)
+    // Not in an archived project, which takes no messages at all.
+    assert.deepStrictEqual(decideSend(facts({ heldBy: "API-1", project: { name: "Old", archived: true } })), {
+      _tag: "Refuse",
+      refusal: { _tag: "Archived", project: "Old" },
+    })
+    assert.deepStrictEqual(decideSend(facts({ heldBy: null })), { _tag: "Start", kind: "prompt", take: "Ahead" })
+  })
+
   it("refuses an archived project's thread, a queued merge's, and /compact with no conversation", () => {
     assert.deepStrictEqual(decideSend(facts({ project: { name: "Old", archived: true }, live })), {
       _tag: "Refuse",

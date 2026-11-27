@@ -1655,8 +1655,8 @@ whole, which the user messages, and which the levels' agents are told to hand st
 
 ## Work across repositories (HE-116)<a id="work-across-repositories"></a>
 
-Sets themselves are built (HE-117, [below](#sets-as-built-in-he-117)); the lead's runs, landing together and the web are
-planned. One piece of work that changes several repositories (an API and its client, say) is **one task per
+Sets themselves are built (HE-117, [below](#sets-as-built-in-he-117)), and so are the lead's runs (HE-118,
+[below](#set-runs-as-built-in-he-118)); landing together and the web are planned. One piece of work that changes several repositories (an API and its client, say) is **one task per
 repository, made together as a set**, with one branch name in all of them. This is the first of the three ways compared
 in HE-116's research on T3 Code's projects with several repositories (pingdotgg/t3code#35925): it leaves review, the merge queue,
 `merges_into`, stacks and pull request watching as they are, because each repository is still its own task. A project
@@ -1769,3 +1769,58 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   name is free; the refused projects, two on one repository among them; a task merging into an unstarted set's task, an
   unstarted one moved to Ready for merge, and a failed first setup's settings changed), and `create_task`'s case in
   `mcp/tools/tasks.test.ts` (a scratch task in no project among the refusals).
+
+### A set's runs as built in HE-118<a id="set-runs-as-built-in-he-118"></a>
+
+- **What it holds** (`runs/sets.ts`, pure): a task **leads** a set when it has a `set_branch` and no `lead_id`
+  (`isLead`); a follower **waits for its lead** while it's in To do with no run of its own (`awaitsLead`), and **takes
+  a grant** when it also has its worktree set up (`takesGrant`). A set down to one task is told nothing of it.
+- **The worktrees** (`LaunchFacts.prepareWork`): once the lead's own worktree is set up, `setUpFollowers` sets up each
+  open follower that isn't running (`Worktrees.setup`, nothing for one that's ready and there), the lead's thread saying
+  "Setting up KEY's worktree…" and the follower's that it waits in To do while its lead works in it. A failure is the
+  launch's `WorktreeFailed`: "KEY's worktree (project, repository) couldn't be set up: …", so the lead's run fails
+  ("Run failed: …", Needs attention) with the lead's thread saying "Couldn't set up KEY's worktree (…)", and the
+  follower's own thread says "Worktree setup failed" with git's or the script's reason.
+- **The grants** (`grantSet`, every Claude and Codex launch of a lead's `prompt` run, not a compaction): each follower
+  that `takesGrant` and has no live run is recorded in a new table, `run_grants (run_id, task_id)` (migration
+  `2026-11-28-run-grants`, both columns cascading), **under that follower's task lock** in one transaction, so its own
+  run can't start (`Runs.send` holds the same lock) nor can it leave To do (`Tasks.change`/`update` too) between the look
+  and the grant. The granted worktrees join Claude's `--add-dir`s and Codex's writable roots (`workDirs`) after the
+  stack thread's. An ACP lead calls none (its launch takes no other folders yet) and its prompt says so. A follower's
+  runs are never given another worktree.
+- **The hold**: `TaskRepo.heldBy(task)` is the lead whose **live** run has a grant of the task (a run that has exited
+  holds nothing, so a launch given up on, a restart's reaped run and a run's end all let go without a write).
+  - `Runs.send` gives `decideSend` `heldBy` (for a follower with no live run of its own); a held follower's message,
+    whatever it is (a Start, a `/compact`, the board's own), is `HoldForLead`: queued, the task left in To do, and the
+    first one queued says "Queued until KEY's run ends: its lead is working in this task's worktree". An archived
+    project's refusal comes first.
+  - `decideUpdate` refuses a held follower's move out of To do: `Invalid` on `status`, "its lead is working in it:
+    KEY's run has its worktree, so move it once that run ends" (`UpdateFacts.leadHolds`, read only for such a move).
+  - `RunEnds.ended`, as any run of a lead ends (and before it carries on a later run's start, which may take the
+    followers again), sends each open, not running follower's queue (`Runs.sendQueued`): its own agent starts then, and
+    it's that run's end that moves it.
+- **What it's told** (`prompts/setNote.ts`, from `codeTask` after the stack note; `Prompts.system` gathers the set with
+  `TaskRepo.inSet` and the run's grants, `RunTold.granted`): the set as it was when the run started, lead first, each
+  task's key, project, repository, worktree (or "not set up yet"), branch (its `set_branch` until git has it) and base,
+  and column ("closed" for one closed unmerged). The lead is told the set's work is its own across the repositories;
+  which worktrees this run was given ("given to you for this run"), to work and commit in them each on its branch, and to
+  open each of those repositories' pull requests on that repository; what the board does when the run ends; and for
+  every other open follower, not to work in its worktree but to hand it its repository's work with `send_to_task`. A
+  follower is told its lead's key and title and to refer anything outside its own repository to the lead with
+  `send_to_task`. Both texts are in the prompt goldens (`code, a set's lead`, `code, a set's follower`).
+- **When the lead's run ends** (`RunEnds`, after the lead's own move, its `ReviewDue` and its `WorkflowWorkDone`):
+  `decideFollowers(decision, followers)` (pure) does nothing unless `leadFinished` (the decision's `status` is
+  `in_review`, or `review`, or `workDone`); then each follower that `awaitsLead` is decided on
+  `TaskBase.hasWorkToMerge`: with work, `Tasks.change` to In review (the board's move from To do, so the reactor's
+  `reviews.reconcile` follows) and `PullRequests.findLater` for it; without, closed as `done` / `not_done`. Each move
+  re-checks `awaitsLead` under the follower's lock, so one whose own run started meanwhile is left. The lead's thread
+  says "Moved KEY to In review: …" or "Closed KEY as not done: no changes in this repository"; a closed follower's
+  thread says so too. A lead run whose queued message carries on, or a later run's, decides nothing yet.
+- **Tests**: `runs/sets.test.ts` (who leads, waits and is granted; the three triggers and four other ends; followers in
+  every state, one with only uncommitted changes among them), `runs/queue.test.ts`'s hold, `system.test.ts`'s two
+  goldens and an ACP lead, and on real repositories `runs/SetRuns.test.ts`: a Claude and a Codex lead's launch with a
+  follower in To do and one in In review (the whole set set up; only the first given, as `--add-dir` or writable root;
+  the prompt), a follower's own launch given nothing, a follower's setup script failing the lead's launch, a held
+  follower's message queued and its move refused (another follower moving freely), then sent as the lead's run ends;
+  the end of a finished lead's run with a follower with a commit, one with only an uncommitted file, one with neither
+  and one in Backlog; and a stopped lead's run moving none.

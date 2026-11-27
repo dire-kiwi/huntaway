@@ -34,7 +34,7 @@ import { RunRepo } from "./RunRepo.ts"
 import { Runs } from "./Runs.ts"
 import { RunWaits } from "./RunWaits.ts"
 import { TurnHooks } from "./TurnHooks.ts"
-import { awaitsLead, decideFollowers, isLead, NO_CHANGES } from "./sets.ts"
+import { awaitsLead, decideFollowers, isLead, leadFinished, NO_CHANGES } from "./sets.ts"
 
 // What the reactor does with `RunExited` (docs/plan/07-agents.md, When a run ends; inventory 01, section 9): under the
 // task's lock, the run's outcome, the run recorded as exited, the steers it never took in queued again ahead of what
@@ -233,6 +233,8 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
        * says what it did. Each move is under the task's lock, and only for one still waiting.
        */
       const settleFollowers = Effect.fnUntraced(function* (leadId: TaskId, decision: FinishDecision) {
+        // Git is asked about the followers only once the lead's work is finished.
+        if (!leadFinished(decision)) return
         const lead = yield* tasks.get(leadId)
         if (lead === null || !isLead(lead)) return
         const waiting = (yield* tasks.inSet(lead.id)).slice(1).filter(awaitsLead)
