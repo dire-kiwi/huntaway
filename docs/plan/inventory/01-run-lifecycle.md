@@ -314,6 +314,9 @@ Shim binary lookup (`shim_path`): `$IA_SHIM_BIN`; else the newer of `target/{rel
   mapped `ultra→max`, `minimal→low`.
 - `--add-dir`: project repo (document/scratch threads), subproject worktree, group projects' repos, the task's own
   document folder, the skills dir, attachment folders named in the prompt, the temp folder.
+- New (HE-117/HE-118): a stack thread's levels' worktrees, and a set's lead's followers' worktrees that are in To do with no
+  run of their own as the run starts (recorded in `run_grants`; Codex's writable roots too), which the lead's run then
+  holds ([07-agents.md](../07-agents.md#set-runs-as-built-in-he-118)).
 - Env added: `MCP_TOOL_TIMEOUT=86400000`, `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, `CLAUDE_CODE_ENABLE_TASKS=0`, `TMPDIR=<task
   tmp>`, `HUNTAWAY_TASK_ID=<task id>`, proxy config's `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY=""`,
   and for telemetry `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=otlp`, `OTEL_METRICS_EXPORTER=none`,

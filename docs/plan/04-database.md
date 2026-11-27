@@ -170,6 +170,14 @@ CREATE TABLE thread_tools (
   disabled_mcp_servers TEXT NOT NULL DEFAULT '[]'
 ) STRICT;
 
+-- HE-118: the followers' worktrees a set's lead's run was given as it started; it holds them while it's live.
+CREATE TABLE run_grants (
+  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  PRIMARY KEY (run_id, task_id)
+) STRICT;
+CREATE INDEX run_grants_task ON run_grants(task_id);
+
 CREATE TABLE migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL) STRICT;
 ```
 

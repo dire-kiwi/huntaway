@@ -28,6 +28,7 @@ import type { PromptContext, PromptProject, PromptTask } from "./prompts/context
 import { mentionKeys, mentionsNote } from "./prompts/mentions.ts"
 import { stackBriefOf, stackLevelOf } from "./prompts/stack.ts"
 import type { StackLevel } from "../prompts/codeTask.ts"
+import type { SetBrief } from "../prompts/setNote.ts"
 import type { MentionTask } from "./prompts/mentions.ts"
 import { mentionsScanned, planRest, runPrompt } from "./prompts/start.ts"
 import { planCommand } from "../prompts/planCommand.ts"
@@ -57,6 +58,8 @@ export interface RunTold {
   readonly docsServer?: boolean | undefined
   /** 6.7: the assistant's (or a routine thread's) memory as its files say now; none by default. */
   readonly memory?: string | undefined
+  /** HE-118: the set's tasks whose worktrees a lead's run was given as it started; none by default. */
+  readonly granted?: ReadonlyArray<TaskId> | undefined
 }
 
 /** The options of a new thread that change what it is told (the old `GET /projects/{id}/system-prompt`'s query). */
@@ -213,6 +216,37 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
         return thread === null ? null : stackLevelOf(rows, task, thread.key)
       })
 
+      /** HE-118: the set across repositories a task is in, as its run is told of it; null for a task in none. */
+      const setFor = Effect.fnUntraced(function* (task: Task, run: RunTold) {
+        if (task.kind !== "task" || (typeof task.set_branch !== "string" && (task.lead_id ?? null) === null)) return null
+        const rows = yield* taskRepo.inSet(task.lead_id ?? task.id)
+        if (rows.length < 2) return null
+        const granted = new Set(run.granted ?? [])
+        const brief: SetBrief = {
+          noDirs: run.acp === true,
+          members: yield* Effect.forEach(
+            rows,
+            (t) =>
+              Effect.map(projectOf(t.project_id), (p) => ({
+                key: t.key,
+                title: t.title,
+                project: p?.name ?? "no project",
+                repository: p?.repo_path ?? "none",
+                worktree: t.worktree_state === "ready" ? t.worktree_path : null,
+                branch: t.branch ?? (typeof t.set_branch === "string" && t.set_branch !== "" ? t.set_branch : null),
+                base: t.base_branch ?? set(p?.base_branch),
+                status: t.status,
+                closed: t.status === "done" && !isMerged(t),
+                lead: (t.lead_id ?? null) === null,
+                self: t.id === task.id,
+                granted: granted.has(t.id),
+              })),
+            { concurrency: 1 },
+          ),
+        }
+        return brief
+      })
+
       /** The facts every thread's prompts read. */
       const contextOf = Effect.fnUntraced(function* (task: ContextTask, kind: ThreadKind, run: RunTold, stackLevel: StackLevel | null = null) {
         const project = yield* projectOf(task.project_id)
@@ -290,7 +324,8 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
         const kind = threadKindOf(task)
         // From the task as it is: one told it's no longer stacked (its level below merged) is still in the stack.
         const stackLevel = kind._tag === "Code" ? yield* stackLevelFor(now) : null
-        return systemPrompt(kind, yield* contextOf(task, kind, run, stackLevel))
+        const context = yield* contextOf(task, kind, run, stackLevel)
+        return systemPrompt(kind, kind._tag === "Code" ? { ...context, set: yield* setFor(now, run) } : context)
       })
 
       /** The projects and tasks the keys in `text` may name, for `mentionsNote`. */

@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest"
 import { PenId, ProfileId, ProjectId, TaskId, threadKindOf } from "@huntaway/contracts"
 import type { StartFrom, ThreadKindFields } from "@huntaway/contracts"
 import type { DocumentFile } from "../../prompts/documentGuide.ts"
+import type { SetBrief, SetMember } from "../../prompts/setNote.ts"
 import { githubNote } from "../../prompts/github.ts"
 import type { PromptContext, PromptProject, PromptTask } from "./context.ts"
 import { systemPromptGoldens } from "./fixtures/systemPrompts.ts"
@@ -97,6 +98,31 @@ const planAndDiagram: ReadonlyArray<DocumentFile> = [
 ]
 const inWorktree = { worktree_path: "/w/7-fix-it", branch: "ia/web-7-fix-it", base_branch: "main" }
 
+/** HE-118: a set across three repositories led by WEB-7, its API task in To do, its docs' past it. */
+const member = (o: Partial<SetMember>): SetMember => ({
+  key: "WEB-7",
+  title: "Fix it",
+  project: "Web",
+  repository: "/src/web",
+  worktree: "/w/7-ia-web-7-fix-it",
+  branch: "ia/web-7-fix-it",
+  base: "main",
+  status: "in_progress",
+  closed: false,
+  lead: false,
+  self: false,
+  granted: false,
+  ...o,
+})
+const setOf = (self: string, granted: boolean): SetBrief => ({
+  noDirs: false,
+  members: [
+    member({ lead: true, self: self === "WEB-7", worktree: "/w/7-fix-it" }),
+    member({ key: "API-3", project: "Api", repository: "/src/api", worktree: "/a/3-ia-web-7-fix-it", status: "todo", granted, self: self === "API-3" }),
+    member({ key: "DOC-2", project: "Docs", repository: "/src/docs", worktree: "/d/2-ia-web-7-fix-it", status: "in_review", self: self === "DOC-2" }),
+  ],
+})
+
 /** The cases the goldens were recorded for: (name, thread, context). */
 const cases: ReadonlyArray<readonly [string, Thread, Partial<PromptContext>]> = [
   ["code, plain", thread(), {}],
@@ -124,6 +150,12 @@ const cases: ReadonlyArray<readonly [string, Thread, Partial<PromptContext>]> = 
     "code, merges into a task without a branch, Codex in plan mode with docs and desktop",
     thread({ merges_into: TaskId.make("t3") }),
     { target: { number: 3, title: "Big", branch: null }, codex: true, plan: true, ghTools: true, docsTools: true, desktopHost: "box", githubAccount: "octo" },
+  ],
+  ["code, a set's lead", thread({ ...inWorktree, branch: "ia/web-7-fix-it" }), { set: setOf("WEB-7", true), github: onGithub, ghTools: true }],
+  [
+    "code, a set's follower",
+    thread({ number: 2, worktree_path: "/d/2-ia-web-7-fix-it", branch: "ia/web-7-fix-it", base_branch: "main" }),
+    { set: setOf("DOC-2", false), github: onGithub, ghTools: true },
   ],
   ["code, labelled plan and diagram", thread({ labels: ["plan", "diagram"], worktree_path: "/w/1", branch: "ia/web-1-search" }), { docs: planAndDiagram }],
   ["code, labelled artifact", thread({ labels: ["artifact"] }), { docs: [["artifact", "/d/artifact.html"]] }],
@@ -200,6 +232,18 @@ describe("systemPrompt", () => {
       Object.keys(systemPromptGoldens),
     )
     for (const [name, task, o] of cases) assert.strictEqual(told(task, o), systemPromptGoldens[name], name)
+  })
+
+  it("a set's lead on an agent that takes no other folders is told it was given none of them (HE-118)", () => {
+    const acp = { ...setOf("WEB-7", false), noDirs: true }
+    const text = base(thread(inWorktree), { set: acp })
+    assert.include(text, "Your agent can't be given other folders yet, so this run was given none of the set's other worktrees.")
+    assert.include(text, "Don't work in the worktrees of API-3, DOC-2")
+    assert.notInclude(text, "given to you for this run")
+    assertParagraphs(text)
+    // A set down to one task is an ordinary task.
+    const alone = { noDirs: false, members: setOf("WEB-7", false).members.slice(0, 1) }
+    assert.strictEqual(base(thread(inWorktree), { set: alone }), base(thread(inWorktree)))
   })
 
   it("tells agents which boards they reach", () => {

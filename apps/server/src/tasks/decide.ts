@@ -158,6 +158,11 @@ export interface UpdateFacts {
    * unset when it asks for neither.
    */
   readonly pen?: PenId | null | undefined
+  /**
+   * HE-118: the key of the set's lead whose run is working in this task's worktree (`TaskRepo.heldBy`): it stays in To
+   * do until that run ends. Unset for a move that doesn't leave To do.
+   */
+  readonly leadHolds?: string | null | undefined
 }
 
 export interface Decision {
@@ -250,6 +255,11 @@ export const decideUpdate = (before: Task, patch: TaskPatch, facts: UpdateFacts,
                 ? "a stack's thread"
                 : "this thread"
       return yield* invalid("status", `${who} can't go to review, merge, Done or Backlog`)
+    }
+
+    // HE-118: a set's task its lead's run works in stays in To do while that run goes, so no two agents share a worktree.
+    if (status !== undefined && status !== before.status && before.status === "todo" && facts.leadHolds != null) {
+      return yield* invalid("status", `its lead is working in it: ${facts.leadHolds}'s run has its worktree, so move it once that run ends`)
     }
 
     // A task with no changes to merge (and so no pull request) skips the merge and is done.

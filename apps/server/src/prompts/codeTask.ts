@@ -1,6 +1,8 @@
 import type { StartFrom } from "@huntaway/contracts"
 import { askAndFinish } from "./askAndFinish.ts"
 import { boardTools } from "./boardTools.ts"
+import { setNote } from "./setNote.ts"
+import type { SetBrief } from "./setNote.ts"
 
 // What an ordinary task in a project is told (huntaway's agent/runner/prompt.ts system_prompt, the last branch), without
 // the legacy subproject paragraphs (subprojects are gone). Plan task 2.5; worktrees, stacks and pull requests fill its
@@ -37,6 +39,8 @@ export interface CodeTaskFacts {
   readonly boardPr: boolean
   /** HE-105: the stack it's a level of (`level` from 1, the bottom), with its own thread's key. */
   readonly stack?: StackLevel | null | undefined
+  /** HE-118: the set across repositories it's in, the lead first. */
+  readonly set?: SetBrief | null | undefined
 }
 
 /** A task's place in its stack, and the stack's own thread. */
@@ -135,6 +139,7 @@ export const codeTask = (t: CodeTaskFacts): string => {
       "pull request for it unless the user asks, even if the project's own instructions (e.g. in CLAUDE.md) say to."
   }
   if (t.stack != null) s += stackNote(t.stack)
+  if (t.set != null) s += setNote(t.set)
   s += `\n\n${boardTools}\n\n${askAndFinish("what you did")} You may create follow-up tasks with \`create_task\`.`
   return s
 }

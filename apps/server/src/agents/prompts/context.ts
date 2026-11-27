@@ -1,5 +1,6 @@
 import type { DocumentFile } from "../../prompts/documentGuide.ts"
 import type { Github, StackLevel } from "../../prompts/codeTask.ts"
+import type { SetBrief } from "../../prompts/setNote.ts"
 import { keyLetter } from "@huntaway/contracts"
 import type { Profile, Project, Task, ThreadKind } from "@huntaway/contracts"
 
@@ -58,6 +59,8 @@ export interface PromptContext {
   readonly stackBrief: string
   /** HE-105: for a task that's a level of a stack, its place in it and the stack's thread; null for any other. */
   readonly stackLevel: StackLevel | null
+  /** HE-118: for a task of a set across repositories, the set as it is now (the lead first); null (or unset) for any other. */
+  readonly set?: SetBrief | null | undefined
   /** Where a task with its own branch opens its pull request, if its repository is on GitHub. null until plan task 4.4 (`Gh`) reads the remotes. */
   readonly github: Github | null
   /** It has the board's gh server. false until plan task 4.4 adds the server (and 6.4 the project's switch for it). */

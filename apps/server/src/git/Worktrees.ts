@@ -41,7 +41,7 @@ export { folderName } from "./worktree/folder.ts"
 /** Asked by hand (`idle`), while an agent works in the worktree: its task's own, or a reviewer's. */
 export class AgentInWorktree extends Schema.TaggedError<AgentInWorktree, { readonly brand: unique symbol }>()("AgentInWorktree", {}) {
   override get message(): string {
-    return "an agent is working in the worktree (the task's or a reviewer's); wait for it to finish or stop it"
+    return "an agent is working in the worktree (the task's, a reviewer's or its set's lead's); wait for it to finish or stop it"
   }
 }
 
@@ -77,7 +77,10 @@ export interface WorktreesShape {
   readonly removeIfMerged: (task: TaskId, fetch: boolean) => Effect.Effect<Removal, WorktreeFailed | TaskNotFound>
   /** `removeIfMerged` for each of the project's done tasks with a worktree, by number, each base fetched once first. */
   readonly removeMerged: (project: ProjectId) => Effect.Effect<ReadonlyArray<MergedWorktreeResult>, ProjectNotFound>
-  /** Whether an agent works in the task's worktree: its own, or one of its reviewers', whose threads run there too. */
+  /**
+   * Whether an agent works in the task's worktree: its own, one of its reviewers', whose threads run there too, or (for
+   * a set's task, HE-118) its lead's, whose run was given it.
+   */
   readonly agentInWorktree: (task: TaskId) => Effect.Effect<boolean>
   /**
    * Before a task is deleted (its runs stopped): its worktree, as it is once a setup under way is done, is torn down
@@ -164,7 +167,9 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
       const agentInWorktree = Effect.fn("Worktrees.agentInWorktree")(function* (id: TaskId) {
         const task = yield* repo.get(id)
         if (task?.running === true) return true
-        return (yield* repo.reviewThreads(id)).some((r) => r.running)
+        if ((yield* repo.reviewThreads(id)).some((r) => r.running)) return true
+        // HE-118: a set's lead's run that was given the worktree works in it.
+        return task?.lead_id != null && (yield* repo.heldBy(id)) !== null
       })
 
       // ---- setup ----

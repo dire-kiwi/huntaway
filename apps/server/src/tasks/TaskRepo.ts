@@ -363,6 +363,11 @@ export interface TaskRepoShape {
   readonly projectTasks: (project: ProjectId) => Effect.Effect<ReadonlyArray<Task>>
   /** A set across repositories (HE-117): its lead `lead`, then the tasks that name it in `lead_id` in the order they were made. */
   readonly inSet: (lead: TaskId) => Effect.Effect<ReadonlyArray<Task>>
+  /**
+   * HE-118: the set's lead whose live run was given `task`'s worktree as it started (`RunRepo.grant`), or null: while it
+   * is, the task's own agent doesn't start and it stays in To do.
+   */
+  readonly heldBy: (task: TaskId) => Effect.Effect<Task | null>
   /** The review, summary and workflow-step threads under a task. */
   readonly reviewThreads: (id: TaskId) => Effect.Effect<ReadonlyArray<Task>>
   /** A project's task by number (its key's `n`), or a profile's projectless task by family and number. */
@@ -476,6 +481,11 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
       const set = taskRows(
         Schema.String,
         (lead) => sql`${select} WHERE t.id = ${lead} OR t.lead_id = ${lead} ORDER BY t.lead_id IS NOT NULL, t.created_at, t.rowid`,
+      )
+      const heldByLead = taskRows(
+        Schema.String,
+        (task) => sql`${select} WHERE t.id = (SELECT r.task_id FROM run_grants g JOIN runs r ON r.id = g.run_id
+          WHERE g.task_id = ${task} AND r.status != 'exited' ORDER BY r.seq LIMIT 1)`,
       )
       const reviews = taskRows(Schema.String, (id) => sql`${select} WHERE t.parent_id = ${id} AND t.kind = 'review' ORDER BY t.created_at`)
       const numbered = taskRows(
@@ -621,6 +631,7 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
         get: (id) => first(byId(id)),
         exists: (id) => Effect.map(count(sql`SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ${id}) AS n`), (n) => n === 1),
         inSet: set,
+        heldBy: (task) => first(heldByLead(task)),
         getMany: (ids) => (ids.length === 0 ? Effect.succeed([]) : byIds(ids)),
         all: everything(undefined),
         unstackedPrProjects: Effect.map(

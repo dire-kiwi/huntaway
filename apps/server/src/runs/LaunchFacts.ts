@@ -19,6 +19,8 @@ import { Restack } from "../git/Restack.ts"
 // 6.11: a launch waits for its project's folder to move.
 import { Relocation } from "../git/Relocation.ts"
 import { DataDir } from "../platform/DataDir.ts"
+import { Db } from "../platform/Db.ts"
+import { KeyedLock } from "../platform/KeyedLock.ts"
 import { Identity } from "../platform/Identity.ts"
 import { Proc } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
@@ -31,6 +33,7 @@ import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
 import { stackOf } from "../tasks/lanes.ts"
 import { heldLevel } from "../tasks/StackThreads.ts"
+import { isLead, takesGrant } from "./sets.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
@@ -144,6 +147,9 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const assistantLaunch = yield* AssistantLaunch
       // 6.9
       const telemetry = yield* Telemetry
+      // HE-118: a set's lead is given its followers' worktrees under each follower's lock.
+      const db = yield* Db
+      const locks = yield* KeyedLock
       // Where the package managers' caches are, when the environment says (Codex's sandbox would keep them read-only).
       const cacheEnv: Readonly<Record<string, string | null>> = Object.fromEntries(
         yield* Effect.forEach(
@@ -154,6 +160,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       )
 
       const expand = (path: string) => (path === "~" ? config.home : path.startsWith("~/") ? `${config.home}${path.slice(1)}` : path)
+      /** HE-118: the worktrees of the tasks a lead's run was given. */
+      const dirsOf = (granted: ReadonlyArray<Task>) => granted.flatMap((t) => (t.worktree_path === null ? [] : [expand(t.worktree_path)]))
       const exists = (path: string) => fs.exists(expand(path)).pipe(Effect.orElseSucceed(() => false))
       const mkdir = (path: string) => fs.makeDirectory(path, { recursive: true }).pipe(Effect.ignore)
 
@@ -246,6 +254,64 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       })
 
       /**
+       * HE-118: a set's lead's worktree comes with the set's others: each open one not running is set up too (nothing for
+       * one that's ready). A failure in one is the lead's, its thread saying which; the follower's own thread says why.
+       */
+      const setUpFollowers = Effect.fnUntraced(function* (lead: Task) {
+        if (!isLead(lead)) return lead
+        const set = yield* tasks.inSet(lead.id)
+        for (const f of set.slice(1)) {
+          if (f.status === "done" || f.running || (f.worktree_state === "ready" && f.worktree_path !== null && (yield* exists(f.worktree_path)))) continue
+          yield* threads.notice(lead.id, "info", `Setting up ${f.key}'s worktree…`).pipe(Effect.ignore)
+          const made = yield* Effect.result(worktrees.setup(f.id))
+          if (made._tag === "Success") {
+            yield* threads
+              .notice(
+                f.id,
+                "info",
+                `This task waits in To do while its lead, ${lead.key}, works in this worktree`,
+                "Its own agent starts only for its own work: a review round's fixes, a merge conflict, or a message from the lead or the user.",
+              )
+              .pipe(Effect.ignore)
+            continue
+          }
+          const e = made.failure
+          if (e._tag === "TaskNotFound") continue
+          const reason = e._tag === "AgentInWorktree" ? e.message : e.reason
+          const project = f.project_id === null ? null : Option.getOrNull(yield* projects.get(f.project_id))
+          const which = `${f.key}'s worktree${project === null ? "" : ` (${project.name}, ${project.repo_path})`}`
+          yield* threads.notice(lead.id, "error", `Couldn't set up ${which}`, reason).pipe(Effect.ignore)
+          return yield* new WorktreeFailed({ reason: `${which} couldn't be set up: ${reason}` })
+        }
+        return lead
+      })
+
+      /**
+       * HE-118: the worktrees a set's lead's run is given as it starts: those of the set's tasks in To do with no run of
+       * their own, set up. Each is recorded on the run (`RunRepo.grant`) under its task's lock, so its own agent can't
+       * start, nor the task leave To do, between the look and the grant. None for a compaction, which does no work (nor
+       * for an ACP agent, whose launch takes no other folders yet: it doesn't ask).
+       */
+      const grantSet = Effect.fnUntraced(function* (run: Run, lead: Task) {
+        if (!isLead(lead) || run.kind !== "prompt") return []
+        const given: Array<Task> = []
+        for (const f of (yield* tasks.inSet(lead.id)).slice(1)) {
+          const granted = yield* locks.withLock(["task", f.id])(
+            db.tx(
+              Effect.gen(function* () {
+                const now = yield* tasks.get(f.id)
+                if (now === null || !takesGrant(now) || (yield* runs.hasActive(now.id))) return null
+                yield* runs.grant(run.id, now.id)
+                return now
+              }),
+            ),
+          )
+          if (granted !== null) given.push(granted)
+        }
+        return given
+      })
+
+      /**
        * What the agent works in, made ready (the old launch's, for both agents): its worktree set up (4.1), then a
        * checkpoint of it before the agent changes it (4.3). The task as it is after.
        */
@@ -263,6 +329,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         } else if (project !== null && task.kind === "task" && task.use_worktree && task.work_dir === null) {
           if (task.worktree_state !== "ready") yield* threads.notice(task.id, "info", "Setting up worktree…").pipe(Effect.ignore)
           task = yield* worktrees.setup(task.id).pipe(Effect.catchTag("AgentInWorktree", (e) => Effect.fail(new WorktreeFailed({ reason: e.message }))))
+          // HE-118: a set's lead sets up the set's other worktrees with its own.
+          yield* setUpFollowers(task)
         }
         // ---- end of 4.1's block.
         // 4.3: a checkpoint of the worktree before the agent changes it (once it is set up), taken after any rewind asked
@@ -314,8 +382,11 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const tmp = yield* taskTmp.ensure(task)
         // 6.10: the board's servers this run gets, read once: the desktop's and the Spaces' are told of in its system prompt.
         const served = yield* requests.served
+        // HE-118: a set's lead works in its followers' worktrees that are still in To do.
+        const granted = yield* grantSet(run, task)
         const systemPrompt = yield* prompts.system(task.id, {
           codex: false,
+          granted: granted.map((t) => t.id),
           permission_mode: permissionMode,
           tmp,
           desktopHost: served.desktop ? identity.hostName : null,
@@ -351,7 +422,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           tools: yield* agentTools.forRun(task),
           served,
           githubAccount: nonBlank(project?.github_account) ?? nonBlank(profile?.github_account),
-          addDirs: [...group, ...(yield* stackDirs(task)), ...(docs !== null && docs !== cwd ? [docs] : [])],
+          addDirs: [...group, ...(yield* stackDirs(task)), ...dirsOf(granted), ...(docs !== null && docs !== cwd ? [docs] : [])],
           attachmentDirs: [],
           prompt,
           promptId: yield* random.uuidV4(),
@@ -446,8 +517,11 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const tmp = yield* taskTmp.ensure(task)
         // 6.10: the board's servers this run gets, read once: the desktop's and the Spaces' are told of in its system prompt.
         const served = yield* requests.served
+        // HE-118: as Claude's launch, as writable roots.
+        const granted = yield* grantSet(run, task)
         const systemPrompt = yield* prompts.system(task.id, {
           codex: true,
+          granted: granted.map((t) => t.id),
           permission_mode: permissionMode,
           tmp,
           desktopHost: served.desktop ? identity.hostName : null,
@@ -460,6 +534,13 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const gitDir = nonBlank(yield* git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))
         const caches = yield* cacheDirs()
         const work = [expand(cwd), ...(gitDir === null ? [] : [gitDir])]
+        // HE-118: a follower's worktree is another repository's, whose commits are written in that repository's git
+        // directory (its index, objects and refs), so that is writable too, as the run's own is.
+        const grantedDirs: Array<string> = []
+        for (const d of dirsOf(granted)) {
+          const common = nonBlank(yield* git(d, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))
+          for (const x of [d, common]) if (x !== null && x !== gitDir && !grantedDirs.includes(x)) grantedDirs.push(x)
+        }
         const reviewFs = review && permissionMode !== "bypassPermissions" ? reviewFilesystem([...caches, ...(yield* ignoredDirs(cwd))], work) : null
         // A rewind's conversation rollback, for the session it was made in (`Runs.launch` clears it once the agent started).
         const pending = pendingRewind(task)
@@ -487,7 +568,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           promptId: yield* random.uuidV4(),
           gitDir,
           cacheDirs: caches,
-          workDirs: yield* stackDirs(task),
+          workDirs: [...(yield* stackDirs(task)), ...grantedDirs],
           documentsDir: docs !== null && docs !== cwd ? docs : null,
           reviewFilesystem: reviewFs,
           sessionBoardTools: task.session_id === null ? false : yield* runs.sessionBoardTools(task.id, task.session_id),
@@ -537,9 +618,11 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const tmp = yield* taskTmp.ensure(task)
         const served = yield* requests.served
         // The text for an agent other than Claude Code: its tools are MCP tools.
+        // HE-118: an ACP launch takes no other folders yet, so a set's lead is given none of its followers' worktrees.
         const systemPrompt = yield* prompts.system(task.id, {
           codex: true,
           acp: true,
+          granted: [],
           permission_mode: permissionMode,
           tmp,
           desktopHost: served.desktop ? identity.hostName : null,
