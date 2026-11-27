@@ -25,7 +25,7 @@ import { DeleteTaskModal, TeardownModal } from "./Modals"
 import { Row, Section, TextInput } from "./Section"
 import { StartFromRow } from "./StartFromRow"
 import { StatusSection } from "./StatusSection"
-import { CreatedTasksSection, FanoutSection } from "./TaskLists"
+import { CreatedTasksSection, FanoutSection, SetSection } from "./TaskLists"
 import { taskFacts } from "./taskFacts"
 import { TodosSection } from "./TodosSection"
 import { TrackedWork } from "./TrackedWork"
@@ -134,6 +134,8 @@ function DetailsRest({ task, mode }: { task: Task; mode: Mode }) {
       )}
 
       {task.fanout_id && <FanoutSection task={task} />}
+
+      <SetSection task={task} />
 
       {(groupTask || taskLabels(task).includes("plan")) && <CreatedTasksSection task={task} />}
 
