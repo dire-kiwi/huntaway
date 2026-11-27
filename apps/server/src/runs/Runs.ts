@@ -25,6 +25,7 @@ import { deriveColumns } from "../tasks/decide.ts"
 import type { TaskColumns } from "../tasks/decide.ts"
 import { Dependencies, isMerged } from "../tasks/Dependencies.ts"
 import { activeMerge, mergeLane, stackWaits } from "../tasks/lanes.ts"
+import { leadOf, setWaitsFor } from "../tasks/sets.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
@@ -398,18 +399,24 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       /**
        * 4.8: a stack level waiting in Ready for merge for the one below it isn't merging yet, so a message to it takes it
        * out of the merge queue while its agent works, holding no merge slot; it goes back to waiting when its run ends
-       * (`remerge`). Not one summarising its merge for the user's approval, which is out of the queue as it is.
+       * (`remerge`). Not one summarising its merge for the user's approval, which is out of the queue as it is. HE-119: so
+       * is a set's task waiting for the rest of its set.
        */
       const outOfStackWait = Effect.fnUntraced(function* (task: Task, live: boolean) {
         if (!task.merging || task.status !== "ready_for_merge" || task.running || live || task.merge_approval === "pending" || task.project_id === null) {
           return task
         }
-        if (!stackWaits(yield* tasks.projectTasks(task.project_id), task)) return task
+        const stacked = stackWaits(yield* tasks.projectTasks(task.project_id), task)
+        if (!stacked && setWaitsFor(yield* tasks.inSet(leadOf(task)), task).length === 0) return task
         const at = yield* nowTimestamp
         const after = yield* db.tx(
           Effect.gen(function* () {
             yield* threads
-              .notice(task.id, "info", "Out of Ready for merge while its agent works: it goes back to waiting for the task it lands after when it's done")
+              .notice(
+                task.id,
+                "info",
+                `Out of Ready for merge while its agent works: it goes back to waiting for ${stacked ? "the task it lands after" : "the rest of its set"} when it's done`,
+              )
               .pipe(Effect.catchTag("TaskNotFound", () => Effect.void))
             return yield* write(task, { status: "in_progress", merging: false, remerge: true }, at)
           }),

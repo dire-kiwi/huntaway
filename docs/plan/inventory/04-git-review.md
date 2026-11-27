@@ -138,6 +138,7 @@ All run at the top of the working tree with `-c core.quotePath=false`, `GIT_EDIT
 - A user message to a task queued behind another merge is refused (409). A message to a stack level waiting in Ready for merge takes it out (`in_progress`, `remerge=1`).
 - Failure to build the merge request → `needs_attention` "Couldn't start the merge: …" (stays merging, holds the lane).
 - Startup: `start_queued_merges` for every project with queued merges.
+- New in HE-119 (not in the old server): a task of a set across repositories (`lead_id`) waits in Ready for merge until every open task of its set is in Ready for merge and not waiting for approval; then each merges in its own project's queue. A failure after others merged is told to the lead's thread ([07-agents.md](../07-agents.md#landing-together-as-built-in-he-119)).
 
 ### 2.15 Merge approval gate (`review/merge_gate.ts`)
 - `required`: project `merge_approval` (nullable) else profile's.

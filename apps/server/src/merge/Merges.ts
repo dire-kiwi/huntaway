@@ -15,12 +15,15 @@ import { APPROVAL } from "../runs/finish.ts"
 import { Runs } from "../runs/Runs.ts"
 import { MergeFacts, NO_GIT_FACTS } from "../tasks/MergeFacts.ts"
 import type { GitFacts } from "../tasks/MergeFacts.ts"
+import { isMerged } from "../tasks/checks.ts"
+import { leadOf, setWaitsFor } from "../tasks/sets.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
 import { decideLanes } from "./decide.ts"
 import { MergeGate } from "./MergeGate.ts"
 import { mergeRequestText } from "./request.ts"
+import { mergeFailed, setMergeFailedText, setWaitText } from "./sets.ts"
 
 // The merge queue (docs/plan/06-server.md, Merge; inventory 04, section 2.14; huntaway's agent/runner/merge.ts): the
 // agent merges, the board queues, gates and observes. Tasks moved to Ready for merge merge one at a time per lane (the
@@ -42,6 +45,7 @@ const laneColumns = [
   "restack",
   "stack_run",
   "merges_into",
+  "lead_id",
 ] as const satisfies ReadonlyArray<keyof Task>
 
 const laneMoved = (before: Task | null, after: Task | null): boolean =>
@@ -49,6 +53,9 @@ const laneMoved = (before: Task | null, after: Task | null): boolean =>
   after === null ||
   laneColumns.some((k) => before[k] !== after[k]) ||
   (before.start_from?.type === "task" ? before.start_from.task_id : null) !== (after.start_from?.type === "task" ? after.start_from.task_id : null)
+
+/** Whether `t` may be in a set across repositories (HE-117): a follower, or a task made as one's lead. */
+const inSomeSet = (t: Task): boolean => (t.lead_id !== null && t.lead_id !== undefined) || (typeof t.set_branch === "string" && t.set_branch !== "")
 
 /** The first line of why an effect failed. */
 const why = (cause: Cause.Cause<unknown>): string => {
@@ -142,11 +149,15 @@ export class Merges extends Context.Service<Merges, MergesShape>()("huntaway-ser
             const rows = yield* repo.projectTasks(project)
             const first = rows[0]
             if (ref === null || first === undefined) return
+            // HE-119: the sets of the tasks waiting in Ready for merge, whichever projects their other tasks are in.
+            const leads = [...new Set(rows.filter((t) => t.status === "ready_for_merge" && t.merging && inSomeSet(t)).map(leadOf))]
+            const sets = (yield* Effect.forEach(leads, (lead) => repo.inSet(lead), { concurrency: 1 })).flat()
             const plan = decideLanes({
               tasks: rows,
               finished: yield* repo.finishedLast(project),
               archived: ref.archived,
               approvalRequired: yield* gate.required(first),
+              sets,
             })
             for (const { id, said } of plan.leaveRun) {
               const left = yield* tasks.change(id, (t) => (t.stack_run === null ? null : { stack_run: null }), board).pipe(Effect.option)
@@ -182,7 +193,31 @@ export class Merges extends Context.Service<Merges, MergesShape>()("huntaway-ser
           const summarised = before?.running === true && !after.running && after.merging && after.merge_approval === "pending"
           if (summarised && after.status === "needs_attention" && after.attention_reason === APPROVAL) yield* gate.ask(after.id)
         }
-        if (laneMoved(before, after)) yield* reconcileLane((after ?? before)?.project_id ?? null)
+        if (!laneMoved(before, after)) return
+        const own = (after ?? before)?.project_id ?? null
+        yield* reconcileLane(own)
+        const task = after ?? before
+        if (task === null || !inSomeSet(task)) return
+        yield* setChanged(before, after, task)
+        // A set's task that came, went or failed may let the rest of its set merge, or hold them: their queues look again.
+        const set = yield* repo.inSet(leadOf(task))
+        for (const p of new Set(set.map((t) => t.project_id))) if (p !== own) yield* reconcileLane(p)
+      })
+
+      /** HE-119: what a set's task's change tells its threads: why it waits to merge, or the lead that its merge failed. */
+      const setChanged = Effect.fnUntraced(function* (before: Task | null, after: Task | null, task: Task) {
+        if (after === null) return
+        const set = yield* repo.inSet(leadOf(task))
+        if (set.length < 2) return
+        if (after.status === "ready_for_merge" && after.merging && before?.status !== "ready_for_merge") {
+          const waits = setWaitsFor(set, after)
+          if (waits.length > 0) yield* say(after, "info", setWaitText(waits))
+        }
+        if (before === null || !mergeFailed(before, after)) return
+        const merged = set.filter((t) => t.id !== after.id && isMerged(t))
+        if (merged.length === 0) return
+        const lead = set.find((t) => t.id === leadOf(after)) ?? after
+        yield* say(lead, "warning", setMergeFailedText(after, merged))
       })
 
       return Merges.of({ reconcileLane, reconcileAll, taskChanged })

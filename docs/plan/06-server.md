@@ -718,7 +718,8 @@ them. `MergedWatcher.loop`: first 30 s after start, then 180 s after each check 
   table is `merge/decide.test.ts` (the lane cases of the old merge, tasks, incoming, stacks and stack-merge tests). What
   a merge request says is `merge/request.ts` (`intoMerge`, `stackedMerge`, `mergeRequestText`, over `prompts/merge.ts`;
   a request that can't be made fails with the old reasons). The merge handoff (a workflow's, HA-276) is in the rules
-  (`TaskRepo.finishedLast`: the tasks whose latest run said `finish_work`), though nothing makes one before 6.6.
+  (`TaskRepo.finishedLast`: the tasks whose latest run said `finish_work`), though nothing makes one before 6.6. HE-119 gave it `sets`: a task of a set across repositories
+  waits until the rest of its set is in Ready for merge ([07-agents.md](07-agents.md#landing-together-as-built-in-he-119)).
 - **`merge/Merges.ts`**: `reconcileLane(project)` takes **`KeyedLock` `["merges", project]`** (a new key, after the
   project's and before any task's), reads the rows, decides, and carries the plan out: levels leave their stack's run
   (`Tasks.change`, with the old notice), merges needing approval are marked `pending` and summarised

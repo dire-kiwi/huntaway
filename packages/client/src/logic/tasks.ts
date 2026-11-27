@@ -45,6 +45,22 @@ export const mergeAwaitsApproval = (t: Pick<Task, "merging" | "merge_approval">)
 /** Waiting in Ready for merge for another task in its project to finish merging. */
 export const mergeQueued = (t: Task): boolean => t.merging && t.status === "ready_for_merge" && !t.running && !mergeAwaitsApproval(t)
 
+/**
+ * HE-119: the tasks of its set across repositories that `t`'s merge waits for (as the server's `setWaitsFor`): while it's
+ * queued in Ready for merge, every other open task of its set not in Ready for merge, or there waiting for the user's
+ * approval. `tasks`: the board's, any project's. Empty for a task in no set, and once the whole set is there.
+ */
+export const setMergeWaits = <T extends Task>(t: T, tasks: Iterable<T>): Array<T> => {
+  if (!mergeQueued(t)) return []
+  const lead = t.lead_id ?? t.id
+  const out: Array<T> = []
+  for (const x of tasks) {
+    if (x.id === t.id || x.kind !== "task" || (x.lead_id ?? x.id) !== lead || x.status === "done") continue
+    if (x.status !== "ready_for_merge" || x.merge_approval === "pending") out.push(x)
+  }
+  return out
+}
+
 /** Stepped out of the merge queue to make changes, and rejoins it when its agent is done. */
 export const rejoinsMerge = (t: Pick<Task, "remerge" | "status">): boolean => t.remerge && (t.status === "in_progress" || t.status === "needs_attention")
 

@@ -1,8 +1,9 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Result } from "effect"
-import { ProjectId } from "@huntaway/contracts"
-import type { NewTask } from "@huntaway/contracts"
-import { checkSet, freeBranchName, setBranchBase, setPenName } from "./sets.ts"
+import { ProjectId, TaskId } from "@huntaway/contracts"
+import type { NewTask, Task } from "@huntaway/contracts"
+import { task } from "../merge/tests/rows.ts"
+import { checkSet, freeBranchName, handOnSet, setBranchBase, setOf, setPenName, setWaitsFor } from "./sets.ts"
 
 // The rules of a set of tasks across repositories (HE-117): what can be one, its branch name and its pen's.
 
@@ -95,5 +96,60 @@ describe("what can be a set", () => {
   it("takes seven other projects at most", () => {
     assert.strictEqual(refusal(ok, ["A", "B", "C", "D", "E", "F", "G"]), "ok")
     assert.strictEqual(refusal(ok, ["A", "B", "C", "D", "E", "F", "G", "H"]), "also_in: a set of tasks across repositories takes 7 other projects at most")
+  })
+})
+
+/** Task `id`, a follower in set A. */
+const follower = (id: string, over: Partial<Task> = {}) => task(id, { lead_id: TaskId.make("a"), ...over })
+const lead = (over: Partial<Task> = {}) => task("a", over)
+const write = (rows: ReturnType<typeof handOnSet>) => rows.map((r) => `${r.id}→${r.lead_id ?? "null"}`)
+
+describe("leaving a set (HE-119)", () => {
+  // Lead A, followers B, C, D in the order they were made.
+  const done: Partial<Task> = { status: "done", resolution: "not_done" }
+
+  const cases: ReadonlyArray<readonly [string, ReadonlyArray<Task>, string, "deleted" | "closed", ReadonlyArray<string>]> = [
+    ["the lead deleted: the next by creation leads", [lead(), follower("b"), follower("c"), follower("d")], "a", "deleted", ["b→null", "c→b", "d→b"]],
+    ["the lead closed: the next leads, and the closed lead follows it", [lead(), follower("b"), follower("c")], "a", "closed", ["b→null", "c→b", "a→b"]],
+    ["the next is closed: the next open one leads", [lead(), follower("b", done), follower("c"), follower("d")], "a", "deleted", ["b→c", "c→null", "d→c"]],
+    ["none open, deleted: the next leads all the same", [lead(), follower("b", done), follower("c", done)], "a", "deleted", ["b→null", "c→b"]],
+    ["none open, closed: it still leads", [lead(), follower("b", done)], "a", "closed", []],
+    ["two left, the lead deleted: the other is an ordinary task", [lead(), follower("b")], "a", "deleted", ["b→null"]],
+    ["two left, the lead closed: the other leads, the lead follows", [lead(), follower("b")], "a", "closed", ["b→null", "a→b"]],
+    ["a follower deleted: nobody's changes", [lead(), follower("b"), follower("c")], "b", "deleted", []],
+    ["a follower closed: nobody's changes", [lead(), follower("b")], "b", "closed", []],
+    ["a task in no set", [lead()], "a", "deleted", []],
+  ]
+  for (const [what, set, gone, how, expected] of cases) {
+    it(what, () => {
+      const g = set.find((t) => t.id === gone) ?? assert.fail("no such task")
+      assert.deepStrictEqual(write(handOnSet(set, g, how)), expected)
+    })
+  }
+})
+
+describe("what a set's merge waits for (HE-119)", () => {
+  const leading = lead({ status: "ready_for_merge", merging: true })
+  it("the open tasks not in Ready for merge, or waiting for approval there", () => {
+    const set = [
+      leading,
+      follower("b", { status: "in_review" }),
+      follower("c", { status: "ready_for_merge", merging: true }),
+      follower("d", { status: "ready_for_merge", merging: true, merge_approval: "pending" }),
+      follower("e", { status: "done", resolution: "not_done" }),
+      follower("f", { status: "done", resolution: "done" }),
+    ]
+    assert.deepStrictEqual(
+      setWaitsFor(set, leading).map((t) => t.id),
+      ["b", "d"],
+    )
+    assert.deepStrictEqual(
+      setOf([...set, task("x")], follower("c", {})).map((t) => t.id),
+      ["a", "b", "c", "d", "e", "f"],
+    )
+    assert.deepStrictEqual(
+      setOf(set, task("x")).map((t) => t.id),
+      ["x"],
+    )
   })
 })

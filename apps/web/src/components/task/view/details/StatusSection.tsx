@@ -17,6 +17,7 @@ import { exitError, useMutation } from "../../../../state/mutation"
 import { moveTask, useProject } from "../../../boardHelpers"
 import { useConfirmDone } from "../../../board/ConfirmDone"
 import { useConfirmTodos, type TaskUpdateOptions } from "../../../board/ConfirmTodos"
+import { useSetWait } from "../../../board/SetWait"
 import { useStackWait } from "../../../board/StackedOn"
 import { errorText, localeString, millisOf, RESOLUTION_LABELS, RunningDot, StatusIcon } from "../../../ui"
 import { resetsIn, resetTime } from "../../../ui/usageConfigs"
@@ -123,11 +124,13 @@ export function StatusNotes({ task }: { task: Task }) {
   const [err, setErr] = useState<string | null>(null)
   // A stack level's merge waits for the one below it (API 142), not for another merge.
   const stackWait = useStackWait(task, useProject(task.project_id))
+  // HE-119: a set's task waits for the rest of its set before it merges.
+  const setWait = useSetWait(task)
   return (
     <>
       {mergeQueued(task) && (
         <div className="mt-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
-          {stackWait ?? "Queued to merge. Another task in this project is merging; this one starts when it's done."}
+          {stackWait ?? setWait ?? "Queued to merge. Another task in this project is merging; this one starts when it's done."}
         </div>
       )}
       {mergeAwaitsApproval(task) && (
