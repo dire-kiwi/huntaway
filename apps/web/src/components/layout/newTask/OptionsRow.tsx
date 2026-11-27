@@ -13,7 +13,7 @@ import type { Where } from "./useWhere"
 export function OptionsRow({
   where: { inProject },
   tok: { codeTask, fanout, startFrom, mergesInto },
-  options: { worktree, setWorktree, agents, start, setStart },
+  options: { worktree, setWorktree, agents, start, setStart, setProjects, alsoInOpen, setAlsoInOpen, setAlsoIn },
   kept: { linking, setPickingLink, attach, links, setLinks },
   ed,
 }: {
@@ -31,6 +31,17 @@ export function OptionsRow({
           <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />
         )}
         {agents && <Toggle checked={start} onChange={setStart} label="Start agent now" />}
+        {/* HE-120: a task in other projects too, as a set across repositories (AlsoIn). */}
+        {setProjects.length > 0 && (
+          <Toggle
+            checked={alsoInOpen}
+            onChange={(v) => {
+              setAlsoInOpen(v)
+              if (!v) setAlsoIn([])
+            }}
+            label="Also in other projects"
+          />
+        )}
         {/* The config picker and its usage note (settings/ClaudeConfigs) come with the settings on this server. */}
         <div className="-my-1 ml-auto flex items-center gap-1">
           {linking && (

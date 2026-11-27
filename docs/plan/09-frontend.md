@@ -1408,6 +1408,11 @@ task, most of it rarely used (the status list, the title, the description, label
 - Checks: `tests/ui/taskDetails.test.mjs` (the key items beside the thread, the Details tab's two columns, and an edit
   kept as the panel expands); the checks that reach a section through the Details tab are as they were.
 
+### Sets across repositories (HE-120)
+
+The New task dialog's "Also in" picker, "1 of N" on a set's cards and the "Set" section in Details and the key items:
+[07-agents.md](07-agents.md#sets-in-the-web-as-built-in-he-120).
+
 ### Moving a task to another project (HE-110)
 
 A task can't change project (its key, branch and worktree are its project's), so _Move to project…_ (in a card's menu,

@@ -15,6 +15,8 @@ export interface Opened {
   projects?: ReadonlyArray<Project> | undefined
   groupName?: string | undefined
   scratch?: Profile | null | undefined
+  /** The pen it goes in, if it was opened on a pen's tab or row. */
+  pen?: string | undefined
 }
 
 export type Origin = ReturnType<typeof useOrigin>

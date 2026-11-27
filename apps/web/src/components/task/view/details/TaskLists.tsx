@@ -1,12 +1,13 @@
-import { backgroundIdle, taskKey, type HostTask as Task } from "@huntaway/client"
+import { backgroundIdle, hostStatuses, taskKey, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
-import { GitCompareArrows, Hourglass, MonitorPlay } from "lucide-react"
+import { Crown, GitBranch, GitCompareArrows, Hourglass, MonitorPlay } from "lucide-react"
 import { useMemo } from "react"
 import { inGroupTaskGroup } from "../../../../projectGroups"
 import { useBoard } from "../../../../state/board"
 import { openCompare, openTask } from "../../../../state/route"
 import { isGroupTask } from "../../../boardHelpers"
 import { harnessLabels, useConfigsOf, useFanout } from "../../../board/Fanout"
+import { useProjectNames, useSet } from "../../../board/Sets"
 import { GroupTaskBadge, useCreatedProgress } from "../../../board/TaskCard"
 import { cost, RunningDot, StatusIcon } from "../../../ui"
 import { TaskTypeBadge } from "../../documentInfo"
@@ -54,6 +55,51 @@ export function FanoutSection({ task }: { task: Task }) {
           </button>
         ))}
       </div>
+    </Section>
+  )
+}
+
+/**
+ * The set of tasks across repositories it's in (HE-120): each with its project and status, to open, the lead with a
+ * crown and this one marked, and the branch they share.
+ */
+export function SetSection({ task }: { task: Task }) {
+  const set = useSet(task)
+  const names = useProjectNames(set)
+  if (set.length < 2) return null
+  const branch = task.branch ?? task.set_branch
+  return (
+    <Section title="Set" right={<span className="text-[11.5px] text-faint">{set.length} repositories</span>}>
+      <div className="-mx-1 space-y-0.5" aria-label="The set's tasks">
+        {set.map((t, i) => (
+          <button
+            key={t.id}
+            className={clsx("flex w-full items-center gap-2 rounded px-1 py-1 text-left text-[12.5px] hover:bg-raised", t.id === task.id && "bg-raised")}
+            onClick={() => openTask(t.id)}
+            title={`${taskKey(t)} ${t.title}${t.lead_id ? "" : " (the set's lead: its agent works in the others' worktrees)"}`}
+            aria-current={t.id === task.id || undefined}
+            data-set-task={taskKey(t)}
+          >
+            <StatusIcon status={t.status} />
+            <span className="shrink-0 font-mono text-[11px] text-faint">{taskKey(t)}</span>
+            <span className="min-w-0 flex-1 truncate text-fg">{names[i] ?? "Another project"}</span>
+            {!t.lead_id && (
+              <span className="flex shrink-0 items-center gap-1 text-[11px] text-accent">
+                <Crown size={11} /> lead
+              </span>
+            )}
+            <span className="w-20 shrink-0 truncate text-right text-[11.5px] text-muted">
+              {hostStatuses().find((x) => x.id === t.status)?.label ?? t.status}
+            </span>
+            {t.running && <RunningDot />}
+          </button>
+        ))}
+      </div>
+      {branch && (
+        <div className="mt-1 flex min-w-0 items-center gap-1 text-[11px] text-faint" title="The branch the set's tasks share, one in each repository">
+          <GitBranch size={11} className="shrink-0" /> <span className="truncate font-mono">{branch}</span>
+        </div>
+      )}
     </Section>
   )
 }

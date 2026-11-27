@@ -26,6 +26,7 @@ import { IncomingBadge, MergesIntoBadge } from "./MergesInto"
 // HE-51
 import { MergeWorkMark } from "./MergeWork"
 import { useSetWait } from "./SetWait"
+import { SetBadge } from "./Sets"
 import { LevelsBadge, StackedOnBadge, useStackWait } from "./StackedOn"
 import { TaskMarks } from "../task/Reminders"
 import { TaskTypeBadge } from "../task/documentInfo"
@@ -140,7 +141,7 @@ function TypeBadges({ task, progress, compact }: { task: Task; progress?: Progre
 /**
  * What kind of task it is and where it stands, on a card (`compact`: icons, with their words once the card has room) or
  * a list row: a group task's progress, its type and labels, the merge queue, what it waits on, what it
- * merges into and what merges into it, the model answering instead of its own (HE-59), its fan-out and its review.
+ * merges into and what merges into it, the model answering instead of its own (HE-59), its fan-out, its set (HE-120) and its review.
  */
 function TaskBadges({
   task,
@@ -191,6 +192,7 @@ function TaskBadges({
       <StackedOnBadge task={task} project={project} compact={compact} />
       <LevelsBadge task={task} project={project} compact={compact} />
       {task.fanout_id && <FanoutBadge task={task} />}
+      <SetBadge task={task} compact={compact} />
       <ReviewBadge task={task} compact={compact} />
     </>
   )
