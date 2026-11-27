@@ -153,7 +153,9 @@ export function useSubmit(p: {
           ...(startFrom !== undefined && codeTask ? { start_from: fromTask ? `task:${fromTask.id}` : startFrom } : {}),
           ...(mergesInto ? { merges_into: mergesInto.id } : {}),
           // HE-120: a set across repositories, this one its lead.
-          ...(alsoIn.length ? { also_in: alsoIn, title: alsoInTitle.trim() } : {}),
+          // Into the pen it's opened in: `onCreated` is told of the lead only (all `tasks.create` answers), so the pen
+          // goes with it, else the server puts the set in a new pen named after its title.
+          ...(alsoIn.length ? { also_in: alsoIn, title: alsoInTitle.trim(), ...(p.opened.pen ? { pen: p.opened.pen } : {}) } : {}),
         },
       }).pipe(Effect.map(on(project.host_id)))
     }

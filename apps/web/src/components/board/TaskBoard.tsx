@@ -62,6 +62,7 @@ export function TaskBoard({
   penLabels = true,
   onOpenPen,
   onCreated,
+  pen,
   lanes,
 }: {
   /** Which board it is, to keep its search and filters by (each board has its own; give it as the `key` too). */
@@ -94,6 +95,8 @@ export function TaskBoard({
   /** Opens a pen's tab (by its key) on this board, when a card's pen label is clicked; else it opens the profile's board. */
   onOpenPen?: ((key: string) => void) | undefined
   /** What to do with the tasks New task made: why it failed (the tasks couldn't go in the tab's pen, say) is shown. */
+  /** The pen whose tab it is, which `onCreated` puts what's made in; a set across repositories is made in it (HE-120). */
+  pen?: string | undefined
   onCreated?: ((tasks: ReadonlyArray<Task>) => Effect.Effect<void, CallError<"tasks.update"> | PenRefused, AtomRegistry.AtomRegistry>) | undefined
   /**
    * Rows of pens (HA-292), for the Active and Inactive views: the tasks (which `only` keeps to these pens' ones) in a row
@@ -298,6 +301,7 @@ export function TaskBoard({
           projects={choices.length > 1 || group || scratch ? choices : undefined}
           group={group}
           scratch={scratch}
+          pen={newLane?.name ?? pen}
           status={newIn}
           onClose={() => {
             setNewIn(null)

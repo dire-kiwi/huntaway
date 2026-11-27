@@ -9,7 +9,7 @@ import type { Where } from "./useWhere"
  * made here the lead, whose agent works in all of them. Each is a button to pick or unpick, seven at most; the set's
  * title (which names its tasks, branch and pen) is asked for once one is picked.
  */
-export function AlsoIn({ where: { inProject }, options }: { where: Where; options: Options }) {
+export function AlsoIn({ where: { inProject }, options, pen }: { where: Where; options: Options; pen?: string | undefined }) {
   const { alsoInOpen, setProjects, alsoIn, toggleAlsoIn, alsoInTitle, setAlsoInTitle } = options
   if (!alsoInOpen || !inProject) return null
   const full = alsoIn.length >= ALSO_IN_MAX
@@ -50,8 +50,8 @@ export function AlsoIn({ where: { inProject }, options }: { where: Where; option
             className="h-7 text-[12.5px]"
           />
           <div className="text-[12px] text-muted">
-            Makes a task in {inProject.name} and in {picked.map((p) => p.name).join(", ")}, with this title and description, all on one branch and in one pen.
-            This one leads: only its agent starts, and it works in all of their worktrees.
+            Makes a task in {inProject.name} and in {picked.map((p) => p.name).join(", ")}, with this title and description, all on one branch and in{" "}
+            {pen ? `the ${pen} pen` : "a pen named after it"}. This one leads: only its agent starts, and it works in all of their worktrees.
           </div>
         </>
       )}

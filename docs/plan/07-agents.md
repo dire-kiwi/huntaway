@@ -1783,6 +1783,10 @@ that covers several repositories, as in T3 Code, would make all of those per rep
 - **The title** (not in the design above): the dialog has only a description, whose title the server writes later, but a
   set needs its title when it's made (its tasks, branch and pen are named after it, HE-117). So once a project is
   picked the picker asks for "The set's title", sent as `title`, and Create waits for it (`blocks.ts`' `setBlock`).
+- **The pen**: opened on a pen's tab or in a pen's row, the dialog sends that pen's name as `pen` with `also_in`
+  (`NewTaskModal`'s `pen`, from `TaskBoard`), so the whole set goes in it. The board's own move into the pen after a
+  create (`onCreated`) hears only of the lead, which is all `tasks.create` answers, so without it the others went in a
+  new pen named after the title. Opened anywhere else, the set gets that pen named after its title.
 - **The card** (`board/Sets.tsx`, in `TaskBadges` beside the fan-out badge, so the list view's rows have it too):
   `1 of 3`, its place in the set (the lead first, then the others by creation and, as a set's are made at once, by key: `TaskRepo.inSet`'s order by row isn't on the wire) and the
   set's size, with a crown and (on a wide card) "lead" for the lead, a stack icon for the others; its tooltip names
@@ -1794,5 +1798,5 @@ that covers several repositories, as in T3 Code, would make all of those per rep
 - **Changes**: nothing new. The Changes tab reads the task's own worktree (`git.status` and `git.taskDiff` on the task's
   id), so the lead's shows its own repository's, and each other's is on its own card.
 - **Checks**: `tests/ui/sets.test.mjs` (three projects of a profile and one of another: the picker's projects, a
-  `from:` clearing it, the title it waits for, the set made and its `lead_id`s, `1 of 3` and `3 of 3` with their
+  `from:` clearing it, the title it waits for, the set made and its `lead_id`s, a set made on a pen's tab all in that pen, `1 of 3` and `3 of 3` with their
   tooltips, the Set section's rows and opening one from there; not offered without a worktree or for a scratch task).

@@ -34,6 +34,7 @@ export function NewTaskModal({
   onClose,
   status = "todo",
   onCreated,
+  pen,
 }: {
   /** Where it goes. Without one, it can only be a scratch task (`scratch`). */
   project?: Project | undefined
@@ -47,8 +48,13 @@ export function NewTaskModal({
   status?: Status | undefined
   /** Told of the tasks it makes (on a pen's tab, to put them in the pen). */
   onCreated?: ((tasks: Task[]) => void) | undefined
+  /**
+   * The pen it goes in (opened on a pen's tab or row), which `onCreated` moves it to. A set across repositories is made
+   * in it, as `onCreated` hears only of its lead (HE-120).
+   */
+  pen?: string | undefined
 }) {
-  const opened = { initial, projects, groupName, scratch }
+  const opened = { initial, projects, groupName, scratch, pen }
   // Where the dialog starts and its draft, the text, where its `in:` (or type) sends it, and what it runs with there.
   const origin = useOrigin(opened)
   const ed = useEditorText(origin.saved)
@@ -107,7 +113,7 @@ export function NewTaskModal({
         <ReadsAs opened={opened} origin={origin} where={place} agent={agent} tok={tok} />
         <Legend completion={completion} />
         <OptionsRow where={place} tok={tok} options={options} agent={agent} kept={kept} ed={ed} />
-        <AlsoIn where={place} options={options} />
+        <AlsoIn where={place} options={options} pen={pen} />
         <Notes opened={opened} origin={origin} where={place} tok={tok} worktree={options.worktree} blocks={blocks} whenLoaded={submission.whenLoaded} />
         <Footer submission={submission} options={options} tok={tok} kept={kept} blocks={blocks} onClose={onClose} />
       </form>

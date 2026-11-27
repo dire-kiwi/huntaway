@@ -2,12 +2,12 @@
 // card with the lead marked, and the "Set" section in Details.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { makeProfile, makeProject, startServer, withBrowser } from "./harness.mjs"
+import { eventually, makeProfile, makeProject, startServer, withBrowser } from "./harness.mjs"
 
-let server, shop, api, web
+let server, profile, shop, api, web
 beforeAll(async () => {
   server = startServer()
-  const profile = await makeProfile(server)
+  profile = await makeProfile(server)
   shop = await makeProject(server, profile, "Shop", "SHOP")
   api = await makeProject(server, profile, "Api", "API")
   web = await makeProject(server, profile, "Web", "WEB")
@@ -92,5 +92,36 @@ test("Also in isn't offered for a scratch task, or without a worktree", async ()
     await toggle.waitFor()
     await page.getByRole("textbox", { name: "Description" }).fill("/scratch A thing to try")
     await toggle.waitFor({ state: "detached" })
+  })
+})
+
+// Review of HE-120: made on a pen's tab, the whole set goes in that pen, not only the lead (which is all the board hears
+// of) with the others in a new pen named after the title.
+test("a set made on a pen's tab is all in that pen", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    await ui.run(["goto /profile/Default", "click New pen", "type Release", "press Enter", "gone Create pen", "wait role=tab[name=/^Release/]"])
+    await ui.run(["click New task", "wait Reads as", "type Write the release notes."])
+    await page.getByRole("switch", { name: "Also in other projects" }).click()
+    for (const b of await alsoIn(page).getByRole("button").all()) await b.click()
+    await page.getByRole("textbox", { name: "Set title" }).fill("Release notes")
+    await ui.run(["wait in the Release pen"])
+    await page.getByRole("button", { name: /^Create task/ }).click()
+    await ui.run(["gone Reads as"])
+  })
+  const pens = await server.rpc("pens.list", { profile_id: profile.id })
+  const release = pens.find((p) => p.name === "Release")
+  assert.ok(release)
+  assert.equal(
+    pens.some((p) => p.name === "Release notes"),
+    false,
+  )
+  await eventually(async () => {
+    const set = (await Promise.all([shop, api, web].map(tasksIn))).flat().filter((t) => t.title === "Release notes")
+    assert.equal(set.length, 3)
+    assert.deepEqual(
+      set.map((t) => t.pen_id),
+      [release.id, release.id, release.id],
+    )
   })
 })
