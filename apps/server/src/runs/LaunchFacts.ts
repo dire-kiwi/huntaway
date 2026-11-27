@@ -534,6 +534,13 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const gitDir = nonBlank(yield* git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))
         const caches = yield* cacheDirs()
         const work = [expand(cwd), ...(gitDir === null ? [] : [gitDir])]
+        // HE-118: a follower's worktree is another repository's, whose commits are written in that repository's git
+        // directory (its index, objects and refs), so that is writable too, as the run's own is.
+        const grantedDirs: Array<string> = []
+        for (const d of dirsOf(granted)) {
+          const common = nonBlank(yield* git(d, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))
+          for (const x of [d, common]) if (x !== null && x !== gitDir && !grantedDirs.includes(x)) grantedDirs.push(x)
+        }
         const reviewFs = review && permissionMode !== "bypassPermissions" ? reviewFilesystem([...caches, ...(yield* ignoredDirs(cwd))], work) : null
         // A rewind's conversation rollback, for the session it was made in (`Runs.launch` clears it once the agent started).
         const pending = pendingRewind(task)
@@ -561,7 +568,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           promptId: yield* random.uuidV4(),
           gitDir,
           cacheDirs: caches,
-          workDirs: [...(yield* stackDirs(task)), ...dirsOf(granted)],
+          workDirs: [...(yield* stackDirs(task)), ...grantedDirs],
           documentsDir: docs !== null && docs !== cwd ? docs : null,
           reviewFilesystem: reviewFs,
           sessionBoardTools: task.session_id === null ? false : yield* runs.sessionBoardTools(task.id, task.session_id),

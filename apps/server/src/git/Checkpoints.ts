@@ -476,6 +476,9 @@ export class Checkpoints extends Context.Service<Checkpoints, CheckpointsShape>(
         if (task.running) return "The agent is running: stop it before rewinding"
         const reviews = yield* taskRepo.reviewThreads(task.id)
         if (reviews.some((r) => r.running)) return "A review of the task is running in its worktree: wait for it or stop it first"
+        // HE-118: a set's lead's run that was given the worktree.
+        const lead = task.lead_id == null ? null : yield* taskRepo.heldBy(task.id)
+        if (lead !== null) return `Its set's lead, ${lead.key}, is working in its worktree: wait for its run to end or stop it first`
         return null
       })
 

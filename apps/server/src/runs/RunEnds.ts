@@ -213,17 +213,21 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         const lead = yield* tasks.get(leadId)
         if (lead === null || !isLead(lead)) return
         for (const f of (yield* tasks.inSet(lead.id)).slice(1)) {
-          if (f.status === "done" || f.running || (yield* tasks.queued(f.id)).length === 0) continue
-          yield* runs
-            .sendQueued(f.id)
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.andThen(
-                  Effect.logWarning(`task=${f.id}: sending what was queued while its lead worked failed`, cause),
-                  threads.notice(f.id, "error", `Couldn't send the queued message: ${Cause.pretty(cause).split("\n")[0] ?? "it failed"}`).pipe(Effect.ignore),
-                ),
+          if (f.status === "done" || f.running) continue
+          const queued = yield* tasks.queued(f.id)
+          if (queued.length === 0) continue
+          // Only blank rows (a Start held for it) start it as `Runs.startWaiting` does: `sendQueued` would have nothing to send.
+          const start = queued.every((q) => q.text.trim() === "")
+            ? Effect.andThen(runs.dropQueued(f.id), runs.send(f.id, { text: "", source: "board", auto: true }))
+            : runs.sendQueued(f.id)
+          yield* start.pipe(
+            Effect.catchCause((cause) =>
+              Effect.andThen(
+                Effect.logWarning(`task=${f.id}: sending what was queued while its lead worked failed`, cause),
+                threads.notice(f.id, "error", `Couldn't send the queued message: ${Cause.pretty(cause).split("\n")[0] ?? "it failed"}`).pipe(Effect.ignore),
               ),
-            )
+            ),
+          )
         }
       })
 

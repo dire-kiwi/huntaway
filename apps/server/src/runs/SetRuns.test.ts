@@ -7,6 +7,7 @@ import type { SqlClient } from "effect/sql"
 import { fakeAgent, git, gitRepo, TestBoard } from "@huntaway/testing"
 import type { FakeAgent } from "@huntaway/testing"
 import type { Item, Project, Task, TaskId } from "@huntaway/contracts"
+import { Checkpoints } from "../git/Checkpoints.ts"
 import { Worktrees } from "../git/Worktrees.ts"
 import { Reactor } from "../lifecycle/Reactor.ts"
 import { Actor } from "../platform/Changes.ts"
@@ -31,6 +32,7 @@ process.env["GIT_CONFIG_GLOBAL"] = "/dev/null"
 process.env["GIT_CONFIG_NOSYSTEM"] = "1"
 
 type Env =
+  | Checkpoints
   | Tasks
   | TaskRepo
   | Projects
@@ -226,6 +228,11 @@ describe("a set's lead's launch", () => {
         assert.deepStrictEqual(launch.granted, [web.id])
         assert.include(launch.roots, w.worktree_path ?? "?")
         assert.notInclude(launch.roots, d.worktree_path ?? "?")
+        // Its commits there are written in WEB's own repository's git directory, which is writable too.
+        const webGit = yield* git(w.worktree_path ?? "?", ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        assert.strictEqual(webGit, `${yield* (yield* FileSystem.FileSystem).realPath(nth(projects, 1).repo).pipe(Effect.orDie)}/.git`)
+        assert.include(launch.roots, webGit)
+        assert.notInclude(launch.roots, yield* git(d.worktree_path ?? "?", ["rev-parse", "--path-format=absolute", "--git-common-dir"]))
         assert.include(launch.system, "This run was given the worktrees of WEB-1 besides your own")
 
         yield* send(web.id, "Fix the client")
@@ -264,13 +271,24 @@ describe("while a lead's run has a follower's worktree", () => {
   it.live("the follower stays in To do: its message waits for the run's end, and a move out of To do is refused", () =>
     run(
       Effect.gen(function* () {
-        const { projects } = yield* board(["API", "WEB", "DOC"])
+        const { projects } = yield* board(["API", "WEB", "DOC", "OPS"])
         const { lead, followers } = yield* makeSet(projects, "in_progress")
         const web = nth(followers, 0)
         const doc = nth(followers, 1)
+        const ops = nth(followers, 2)
         const worktrees = yield* Worktrees
-        for (const t of [lead, web, doc]) yield* worktrees.setup(t.id).pipe(Effect.orDie)
-        const { finish } = yield* leadRun(lead, [web])
+        for (const t of [lead, web, doc, ops]) yield* worktrees.setup(t.id).pipe(Effect.orDie)
+        const { finish } = yield* leadRun(lead, [web, ops])
+
+        // Its worktree is the lead's agent's: it isn't removed or rewound under it.
+        const teardown = yield* Effect.flip(worktrees.teardown(web.id, { idle: true, force: true, deleteBranch: false }))
+        assert.strictEqual(teardown._tag, "AgentInWorktree")
+        assert.isTrue(yield* worktrees.agentInWorktree(web.id))
+        assert.isFalse(yield* worktrees.agentInWorktree(doc.id))
+        const rewind = yield* Effect.flip((yield* Checkpoints).rewind(web.id, 1, { conversation: false, branch: false }))
+        assert.isTrue(rewind._tag === "RewindRefused" && (rewind.detail ?? "").includes("Its set's lead, API-1, is working in its worktree"), String(rewind))
+        // A Start (a blank message) waits too.
+        assert.strictEqual((yield* send(ops.id, "")).status, "todo")
 
         const held = yield* send(web.id, "Rename the client's call")
         assert.deepStrictEqual([held.status, held.running, held.queued_message], ["todo", false, "Rename the client's call"])
@@ -290,6 +308,15 @@ describe("while a lead's run has a follower's worktree", () => {
         assert.isNotNull(sent)
         // So it had a run of its own as the lead's ended: it's its own run's end that moves it, not the lead's.
         assert.notStrictEqual(w.status, "in_review")
+        // The Start held for OPS starts it then, with nothing left queued and nothing said of a queued message.
+        yield* (yield* Runs).launched(ops.id)
+        yield* (yield* Reactor).idle
+        const o = yield* get(ops.id)
+        assert.notStrictEqual(o.status, "todo")
+        assert.isTrue(Option.isSome(yield* (yield* RunRepo).latest(ops.id)))
+        assert.deepStrictEqual(yield* (yield* TaskRepo).queued(ops.id), [])
+        assert.notInclude((yield* notices(ops.id)).join("\n"), "Couldn't send the queued message")
+        assert.isFalse(yield* worktrees.agentInWorktree(web.id))
       }),
     ),
   )
