@@ -1,7 +1,8 @@
 import { Result } from "effect"
 import { Invalid } from "@huntaway/contracts"
-import type { NewTask } from "@huntaway/contracts"
+import type { NewTask, Task, TaskId } from "@huntaway/contracts"
 import { slugify } from "../platform/slug.ts"
+import { isMerged } from "./checks.ts"
 import { PEN_NAME_MAX } from "./penChecks.ts"
 
 // Sets of tasks across repositories (HE-117; docs/plan/07-agents.md, Work across repositories): one task per
@@ -62,3 +63,51 @@ export const freeBranchName = (base: string, taken: ReadonlyArray<string>): stri
 
 /** The pen a set goes in when it's given none: named after its title, cut to a pen name's length. */
 export const setPenName = (title: string): string => title.trim().replace(/\s+/g, " ").slice(0, PEN_NAME_MAX).trim()
+
+// ---- landing together and leaving the set (HE-119) ------------------------------------------------------------------
+
+/** The id of the lead of the set `t` is in: its own when it leads one, or is in none. */
+export const leadOf = (t: Pick<Task, "id" | "lead_id">): TaskId => t.lead_id ?? t.id
+
+/** The tasks of `t`'s set among `rows` (any projects'), `t` too, in the order of `rows`. Just `t` for a task in no set. */
+export const setOf = (rows: ReadonlyArray<Task>, t: Task): Array<Task> => {
+  const lead = leadOf(t)
+  const set = rows.filter((x) => x.kind === "task" && leadOf(x) === lead)
+  return set.some((x) => x.id === t.id) ? set : [...set, t]
+}
+
+/**
+ * Whether `t` counts as landing for its set: in Ready for merge (queued, merging, or handed to its workflow once merged)
+ * and not waiting for the user's approval of its merge, which may yet be denied.
+ */
+export const readyToLand = (t: Task): boolean => t.status === "ready_for_merge" && t.merge_approval !== "pending"
+
+/**
+ * The tasks of its set that `t`'s merge waits for (`set`: its set's rows, as `setOf` or `TaskRepo.inSet` give them): every
+ * other open task that isn't in Ready for merge yet. A task closed (as not done or won't fix) or merged doesn't count.
+ * Empty for a task in no set, and once the whole set is there: then each merges in its own project's queue.
+ */
+export const setWaitsFor = (set: ReadonlyArray<Task>, t: Task): Array<Task> =>
+  set.filter((x) => x.id !== t.id && x.kind === "task" && x.status !== "done" && !readyToLand(x))
+
+/** Whether `t` was closed without being merged: done as not done or won't fix. */
+export const closedUnmerged = (t: Pick<Task, "status" | "resolution">): boolean => t.status === "done" && !isMerged(t)
+
+/**
+ * What a set's task leaving it writes on the others (`set`: the set's rows in the order they were made, `gone` among them
+ * as it was): the lead deleted or closed hands the set to the next open task by creation (deleted, to the next task when
+ * none is open), whose `lead_id` is cleared, and every other task's, a closed lead's too (it's in the set again once
+ * reopened), names it. A set down to one task is an ordinary task: its `lead_id` is null. A follower leaving changes
+ * nobody's, nor does a closed lead when no task is open (it still leads the set).
+ */
+export const handOnSet = (set: ReadonlyArray<Task>, gone: Task, how: "deleted" | "closed"): Array<{ readonly id: TaskId; readonly lead_id: TaskId | null }> => {
+  if (gone.lead_id !== null && gone.lead_id !== undefined) return []
+  const rest = set.filter((x) => x.id !== gone.id && leadOf(x) === gone.id)
+  const heir = rest.find((x) => x.status !== "done") ?? (how === "deleted" ? rest[0] : undefined)
+  if (heir === undefined) return []
+  const others = how === "deleted" ? rest : [...rest, gone]
+  return others.flatMap((x) => {
+    const lead_id = x.id === heir.id ? null : heir.id
+    return (x.lead_id ?? null) === lead_id ? [] : [{ id: x.id, lead_id }]
+  })
+}

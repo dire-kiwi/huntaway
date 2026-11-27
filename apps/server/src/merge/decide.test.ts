@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { TaskId, Timestamp } from "@huntaway/contracts"
+import { ProjectId, TaskId, Timestamp } from "@huntaway/contracts"
 import type { Task } from "@huntaway/contracts"
 import { activeMerge, heldReasonOf, mergeLane, queuedMerges, stackLine, stackOf, stackRunLanes, stackState } from "../tasks/lanes.ts"
 import { awaitsApprovals, decideLanes, settleStackRuns } from "./decide.ts"
@@ -28,7 +28,7 @@ const slotRows = (a: Partial<Task>) => [task("a", a), task("b", queued)]
 const stackLevel = (over: Partial<Task> = {}) => task("l", { ...queued, ...on("b"), ...over })
 
 const plan = (tasks: ReadonlyArray<Task>, over: Partial<LaneFacts> = {}) => {
-  const p = decideLanes({ tasks, finished: new Set(), archived: false, approvalRequired: false, ...over })
+  const p = decideLanes({ tasks, finished: new Set(), archived: false, approvalRequired: false, sets: [], ...over })
   return {
     leaveRun: p.leaveRun.map((l) => `${l.id}${l.said ? "!" : ""}`),
     summarise: p.summarise.map((t) => String(t.id)),
@@ -235,5 +235,83 @@ describe("stacks", () => {
       stackLine([a], a).map((t) => t.id),
       ["a"],
     )
+  })
+})
+
+/** A follower of set A in another project. */
+const setFollower = (id: string, over: Partial<Task> = {}) => task(id, { project_id: ProjectId.make("other"), lead_id: TaskId.make("a"), ...over })
+
+describe("sets across repositories (HE-119)", () => {
+  // Lead A in this project, followers B (this project's other lane does not matter: one per repository) and C, D in
+  // other projects. `sets` is every task of the set, as `Merges.reconcileLane` reads them.
+  const wait: Partial<Task> = { status: "in_review" }
+  const pending: Partial<Task> = { ...queued, merge_approval: "pending" }
+
+  const cases: ReadonlyArray<{
+    readonly what: string
+    readonly a: Partial<Task>
+    readonly c: Partial<Task>
+    readonly d: Partial<Task>
+    readonly approval?: boolean
+    readonly start: ReadonlyArray<string>
+    readonly summarise?: ReadonlyArray<string>
+  }> = [
+    { what: "the whole set in Ready for merge: it merges", a: queued, c: queued, d: queued, start: ["a"] },
+    { what: "one still in review: it waits", a: queued, c: queued, d: wait, start: [] },
+    { what: "one in To do: it waits", a: queued, c: { status: "todo" }, d: queued, start: [] },
+    { what: "one closed as not done doesn't count", a: queued, c: closed, d: queued, start: ["a"] },
+    { what: "one closed as won't fix doesn't count", a: queued, c: { status: "done", resolution: "wont_fix" }, d: queued, start: ["a"] },
+    { what: "one merged already doesn't count", a: queued, c: merged, d: queued, start: ["a"] },
+    {
+      what: "the others merging in their own projects count",
+      a: queued,
+      c: merging,
+      d: { ...merging, running: false, status: "ready_for_merge" },
+      start: ["a"],
+    },
+    { what: "one waiting for the user's approval: it waits", a: queued, c: pending, d: queued, start: [] },
+    { what: "one approved: it merges", a: queued, c: { ...queued, merge_approval: "approved" }, d: queued, start: ["a"] },
+    {
+      what: "one whose merge failed (needs attention, still merging): it waits",
+      a: queued,
+      c: { ...merging, status: "needs_attention", running: false },
+      d: queued,
+      start: [],
+    },
+    { what: "one that stepped out to make changes: it waits", a: queued, c: { status: "in_progress", remerge: true }, d: queued, start: [] },
+    { what: "a follower waits for its lead too", a: wait, c: queued, d: queued, start: [] },
+    {
+      what: "waiting, its merge is still summarised for approval",
+      a: queued,
+      c: wait,
+      d: queued,
+      approval: true,
+      start: [],
+      summarise: ["a"],
+    },
+  ]
+  for (const c of cases) {
+    it(c.what, () => {
+      const a = task("a", c.a)
+      const sets = [a, setFollower("c", c.c), setFollower("d", c.d)]
+      assert.deepStrictEqual(plan([a], { sets, approvalRequired: c.approval === true }), { ...none, start: [...c.start], summarise: [...(c.summarise ?? [])] })
+    })
+  }
+
+  it("a waiting set's task lets the next in its lane merge", () => {
+    const a = task("a", { ...queued, position: 1 })
+    const b = task("b", { ...queued, position: 2 })
+    assert.deepStrictEqual(plan([a, b], { sets: [a, setFollower("c", wait)] }).start, ["b"])
+  })
+
+  it("a follower in this project merges once its lead elsewhere is there", () => {
+    const c = task("c", { ...queued, lead_id: TaskId.make("a") })
+    const a = task("a", { ...queued, project_id: ProjectId.make("other") })
+    assert.deepStrictEqual(plan([c], { sets: [a, c] }).start, ["c"])
+    assert.deepStrictEqual(plan([c], { sets: [task("a", { project_id: ProjectId.make("other") }), c] }).start, [])
+  })
+
+  it("a task in no set doesn't wait", () => {
+    assert.deepStrictEqual(plan([task("x", queued)], { sets: [task("a", wait), setFollower("c", wait)] }).start, ["x"])
   })
 })
