@@ -149,8 +149,13 @@ describe("a set lands together", () => {
         // The lead and DOC-1 merge (their launches failed here: they're in Needs attention, still merging).
         yield* move(a, "done")
         yield* move(d, "done")
-        // WEB-1's merge is under way, then fails.
+        // WEB-1's merge is under way and its agent merges it and hands it to its project's workflow (`finish_work`): it
+        // waits in Ready for merge, out of the merge, for the workflow. That's no failure.
         yield* boardChange(w, { status: "ready_for_merge", attention_reason: null, running: true })
+        yield* boardChange(w, { merging: false, running: false })
+        assert.notInclude((yield* notices(a)).join("\n"), "couldn't merge")
+        // Back in the merge (as if it hadn't been merged after all), it fails.
+        yield* boardChange(w, { merging: true, running: true })
         yield* boardChange(w, { status: "needs_attention", attention_reason: "Merge conflict in client.ts", running: false })
         assert.include(
           yield* notices(a),

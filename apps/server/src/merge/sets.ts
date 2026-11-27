@@ -27,12 +27,13 @@ export const setWaitText = (waits: ReadonlyArray<Task>): string =>
 /**
  * Whether a change of a set's task is its merge failing: it was in the merge, not waiting on the user, and now needs
  * attention there (not for the user's approval), or it left the merge without being merged (not stepping out to make
- * changes, which rejoins it).
+ * changes, which rejoins it). Not a merge handed to its project's workflow (`lanes.ts` `isHandoff`): its agent merged it
+ * and said so (`finish_work`), and it waits in Ready for merge, out of the merge, for the workflow to move it to Done.
  */
 export const mergeFailed = (before: Task, after: Task): boolean => {
   if (!before.merging || before.status === "needs_attention" || isMerged(after)) return false
   if (after.merging) return after.status === "needs_attention" && after.merge_approval !== "pending"
-  return !after.remerge
+  return !after.remerge && after.status !== "ready_for_merge"
 }
 
 /** What the lead's thread is told when `failed`'s merge failed once `merged`, others of its set, had merged. */

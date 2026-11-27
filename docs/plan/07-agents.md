@@ -1793,7 +1793,8 @@ that covers several repositories, as in T3 Code, would make all of those per rep
 - **A message** to a set's task waiting for the rest takes it out of Ready for merge while its agent works (In progress,
   `remerge`), as one to a waiting stack level does (`Runs`' `outOfStackWait`); it rejoins the queue when its run ends.
 - **A merge failing** after others of its set merged (`merge/sets.ts` `mergeFailed`: it was merging, not waiting on the
-  user, and now needs attention there, not for approval, or it left the merge unmerged without stepping out) is told
+  user, and now needs attention there, not for approval, or it left the merge unmerged without stepping out; not a
+  merge handed to its project's workflow, which waits in Ready for merge out of the merge, `isHandoff`) is told
   to the lead's thread as a warning notice, with the failed task, its reason (its `attention_reason`, else the column
   it went to) and the tasks merged: `setMergeFailedText`. A notice, not a message: the lead's agent isn't started by it,
   and the lead may be merged and done. The rest of the set not merged yet wait for the failed one again.
@@ -1809,7 +1810,8 @@ that covers several repositories, as in T3 Code, would make all of those per rep
   them), lands together and has no lead's thread to tell (the failed task's own is told instead).
 - **Tests**: `merge/decide.test.ts` (the table: who waits for what, closed and merged tasks out of the count, approval
   still summarised, the lane left to the next task, a follower whose lead is in another project), `tasks/sets.test.ts`
-  (`handOnSet`'s table, `setWaitsFor`, `setOf`), `@huntaway/client`'s `setMergeWaits`, and `merge/Sets.test.ts` on the
+  (`handOnSet`'s table, `setWaitsFor`, `setOf`), `merge/sets.test.ts` (`mergeFailed`'s table, the workflow's handoff
+  among its rows), `@huntaway/client`'s `setMergeWaits`, and `merge/Sets.test.ts` on the
   board and real repositories (two and three): the lead waits and says why, both merge once the follower comes, one
   closed doesn't count; a failure after two merged told to the lead's thread; a message taking a waiting task out; the
   lead closed, then deleted, then a follower deleted; a set of two whose lead is deleted.
