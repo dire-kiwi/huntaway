@@ -1524,6 +1524,12 @@ board has its own, for a Claude task:
   The profile's syncs between hosts with its other settings (`settingsSync/fields.ts`). On the wire both are optional
   (`Project.output_style`, `Profile.default_output_style`), as a host from before HE-111 sends neither. Codex and ACP
   have no output styles: their launches never read either.
+- **A new task's (HE-124).** The new task dialog takes `/output-style <name>` in the description as one of its tokens
+  (`layout/taskTokens.ts` `STYLE_PREFIX`: the command, spaces or tabs and a name on its line; `/output-style` alone is
+  an unknown `/` word). Its `/` list offers `/output-style`, which once picked lists Claude Code's built-in styles, the
+  project's or profile's marked; any other name is taken as typed. It is taken out of the text, shows in the "Reads
+  as" row (else the project's or profile's, dashed), and is sent as `NewTask.output_style` (trimmed, blank is none)
+  for each task that runs Claude; a set's other tasks get it too. Only while one of the tasks it makes runs Claude.
 
 ### Code Mode (HE-107)<a id="code-mode"></a>
 

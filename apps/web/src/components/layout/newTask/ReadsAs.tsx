@@ -1,8 +1,8 @@
 import { clsx } from "clsx"
-import { Cpu, Folder, FolderGit2, Gauge, GitBranch, GitMerge, Link2, NotebookPen, X } from "lucide-react"
+import { Cpu, Feather, Folder, FolderGit2, Gauge, GitBranch, GitMerge, Link2, NotebookPen, X } from "lucide-react"
 import type { ReactNode } from "react"
 import { sameHarness } from "../harnesses"
-import type { TokenPrefix } from "../taskTokens"
+import { STYLE_PREFIX, type TokenPrefix } from "../taskTokens"
 import { documentInfo } from "../../task/documentInfo"
 import type { AgentChoice } from "./useAgentChoice"
 import type { Tokens } from "./useTokens"
@@ -77,6 +77,9 @@ export function ReadsAs({ opened, origin, where, agent, tok }: { opened: Opened;
     codeTask,
     mergesInto,
     intoKey,
+    styleOk,
+    outputStyle,
+    inheritedStyle,
   } = tok
   // What the tokens set, and what a token set (its × takes it out).
   const setBy = (prefix: TokenPrefix) => tokens.some((t) => t.prefix === prefix && t.value !== undefined)
@@ -153,6 +156,17 @@ export function ReadsAs({ opened, origin, where, agent, tok }: { opened: Opened;
             onRemove={setBy("^") ? removeKind("^") : undefined}
           />
         ))}
+      {outputStyle !== undefined ? (
+        <ReadsChip
+          icon={<Feather size={12} />}
+          label={`${outputStyle} style`}
+          title="The output style its Claude agent writes its replies in (Claude Code's /output-style)"
+          onRemove={removeKind(STYLE_PREFIX)}
+          removeTitle={inheritedStyle ? `Use the ${inheritedStyle.from}'s output style` : "Use Claude Code's output style"}
+        />
+      ) : (
+        styleOk && inheritedStyle && <ReadsChip dashed label={`${inheritedStyle.style} style (the ${inheritedStyle.from}'s)`} />
+      )}
       {startFrom !== undefined && codeTask && (
         <ReadsChip
           icon={<GitBranch size={12} />}

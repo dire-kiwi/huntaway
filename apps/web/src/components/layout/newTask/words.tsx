@@ -1,5 +1,5 @@
 import { LABELS, type DocumentType } from "@huntaway/client"
-import type { TokenPrefix } from "../taskTokens"
+import { STYLE_PREFIX, type TokenPrefix } from "../taskTokens"
 
 /** What the new task dialog makes: code (null) or a scratch task. */
 export type NewTaskType = "scratch" | null
@@ -35,4 +35,5 @@ export const TOKEN_HELP: { prefix: TokenPrefix; what: string; asks: string }[] =
   { prefix: "#", what: "waits for", asks: "a task to wait for" },
   { prefix: "from:", what: "starts from", asks: "what its worktree starts from" },
   { prefix: "into:", what: "merges into", asks: "a task it merges into" },
+  { prefix: STYLE_PREFIX, what: "output style", asks: "how its agent writes its replies" },
 ]
