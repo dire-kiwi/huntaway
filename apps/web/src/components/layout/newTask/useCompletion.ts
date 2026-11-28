@@ -1,5 +1,6 @@
 import { useState } from "react"
-import { insertCompletion, type TokenPrefix } from "../taskTokens"
+import { BUILT_IN_OUTPUT_STYLES } from "@huntaway/shared"
+import { insertCompletion, STYLE_PREFIX, STYLE_WORD, type TokenPrefix } from "../taskTokens"
 import { LABEL_INFO } from "../../task/documentInfo"
 import type { AgentChoice } from "./useAgentChoice"
 import type { EditorText } from "./useEditorText"
@@ -18,13 +19,15 @@ export function useCompletion(opened: Opened, origin: Origin, ed: EditorText, wh
   const { pickConfig, inherited, hostSettings, efforts, modelList } = agent
   const { labelWords, labelling, harnessVocab, specific, named, effortList, depTasks, depKey, deps, depProject, fromOk, fromTasks, fromKeys, projectBranches } =
     tok
-  const { intoOk, intoTasks, intoKeys } = tok
+  const { intoOk, intoTasks, intoKeys, styleOk, inheritedStyle } = tok
   const hostCount = hosts.length
   // What's offered for each prefix as it's typed.
   const suggestions: Record<TokenPrefix, Suggestion[]> = {
     "/": [
       ...typeTabs.map((t) => ({ value: typeWord(t.id), label: t.label, hint: t.hint })),
       ...LABEL_INFO.filter((l) => labelWords.includes(l.id)).map((l) => ({ value: l.id, label: labelling ? `${l.label} label` : l.label, hint: l.hint })),
+      // Picked, it's followed by the output styles to pick from (HE-124).
+      ...(styleOk ? [{ value: STYLE_WORD, label: "Output style", hint: "How its Claude agent writes its replies" }] : []),
     ],
     "in:": [
       ...(projects ?? []).map((p, i) => ({
@@ -62,6 +65,16 @@ export function useCompletion(opened: Opened, origin: Origin, ed: EditorText, wh
     "into:": intoOk
       ? intoTasks.map((t) => ({ value: depKey(t), label: t.title, hint: "Its work merges into this task's branch, which its pull request targets" }))
       : [],
+    // Claude Code's built-in styles, and the one it has without one (the project's or profile's), marked.
+    [STYLE_PREFIX]: styleOk
+      ? [
+          ...(inheritedStyle && !BUILT_IN_OUTPUT_STYLES.some((s) => s.name === inheritedStyle.style) ? [{ name: inheritedStyle.style, description: "" }] : []),
+          ...BUILT_IN_OUTPUT_STYLES,
+        ].map((s) => {
+          const mark = s.name === inheritedStyle?.style ? `The ${inheritedStyle.from}'s` : ""
+          return { value: s.name, label: [mark, s.description].filter(Boolean).join(" · "), hint: s.description || undefined }
+        })
+      : [],
   }
   // The one that's what's typed comes first, then those starting with it, then those whose name has it.
   const query = completing?.query.toLowerCase() ?? ""
@@ -91,9 +104,10 @@ export function useCompletion(opened: Opened, origin: Origin, ed: EditorText, wh
     ...(fromOk ? { "from:": fromKeys[0] ?? "feature-x" } : {}),
     // Only with a task to merge into.
     ...(intoOk && intoKeys.length ? { "into:": intoKeys[0] } : {}),
+    ...(styleOk ? { [STYLE_PREFIX]: "Explanatory" } : {}),
   }
   const help = TOKEN_HELP.filter((h) => example[h.prefix])
-  const tokenHint = `Type ${help.map((h, i) => `${i === help.length - 1 && i > 0 ? "or " : ""}${h.prefix} for ${h.asks}`).join(", ")}.`
+  const tokenHint = `Type ${help.map((h, i) => `${i === help.length - 1 && i > 0 ? "or " : ""}${h.prefix.trim()} for ${h.asks}`).join(", ")}.`
 
   // A legend's prefix (or `@`), typed at the caret, to pick its value from the list.
   const typePrefix = (prefix: TokenPrefix | "@") => {

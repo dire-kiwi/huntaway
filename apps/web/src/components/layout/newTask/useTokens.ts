@@ -6,7 +6,8 @@ import { agentOf, documentsOnly, isMerged, isScratch, LABELS, query, type QueryR
 import { ProjectId, type DocumentLabel as DocumentType } from "@huntaway/contracts"
 import { effortOptions, inheritedModel, modelOptions, ownModelPick } from "../../../agents"
 import { harnessesOf, harnessWords, type Harness, type HarnessConfig, type HarnessWord } from "../harnesses"
-import { allValues, lastValue, removeTokens, stripTokens, type Token } from "../taskTokens"
+import { allValues, lastValue, removeTokens, STYLE_PREFIX, stripTokens, type Token } from "../taskTokens"
+import { BUILT_IN_OUTPUT_STYLES } from "@huntaway/shared"
 
 import { asEffort, type Draft, type PendingFanout } from "./draft"
 import type { AgentChoice } from "./useAgentChoice"
@@ -27,7 +28,7 @@ const noBranchList: ReadonlyArray<{ name: string; remote: boolean }> = []
  */
 export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, saved: Draft | null) {
   const { resolve, atVocab, offered, typeOf, inProject, asGroup } = where
-  const { efforts, effort } = agent
+  const { efforts, effort, profile } = agent
   const { description, caret, edit, found } = ed
   // Tasks to merge before its agent starts (API 24), as `#` and their key.
   const preTokens = resolve({ "/": offered.map(typeWord) })
@@ -69,7 +70,19 @@ export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, save
   const intoKeys = intoTasks.map(depKey)
 
   const harnesses = useHarnesses(where, agent, ed, saved)
-  const { modelVocab, effortList } = harnesses
+  const { modelVocab, effortList, runs, harnessConfigs } = harnesses
+  // HE-124: the output style its Claude agents are given (`/output-style Explanatory`), as the composer's
+  // `/output-style` sets it later: Claude Code's built-in ones, or any other name as typed (a user's, a project's or a
+  // plugin's style). Only for a task (or tasks, with several `!`) that runs Claude.
+  const claudeRun = (h: Harness) => harnessConfigs.find((c) => c.id === h.config)?.agent === "claude"
+  const styleOk = runs.some(claudeRun)
+  const styleWords = styleOk ? [...BUILT_IN_OUTPUT_STYLES.map((s) => s.name), ...found.filter((t) => t.prefix === STYLE_PREFIX).map((t) => t.word)] : []
+  // What it has without one: its project's, else its profile's (as the server's `styleOf` has it), else Claude Code's settings'.
+  const inheritedStyle = inProject?.output_style?.trim()
+    ? { style: inProject.output_style.trim(), from: "project" }
+    : profile?.default_output_style?.trim()
+      ? { style: profile.default_output_style.trim(), from: "profile" }
+      : null
   // Labels, each a document its agent makes besides its other work, published with docs (HE-122).
   const labelling = true
   const labelWords = LABEL_WORDS
@@ -81,7 +94,11 @@ export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, save
     ...(deps ? { "#": depTasks.map(depKey) } : {}),
     ...(fromOk ? { "from:": fromWords } : {}),
     ...(intoOk ? { "into:": intoKeys } : {}),
+    ...(styleOk ? { [STYLE_PREFIX]: styleWords } : {}),
   })
+  const outputStyle = lastValue(tokens, STYLE_PREFIX)
+  /** The output style harness `h`'s task is made with: the one asked for, for a Claude one. */
+  const styleFor = (h: Harness) => (outputStyle !== undefined && claudeRun(h) ? outputStyle : undefined)
   const effortAsked = lastValue(tokens, "^")
   const pickedEffort = effortAsked === undefined ? effort : asEffort(effortAsked)
   const dependsOn = allValues(tokens, "#").flatMap((k) => depTasks.filter((t) => depKey(t) === k).map((t) => t.id))
@@ -144,6 +161,10 @@ export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, save
     intoNote,
     labelling,
     labelWords,
+    styleOk,
+    outputStyle,
+    inheritedStyle,
+    styleFor,
     tokens,
     pickedEffort,
     dependsOn,

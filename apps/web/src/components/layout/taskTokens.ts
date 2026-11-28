@@ -1,7 +1,9 @@
 // Tokens typed in a new task's description that set its options (IA-220): `/plan` its type, `in:IA` where it goes
 // (`@IA` until HA-303, which gave `@` to references to projects and tasks, see refCompletion.ts),
 // `!sonnet` its model, `^high` its effort, `#IA-212` a task it depends on and `from:IA-12` what its worktree starts from
-// (HA-55: another task, a branch, a pull request or a commit), and `into:IA-12` the task it merges into (HA-295).
+// (HA-55: another task, a branch, a pull request or a commit), `into:IA-12` the task it merges into (HA-295), and
+// `/output-style Explanatory` the output style of its Claude agent (HE-124), a slash command and its name as the
+// composer has it.
 //
 // A token is its prefix at the start of a word, with the value right after it, so `# Heading` isn't one. Only values
 // the dialog knows count (`in:someone` and `#123` stay text), and nothing in a code span or fenced code block is a token.
@@ -9,11 +11,16 @@
 import type { Nodes } from "mdast"
 import { fromMarkdown } from "mdast-util-from-markdown"
 
-export const TOKEN_PREFIXES = ["/", "in:", "!", "^", "#", "from:", "into:"] as const
+/** `/output-style` and the space after it, as one prefix: its value is the style's name. */
+export const STYLE_PREFIX = "/output-style "
+/** The `/` word that starts `/output-style`. */
+export const STYLE_WORD = "output-style"
+
+export const TOKEN_PREFIXES = ["/", "in:", "!", "^", "#", "from:", "into:", STYLE_PREFIX] as const
 export type TokenPrefix = (typeof TOKEN_PREFIXES)[number]
 
 /** The prefix a match found, as one of TOKEN_PREFIXES (the regexes below only match those). */
-const prefixOf = (s: string | undefined): TokenPrefix => TOKEN_PREFIXES.find((p) => p === s) ?? "/"
+const prefixOf = (s: string | undefined): TokenPrefix => (s?.startsWith("/output-style") ? STYLE_PREFIX : (TOKEN_PREFIXES.find((p) => p === s) ?? "/"))
 
 export interface Token {
   prefix: TokenPrefix
@@ -36,6 +43,8 @@ const TOKEN = /(?<=^|\s)([/!^#])([\w.-]*\w)(?![\w/@#^[-])/g
 const FROM = /(?<=^|\s)(from:)([^\s`'"<>()]*[^\s`'"<>().,;:!?])/g
 // `in:` takes a place's word (a project's key, `group` or `none`), and `into:` a task's key, as `#` does.
 const INTO = /(?<=^|\s)(into:|in:)([\w.-]*\w)(?![\w/@#^[-])/g
+// `/output-style`, spaces or tabs, and a style's name: one token, whose `/output-style` isn't a `/` token of its own.
+const STYLE = /(?<=^|\s)(\/output-style[ \t]+)([\w.-]*\w)(?![\w/@#^[-])/g
 
 let parsed: { text: string; ranges: [number, number][] } | null = null
 
@@ -61,7 +70,9 @@ const inRanges = (at: number, ranges: [number, number][]) => ranges.some(([s, e]
 /** Everything in the text that could be a token, outside code, before it's looked up. */
 export function findTokens(text: string): Token[] {
   const code = codeRanges(text)
-  return [...text.matchAll(TOKEN), ...text.matchAll(FROM), ...text.matchAll(INTO)]
+  const styles = [...text.matchAll(STYLE)]
+  const styled = styles.map((m): [number, number] => [m.index, m.index + m[0].length])
+  return [...[...text.matchAll(TOKEN)].filter((m) => !inRanges(m.index, styled)), ...text.matchAll(FROM), ...text.matchAll(INTO), ...styles]
     .filter((m) => !inRanges(m.index, code))
     .toSorted((a, b) => a.index - b.index)
     .map((m) => ({ prefix: prefixOf(m[1]), word: m[2] ?? "", start: m.index, end: m.index + m[0].length }))
@@ -182,7 +193,8 @@ export interface Completion {
 /** The token the caret is in, to suggest values for, unless it's in code. */
 export function completionAt(text: string, caret: number): Completion | null {
   const before = text.slice(0, caret)
-  const m = /(?<=^|\s)(from:)(\S*)$/.exec(before) ?? /(?<=^|\s)([/!^#]|into:|in:)([\w.-]*)$/.exec(before)
+  const m =
+    /(?<=^|\s)(from:)(\S*)$/.exec(before) ?? /(?<=^|\s)(\/output-style[ \t]+)([\w.-]*)$/.exec(before) ?? /(?<=^|\s)([/!^#]|into:|in:)([\w.-]*)$/.exec(before)
   if (!m || inRanges(m.index, codeRanges(text))) return null
   const rest = (m[1] === "from:" ? /^\S*/ : /^[\w.-]*/).exec(text.slice(caret))?.[0] ?? ""
   return { prefix: prefixOf(m[1]), query: m[2] ?? "", start: m.index, end: caret + rest.length }

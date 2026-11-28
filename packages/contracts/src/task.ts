@@ -574,6 +574,11 @@ export const NewTask = Schema.Struct({
   use_worktree: Schema.optional(Schema.NullOr(Schema.Boolean)),
   model: Schema.optional(Schema.NullOr(Schema.String)),
   effort: Schema.optional(Schema.NullOr(Effort)),
+  /**
+   * The output style its Claude Code runs are given (HE-124, the new task dialog's `/output-style <name>`), as
+   * `/output-style` sets it later; unset or blank is its project's, then its profile's.
+   */
+  output_style: Schema.optional(Schema.NullOr(Schema.String)),
   /** Start its agent now: `true`, or text sent as an extra prompt. */
   start: Schema.optional(Schema.Union([Schema.Boolean, Schema.String])),
   /** One of the configs its project or profile offers; unset is the first of them. */

@@ -69,7 +69,7 @@ const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
 /**
  * What a set's task in project `project` is made from, beside its lead made from `input`: the same title, description,
- * labels and links, model and effort, but its project's default config, no dependencies, no fan-out id (the set is one
+ * labels and links, model, effort and output style, but its project's default config, no dependencies, no fan-out id (the set is one
  * alternative of a fan-out, which `Fanout` keeps or retires by task), and To do for In progress (only the lead's agent
  * starts). Branch, lead and pen are written with it.
  */
@@ -82,6 +82,7 @@ const followerInput = (input: NewTask, project: ProjectId): NewTask => ({
   use_worktree: input.use_worktree,
   model: input.model,
   effort: input.effort,
+  output_style: input.output_style,
   labels: input.labels,
   external_links: input.external_links,
 })

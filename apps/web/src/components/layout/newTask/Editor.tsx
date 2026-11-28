@@ -7,6 +7,7 @@ import type { EditorLayout } from "./useEditorLayout"
 import type { EditorText } from "./useEditorText"
 import type { Tokens } from "./useTokens"
 import type { Where } from "./useWhere"
+import { STYLE_PREFIX } from "../taskTokens"
 import { TOKEN_HELP } from "./words"
 
 // The editor's text and the highlighting behind it are laid out alike, so the highlights line up with what's typed.
@@ -172,15 +173,26 @@ export function Editor({
           ref={list}
           role="listbox"
           aria-label={TOKEN_HELP.find((h) => h.prefix === open.prefix)?.what}
-          className="fixed z-10 w-72 overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl shadow-black/50"
+          // Wider for the styles, whose `/output-style` takes most of a row.
+          className={clsx(
+            "fixed z-10 overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl shadow-black/50",
+            open.prefix === STYLE_PREFIX ? "w-[26rem]" : "w-72",
+          )}
           // Keeps the editor focused, so picking doesn't close the list first.
           onMouseDown={(e) => e.preventDefault()}
         >
           <div className="px-2 pt-1 pb-1 text-[10.5px] font-semibold tracking-wider text-faint uppercase">
             {
-              { "/": "Type or label", "in:": "Where it goes", "!": "Model", "^": "Effort", "#": "Depends on", "from:": "Starts from", "into:": "Merges into" }[
-                open.prefix
-              ]
+              {
+                "/": "Type, label or command",
+                "in:": "Where it goes",
+                "!": "Model",
+                "^": "Effort",
+                "#": "Depends on",
+                "from:": "Starts from",
+                "into:": "Merges into",
+                [STYLE_PREFIX]: "Output style",
+              }[open.prefix]
             }
           </div>
           {matches.map((s, i) => (
@@ -212,7 +224,7 @@ export function Legend({ completion: { help, example, typePrefix } }: { completi
   return (
     <div className="flex flex-wrap gap-x-3.5 gap-y-1 text-[11.5px] text-faint">
       {help.map((h) => (
-        <button key={h.prefix} type="button" className="hover:text-muted" title={`Type ${h.prefix} for ${h.asks}`} onClick={() => typePrefix(h.prefix)}>
+        <button key={h.prefix} type="button" className="hover:text-muted" title={`Type ${h.prefix.trim()} for ${h.asks}`} onClick={() => typePrefix(h.prefix)}>
           <code className="font-mono text-muted">
             {h.prefix}
             {example[h.prefix]}

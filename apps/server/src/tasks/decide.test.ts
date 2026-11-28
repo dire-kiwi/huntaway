@@ -705,6 +705,12 @@ describe("decideCreate", () => {
     invalid(createTask({ title: "x", claude_config_id: AgentConfigId.make("c9") }), "claude_config_id", "one of the project's")
   })
 
+  it("keeps the output style it's given (HE-124); blank is none", () => {
+    assert.strictEqual(createdRow({ title: "x", output_style: " Explanatory " }).columns.output_style, "Explanatory")
+    assert.strictEqual(createdRow({ title: "x", output_style: " " }).columns.output_style, null)
+    assert.strictEqual(createdRow({ title: "x" }).columns.output_style, null)
+  })
+
   it("makes scratch tasks in no project, working in their own folder", () => {
     const t = createdRow({}, scratch)
     assert.deepStrictEqual(

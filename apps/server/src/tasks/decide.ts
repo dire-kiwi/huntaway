@@ -510,6 +510,7 @@ export const decideCreate = (input: NewTask, facts: CreateFacts, now: Timestamp)
       done_at: status === "done" ? now : null,
       model: input.model ?? null,
       effort: input.effort ?? null,
+      output_style: input.output_style?.trim() || null,
       claude_config_id: yield* pickConfig(facts.configs, input.claude_config_id),
       labels: orderLabels(input.labels ?? []),
       external_links: yield* checkExternalLinks(input.external_links ?? null),

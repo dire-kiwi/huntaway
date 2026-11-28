@@ -71,7 +71,7 @@ is no server-side rendering, no router library, no data-fetching library and no 
 
 ### 2.8 Layout (`components/layout/`, 45 files)
 - Sidebar: profiles with status bars, one active profile's projects (grouped, pinned, favourite, hidden), starred tasks, reminders, usage, Agents pill, connection state; drawer in the narrow layout.
-- New task dialog (`NewTaskModal.tsx`, `newTask/`): one description field with tokens (`taskTokens.ts`: `/plan`, `in:KEY`, `!model`, `^effort`, `#dep`, `from:`, `into:`), `!` harness tokens make several tasks from one prompt (`harnesses.ts`), draft per project in localStorage, remembered model/effort/config/start per project.
+- New task dialog (`NewTaskModal.tsx`, `newTask/`): one description field with tokens (`taskTokens.ts`: `/plan`, `in:KEY`, `!model`, `^effort`, `#dep`, `from:`, `into:`; HE-124 `/output-style <name>`), `!` harness tokens make several tasks from one prompt (`harnesses.ts`), draft per project in localStorage, remembered model/effort/config/start per project.
 - Page shortcuts (`usePageShortcuts.ts`), notification settings panel, unhandled-rejection toast (10 s), title dialog.
 
 ### 2.9 Docs (`components/docs/`, 25 files)

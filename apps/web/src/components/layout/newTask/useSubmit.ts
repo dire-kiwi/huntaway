@@ -50,7 +50,7 @@ export function useSubmit(p: {
   const { heldBack, prefId, target, noProject, asGroup, project, inProject } = p.where
   const { setModel, setEffort, setConfigPref, model, config, pickConfig, efforts } = p.agent
   const { pending, setPending, runs, fanout, labelling, labels, text, taskType, deps, dependsOn } = p.tok
-  const { runEfforts, pickedEffort, untoken, harnessOf, effortList, runLabel, named, tokens, startFrom, fromTask, codeTask, mergesInto } = p.tok
+  const { runEfforts, pickedEffort, styleFor, untoken, harnessOf, effortList, runLabel, named, tokens, startFrom, fromTask, codeTask, mergesInto } = p.tok
   const { attach, links, setLinks, hasContent, linking } = p.kept
   const { start, worktree, addAnother, setStartPref, setWorktree, alsoIn, setAlsoIn, alsoInTitle, setAlsoInTitle } = p.options
   const { submitBlock, modelsLoading } = p.blocks
@@ -123,6 +123,7 @@ export function useSubmit(p: {
     const make = (h: Harness): Effect.Effect<Task, CallError<"tasks.create"> | NoProject, AtomRegistry.AtomRegistry> => {
       // The server titles it from the description.
       const runEffort = efforts && pickedEffort && runEfforts(h).includes(pickedEffort) ? pickedEffort : undefined
+      const style = styleFor(h)
       const common = {
         ...(labelling && labels.length ? { labels } : {}),
         description: withAttachments(text, attach.files),
@@ -130,6 +131,7 @@ export function useSubmit(p: {
         status,
         ...(h.model ? { model: h.model } : {}),
         ...(runEffort ? { effort: runEffort } : {}),
+        ...(style !== undefined ? { output_style: style } : {}),
         ...(pickConfig ? { claude_config_id: AgentConfigId.make(h.config) } : {}),
         ...(linking && links.length ? { external_links: links } : {}),
         ...shared,
